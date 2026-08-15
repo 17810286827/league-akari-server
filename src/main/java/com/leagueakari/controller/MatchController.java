@@ -4,7 +4,10 @@ import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.dto.MatchSummaryResponse;
 import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.dto.PageResponse;
+import com.leagueakari.dto.TimelineSyncRequest;
+import com.leagueakari.service.MatchNotFoundException;
 import com.leagueakari.service.MatchService;
+import com.leagueakari.service.MatchTimelineService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,6 +31,7 @@ import java.util.Map;
 public class MatchController {
 
     private final MatchService matchService;
+    private final MatchTimelineService matchTimelineService;
 
     /** 接收对局同步推送，幂等写入 */
     @PostMapping
@@ -56,5 +60,26 @@ public class MatchController {
         // data 包装与分页/同步响应的扁平结构区分，详情契约见规格第 4.2 节
         // 对局不存在时由 service 抛出 MatchNotFoundException，全局处理器转为 404
         return Map.of("data", matchService.getMatchDetail(gameId));
+    }
+
+    /** 接收时间线推送（frames 全量），幂等写入 */
+    @PostMapping("/{gameId}/timeline")
+    public Map<String, Object> syncTimeline(@PathVariable Long gameId,
+            @Valid @RequestBody TimelineSyncRequest request) {
+        // 幂等保存：重复推送同一 gameId 不会覆盖首次写入的 frames
+        matchTimelineService.saveTimeline(gameId, request.getFrames());
+        // 同步接口契约：成功即返回 code=0，无需回传实体数据
+        return Map.of("code", 0);
+    }
+
+    /** 查询对局时间线，不存在返回 404 */
+    @GetMapping("/{gameId}/timeline")
+    public Map<String, Object> getTimeline(@PathVariable Long gameId) {
+        // 未命中时由 service 返回 null，此处抛出 MatchNotFoundException 复用全局 404 处理
+        Object frames = matchTimelineService.getTimeline(gameId);
+        if (frames == null) {
+            throw new MatchNotFoundException(gameId);
+        }
+        return Map.of("data", frames);
     }
 }
