@@ -140,4 +140,28 @@ class MatchControllerIntegrationTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(404));
     }
+
+    /**
+     * 防御用例：payload 中 teams[0].win 传字符串（LCU 归一化前的原始 'Win'/'Fail'）
+     * 属于字段类型错误，应返回 400 参数错误而非 500，
+     * 防止跨端类型断链（Electron 侧未归一化时）导致默认 LCU 路径同步必败
+     */
+    @Test
+    void postMatch_withStringWin_returns400() throws Exception {
+        // 手工拼接 JSON 字符串：win 字段故意传 "Win" 而非布尔值
+        String body = """
+                {"gameId":9000000009,"gameCreation":1720000000000,"gameDuration":1830,"gameMode":"CLASSIC",\
+                "gameType":"MATCHED_GAME","queueId":420,"mapId":11,"gameVersion":"25.4.1","region":"na1",\
+                "rsoPlatformId":"","dataSource":"lcu","winnerTeamId":100,"selfPuuid":"self-puuid-1",\
+                "teams":[{"teamId":100,"win":"Win","towerKills":11,"inhibitorKills":2,"baronKills":1,\
+                "dragonKills":3,"riftHeraldKills":1,"firstBlood":true,"firstTower":true}],\
+                "participants":[{"puuid":"player-1","summonerName":"PlayerOne","championId":103,"teamId":100,\
+                "position":"TOP","kills":5,"deaths":3,"assists":8,"win":true,"goldEarned":12800,"cs":210,\
+                "items":[6653,3078],"summonerSpells":[4,12],\
+                "stats":{"totalDamageDealtToChampions":25430,"visionScore":42}}]}
+                """;
+        mockMvc.perform(post("/api/matches").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(400));
+    }
 }

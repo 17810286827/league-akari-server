@@ -15,6 +15,7 @@ import com.leagueakari.mapper.MatchMapper;
 import com.leagueakari.mapper.MatchParticipantMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -68,7 +69,14 @@ public class MatchService {
         match.setTeamsJson(writeJson(request.getTeams()));
         match.setCreatedAt(LocalDateTime.now());
         // 主表插入后 id 自动回填（AUTO 主键），供参赛者关联 match_id
-        matchMapper.insert(match);
+        try {
+            matchMapper.insert(match);
+        } catch (DuplicateKeyException e) {
+            // 并发兜底：两个请求同时通过"先查后插"的幂等检查，后插入者撞 game_id 唯一键。
+            // 异常已在方法内吞掉、不向事务边界传播，事务不会标记回滚，视为幂等成功直接返回
+            log.info("Match concurrently inserted, skip sync: gameId={}", gameId);
+            return;
+        }
 
         // 逐条组装参赛者：直显字段缺失时写 0，stats 全量透传存入 stats_json
         for (ParticipantSyncRequest p : request.getParticipants()) {

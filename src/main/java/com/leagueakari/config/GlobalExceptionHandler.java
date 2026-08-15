@@ -4,9 +4,11 @@ import com.leagueakari.service.MatchNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.Map;
 
@@ -41,6 +43,27 @@ public class GlobalExceptionHandler {
         log.warn("Match not found: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(Map.of("code", 404, "message", e.getMessage()));
+    }
+
+    /**
+     * 请求体不可读：JSON 语法错误或字段类型不匹配（如 Boolean 字段收到字符串 "Win"），
+     * 属于调用方参数错误，返回 400 而非 500
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, Object>> handleUnreadable(HttpMessageNotReadableException e) {
+        // 取最底层根因（Jackson 的具体报错）作为提示，避免完整堆栈刷日志
+        String detail = e.getMostSpecificCause() != null ? e.getMostSpecificCause().getMessage() : e.getMessage();
+        log.warn("Request body not readable: {}", detail);
+        return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "请求体格式错误"));
+    }
+
+    /**
+     * 路径/查询参数类型不匹配（如 gameId 传非数字）：属于调用方参数错误，返回 400
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Map<String, Object>> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+        log.warn("Request argument type mismatch: name={}, detail={}", e.getName(), e.getMessage());
+        return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "参数类型错误"));
     }
 
     /**

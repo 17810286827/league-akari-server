@@ -1,5 +1,7 @@
 server:
   port: 8080
+  # 仅监听本机回环地址：本应用为个人本机自用后端，收窄网络暴露面，防止局域网内任意访问
+  address: 127.0.0.1
 
 spring:
   datasource:
