@@ -2,6 +2,7 @@ package com.leagueakari.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.dto.MatchSummaryResponse;
@@ -21,6 +22,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * 对局数据服务：幂等保存与查询
@@ -148,7 +152,13 @@ public class MatchService {
 
         // 分页插件改写 SQL：自动生成 COUNT 与 LIMIT，total 为满足条件的总条数
         Page<Match> result = matchMapper.selectPage(new Page<>(page, pageSize), wrapper);
-        // 实体转列表项 DTO：只透传列表需要的精简字段，不携带 JSON 快照
+
+        // 收集本页对局主键，用于一次性批量查询参赛者，避免逐局查库的 N+1 问题
+        List<Long> matchIds = result.getRecords().stream().map(Match::getId).toList();
+        // 按 match_id 分组：本页所有参赛者一次查出，供各对局聚合 self/teamTotals/teammates
+        Map<Long, List<MatchParticipant>> participantsByMatch = batchLoadParticipants(matchIds);
+
+        // 实体转列表项 DTO：透传精简字段，并补充本玩家数据、队伍聚合与队友摘要
         List<MatchSummaryResponse> items = result.getRecords().stream().map(m -> {
             MatchSummaryResponse resp = new MatchSummaryResponse();
             resp.setGameId(m.getGameId());
@@ -159,11 +169,202 @@ public class MatchService {
             resp.setRegion(m.getRegion());
             resp.setWinnerTeamId(m.getWinnerTeamId());
             resp.setSelfPuuid(m.getSelfPuuid());
+            // 填充本玩家/队伍聚合/队友摘要：self 行缺失时输出全零占位，不抛错
+            fillMatchExtras(resp, m.getSelfPuuid(),
+                    participantsByMatch.getOrDefault(m.getId(), List.of()));
             return resp;
         }).toList();
 
         log.info("Query matches: page={}, pageSize={}, total={}", page, pageSize, result.getTotal());
         return new PageResponse<>(items, page, pageSize, result.getTotal());
+    }
+
+    /**
+     * 批量查询本页对局的参赛者并按对局分组：
+     * 一次 IN(match_id) 查询取代逐局查询，控制数据库往返次数
+     */
+    private Map<Long, List<MatchParticipant>> batchLoadParticipants(List<Long> matchIds) {
+        if (matchIds.isEmpty()) {
+            // 本页无对局时直接返回空映射，避免无意义的 IN 查询
+            return Map.of();
+        }
+        List<MatchParticipant> participants = matchParticipantMapper.selectList(
+                new QueryWrapper<MatchParticipant>().in("match_id", matchIds));
+        return participants.stream().collect(Collectors.groupingBy(MatchParticipant::getMatchId));
+    }
+
+    /**
+     * 为列表项补充本玩家（self）、所在队伍聚合（teamTotals）与队友摘要（teammates）；
+     * 若 self 行缺失（异常数据），返回全零占位且不抛错，保证列表接口始终可用
+     */
+    private void fillMatchExtras(MatchSummaryResponse resp, String selfPuuid,
+                                 List<MatchParticipant> participants) {
+        // 定位本玩家行：puuid 与主表 self_puuid 一致（null 安全比较）
+        MatchParticipant self = participants.stream()
+                .filter(p -> Objects.equals(selfPuuid, p.getPuuid()))
+                .findFirst().orElse(null);
+
+        if (self == null) {
+            // 异常数据兜底：self 行缺失时输出全零占位、teammates 空列表
+            log.warn("Self participant missing, use placeholder: gameId={}", resp.getGameId());
+            resp.setSelf(placeholderSelf());
+            resp.setTeamTotals(placeholderTeamTotals());
+            resp.setTeammates(List.of());
+            return;
+        }
+
+        // 同队成员：与 self 相同 teamId 的参赛者（正常为含 self 共 5 人）
+        List<MatchParticipant> teamMembers = participants.stream()
+                .filter(p -> Objects.equals(p.getTeamId(), self.getTeamId()))
+                .toList();
+
+        resp.setSelf(buildSelf(self));
+        resp.setTeamTotals(buildTeamTotals(teamMembers));
+        resp.setTeammates(buildTeammates(teamMembers, self));
+    }
+
+    /**
+     * 组装本玩家个人数据：身份与击杀/死亡/助攻来自直显列，
+     * 伤害/经济/补刀/标记字段来自 stats_json 解析（缺失写 0/false）
+     */
+    private MatchSummaryResponse.SelfSummary buildSelf(MatchParticipant self) {
+        MatchSummaryResponse.SelfSummary s = new MatchSummaryResponse.SelfSummary();
+        // 身份字段：直显列原样透传
+        s.setChampionId(self.getChampionId());
+        s.setSummonerName(self.getSummonerName());
+        // 直显统计缺失时写 0，保证响应字段非 null
+        s.setKills(self.getKills() == null ? 0 : self.getKills());
+        s.setDeaths(self.getDeaths() == null ? 0 : self.getDeaths());
+        s.setAssists(self.getAssists() == null ? 0 : self.getAssists());
+        s.setWin(self.getWin());
+        // stats 快照字段：解析 stats_json，缺失写 0/false
+        JsonNode stats = parseStatsJson(self.getStatsJson());
+        s.setTotalDamage(statInt(stats, "totalDamageDealtToChampions"));
+        s.setTotalDamageTaken(statInt(stats, "totalDamageTaken"));
+        s.setGoldEarned(statInt(stats, "goldEarned"));
+        s.setCs(statInt(stats, "totalMinionsKilled"));
+        s.setLargestMultiKill(statInt(stats, "largestMultiKill"));
+        s.setTurretKills(statInt(stats, "turretKills"));
+        s.setGameEndedInSurrender(statBool(stats, "gameEndedInSurrender"));
+        return s;
+    }
+
+    /**
+     * 聚合队伍统计：对同队参赛者的直显击杀/经济与 stats 伤害求和，
+     * 单项缺失视为 0，保证聚合结果非 null
+     */
+    private MatchSummaryResponse.TeamTotals buildTeamTotals(List<MatchParticipant> teamMembers) {
+        MatchSummaryResponse.TeamTotals t = new MatchSummaryResponse.TeamTotals();
+        int kills = 0;
+        int gold = 0;
+        int damage = 0;
+        int damageTaken = 0;
+        for (MatchParticipant p : teamMembers) {
+            // 直显列缺失视为 0
+            kills += p.getKills() == null ? 0 : p.getKills();
+            gold += p.getGoldEarned() == null ? 0 : p.getGoldEarned();
+            // stats 伤害字段从各人 stats_json 解析，缺失视为 0
+            JsonNode stats = parseStatsJson(p.getStatsJson());
+            damage += statInt(stats, "totalDamageDealtToChampions");
+            damageTaken += statInt(stats, "totalDamageTaken");
+        }
+        t.setKills(kills);
+        t.setGold(gold);
+        t.setDamage(damage);
+        t.setDamageTaken(damageTaken);
+        return t;
+    }
+
+    /**
+     * 组装队友摘要：同队其余参赛者（排除 self），
+     * 正常为 4 人，供最近队友聚合与卡片队友展示
+     */
+    private List<MatchSummaryResponse.Teammate> buildTeammates(
+            List<MatchParticipant> teamMembers, MatchParticipant self) {
+        return teamMembers.stream()
+                .filter(p -> !Objects.equals(p.getPuuid(), self.getPuuid()))
+                .map(p -> {
+                    MatchSummaryResponse.Teammate t = new MatchSummaryResponse.Teammate();
+                    // 队友摘要只需身份与胜负字段，不携带统计明细
+                    t.setPuuid(p.getPuuid());
+                    t.setSummonerName(p.getSummonerName());
+                    t.setChampionId(p.getChampionId());
+                    t.setWin(p.getWin());
+                    return t;
+                })
+                .toList();
+    }
+
+    /**
+     * 解析 stats_json 快照为 JsonNode，供统计字段读取；
+     * 空串或解析失败返回 null，调用方按缺失字段写 0/false 处理
+     */
+    private JsonNode parseStatsJson(String statsJson) {
+        if (statsJson == null || statsJson.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readTree(statsJson);
+        } catch (Exception e) {
+            // 快照损坏不阻断列表接口：仅记录日志并按缺失字段处理
+            log.warn("Failed to parse statsJson, treat as empty: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 读取 stats 数值字段：字段缺失、为 null 或非数字时返回 0
+     */
+    private int statInt(JsonNode stats, String key) {
+        if (stats == null || !stats.has(key) || stats.get(key).isNull()) {
+            return 0;
+        }
+        return stats.get(key).asInt(0);
+    }
+
+    /**
+     * 读取 stats 布尔字段：字段缺失、为 null 或非法时返回 false
+     */
+    private boolean statBool(JsonNode stats, String key) {
+        if (stats == null || !stats.has(key) || stats.get(key).isNull()) {
+            return false;
+        }
+        return stats.get(key).asBoolean(false);
+    }
+
+    /**
+     * self 行缺失时的全零占位：保证列表响应字段结构稳定，前端无需判空
+     */
+    private MatchSummaryResponse.SelfSummary placeholderSelf() {
+        MatchSummaryResponse.SelfSummary s = new MatchSummaryResponse.SelfSummary();
+        // 全零占位：数值 0、布尔 false、召唤师名空串
+        s.setChampionId(0);
+        s.setSummonerName("");
+        s.setKills(0);
+        s.setDeaths(0);
+        s.setAssists(0);
+        s.setWin(false);
+        s.setTotalDamage(0);
+        s.setTotalDamageTaken(0);
+        s.setGoldEarned(0);
+        s.setCs(0);
+        s.setLargestMultiKill(0);
+        s.setTurretKills(0);
+        s.setGameEndedInSurrender(false);
+        return s;
+    }
+
+    /**
+     * 队伍聚合缺失时的全零占位（self 行缺失时使用）
+     */
+    private MatchSummaryResponse.TeamTotals placeholderTeamTotals() {
+        MatchSummaryResponse.TeamTotals t = new MatchSummaryResponse.TeamTotals();
+        // 全零占位：四项聚合均写 0
+        t.setKills(0);
+        t.setGold(0);
+        t.setDamage(0);
+        t.setDamageTaken(0);
+        return t;
     }
 
     /**

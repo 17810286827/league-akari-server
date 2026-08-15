@@ -11,6 +11,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -36,8 +37,9 @@ class MatchControllerIntegrationTest {
     private ObjectMapper objectMapper;
 
     /**
-     * 构造合法的对局同步请求：单名参赛者，字段与 MatchSyncRequest 契约一致。
-     * 测试专用 gameId 取 9000000001~9000000003 区间，避免与真实数据冲突。
+     * 构造合法的对局同步请求：1 名本玩家（puuid 与 selfPuuid 一致）+ 4 名同队队友，
+     * 字段与 MatchSyncRequest 契约一致。测试专用 gameId 取 9000000001~9000000003 区间，
+     * 避免与真实数据冲突。
      */
     private MatchSyncRequest buildRequest(long gameId) {
         MatchSyncRequest req = new MatchSyncRequest();
@@ -56,24 +58,53 @@ class MatchControllerIntegrationTest {
         req.setWinnerTeamId(100);
         req.setSelfPuuid("self-puuid-1");
 
-        // 参赛者明细：直显统计字段齐全，带原始 stats 快照
+        // 参赛者明细：本玩家 + 4 名同队队友，直显统计字段齐全，带原始 stats 快照
+        List<ParticipantSyncRequest> participants = new ArrayList<>();
+        // 本玩家：puuid 与 selfPuuid 一致，列表接口据此定位 self 数据
+        participants.add(buildParticipant("self-puuid-1", "PlayerOne", 103, 5, 3, 8, 212, 14800));
+        // 同队 4 名队友：用于验证 teammates 摘要与队伍聚合
+        participants.add(buildParticipant("teammate-1", "TeammateOne", 266, 4, 5, 6, 180, 11000));
+        participants.add(buildParticipant("teammate-2", "TeammateTwo", 117, 3, 4, 7, 190, 10500));
+        participants.add(buildParticipant("teammate-3", "TeammateThree", 7, 2, 6, 10, 60, 9500));
+        participants.add(buildParticipant("teammate-4", "TeammateFour", 84, 1, 7, 12, 30, 8200));
+        req.setParticipants(participants);
+        return req;
+    }
+
+    /**
+     * 构造单名参赛者：统一放入 teamId=100 队伍（winnerTeamId 同侧），
+     * stats 快照含伤害/经济/补刀/标记等列表接口所需字段
+     */
+    private ParticipantSyncRequest buildParticipant(String puuid, String name, int championId,
+                                                    int kills, int deaths, int assists,
+                                                    int cs, int gold) {
         ParticipantSyncRequest p = new ParticipantSyncRequest();
-        p.setPuuid("player-1");
-        p.setSummonerName("PlayerOne");
-        p.setChampionId(103);
+        // 身份字段：puuid/召唤师名/英雄/队伍
+        p.setPuuid(puuid);
+        p.setSummonerName(name);
+        p.setChampionId(championId);
         p.setTeamId(100);
         p.setPosition("TOP");
-        p.setKills(5);
-        p.setDeaths(3);
-        p.setAssists(8);
+        // 直显统计字段
+        p.setKills(kills);
+        p.setDeaths(deaths);
+        p.setAssists(assists);
         p.setWin(true);
-        p.setGoldEarned(12800);
-        p.setCs(210);
+        p.setGoldEarned(gold);
+        p.setCs(cs);
         p.setItems(List.of(6653, 3078));
         p.setSummonerSpells(List.of(4, 12));
-        p.setStats(Map.of("totalDamageDealtToChampions", 25430, "visionScore", 42));
-        req.setParticipants(List.of(p));
-        return req;
+        // stats 全量快照：与 LCU 字段名一致，验证 stats_json 解析路径
+        p.setStats(Map.of(
+                "totalDamageDealtToChampions", 25430,
+                "totalDamageTaken", 33200,
+                "goldEarned", 14800,
+                "totalMinionsKilled", 212,
+                "largestMultiKill", 4,
+                "turretKills", 1,
+                "gameEndedInSurrender", false,
+                "visionScore", 42));
+        return p;
     }
 
     /**
@@ -105,11 +136,31 @@ class MatchControllerIntegrationTest {
                         .content(objectMapper.writeValueAsString(buildRequest(9000000002L))))
                 .andExpect(status().isOk());
 
-        // 分页查询：契约返回 { data, page, pageSize, total }
-        mockMvc.perform(get("/api/matches").param("page", "1").param("pageSize", "10"))
+        // 分页查询：契约返回 { data, page, pageSize, total }。
+        // 用 startTime/endTime 过滤到测试数据的时间戳（1720000000000），
+        // 避免真实对局按 game_creation 倒序排在 data[0]
+        mockMvc.perform(get("/api/matches")
+                        .param("page", "1").param("pageSize", "10")
+                        .param("startTime", "1719999999999")
+                        .param("endTime", "1720000000001"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").isNumber())
-                .andExpect(jsonPath("$.data").isArray());
+                .andExpect(jsonPath("$.data").isArray())
+                // 本玩家数据：self 由 puuid 与 selfPuuid 匹配的行填充
+                .andExpect(jsonPath("$.data[0].self.championId").value(103))
+                .andExpect(jsonPath("$.data[0].self.kills").value(5))
+                .andExpect(jsonPath("$.data[0].self.win").value(true))
+                // stats_json 解析路径：伤害/补刀/标记字段应取自 stats 快照
+                .andExpect(jsonPath("$.data[0].self.totalDamage").value(25430))
+                .andExpect(jsonPath("$.data[0].self.cs").value(212))
+                .andExpect(jsonPath("$.data[0].self.largestMultiKill").value(4))
+                .andExpect(jsonPath("$.data[0].self.gameEndedInSurrender").value(false))
+                // 队伍聚合：kills 为 5 人直显击杀之和（5+4+3+2+1=15），非负
+                .andExpect(jsonPath("$.data[0].teamTotals.kills").value(15))
+                .andExpect(jsonPath("$.data[0].teamTotals.damage").value(25430 * 5))
+                // 队友摘要：同队除 self 外应有 4 人
+                .andExpect(jsonPath("$.data[0].teammates.length()").value(4))
+                .andExpect(jsonPath("$.data[0].teammates[0].puuid").value("teammate-1"));
     }
 
     /**
@@ -124,11 +175,11 @@ class MatchControllerIntegrationTest {
                         .content(objectMapper.writeValueAsString(buildRequest(gameId))))
                 .andExpect(status().isOk());
 
-        // 详情查询：data 下含 gameId 与 participants[0].puuid
+        // 详情查询：data 下含 gameId 与 participants[0].puuid（本玩家排首位）
         mockMvc.perform(get("/api/matches/{gameId}", gameId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.gameId").value(gameId))
-                .andExpect(jsonPath("$.data.participants[0].puuid").value("player-1"));
+                .andExpect(jsonPath("$.data.participants[0].puuid").value("self-puuid-1"));
     }
 
     /**
