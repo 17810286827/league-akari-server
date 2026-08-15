@@ -1,5 +1,6 @@
 package com.leagueakari.config;
 
+import com.leagueakari.service.MatchNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

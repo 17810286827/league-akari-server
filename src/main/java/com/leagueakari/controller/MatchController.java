@@ -34,6 +34,7 @@ public class MatchController {
     public Map<String, Object> syncMatch(@Valid @RequestBody MatchSyncRequest request) {
         // 幂等保存：重复推送同一 gameId 不会产生重复数据
         matchService.saveMatch(request);
+        // 同步接口契约：成功即返回 code=0，无需回传实体数据
         return Map.of("code", 0);
     }
 
@@ -45,6 +46,7 @@ public class MatchController {
             @RequestParam(required = false) Integer queueId,
             @RequestParam(required = false) Long startTime,
             @RequestParam(required = false) Long endTime) {
+        // 筛选参数均为可选，page/pageSize 缺省时取默认值 1/20
         return matchService.pageMatches(page, pageSize, queueId, startTime, endTime);
     }
 
@@ -52,6 +54,7 @@ public class MatchController {
     @GetMapping("/{gameId}")
     public Map<String, MatchDetailResponse> getMatchDetail(@PathVariable Long gameId) {
         // data 包装与分页/同步响应的扁平结构区分，详情契约见规格第 4.2 节
+        // 对局不存在时由 service 抛出 MatchNotFoundException，全局处理器转为 404
         return Map.of("data", matchService.getMatchDetail(gameId));
     }
 }
