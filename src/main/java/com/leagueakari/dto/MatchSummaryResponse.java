@@ -44,6 +44,9 @@ public class MatchSummaryResponse {
     /** 同队其余 4 名队友摘要，用于最近队友聚合与卡片队友展示 */
     private List<Teammate> teammates;
 
+    /** 双方 10 人轻量档案（含 self，前端以 puuid 区分），供列表页折叠卡展示 */
+    private List<ParticipantLight> participants;
+
     /**
      * 本玩家个人数据：身份与击杀/死亡/助攻来自参赛者直显列，
      * 伤害/经济/补刀/标记字段来自 stats_json 解析（缺失写 0/false）
@@ -89,6 +92,30 @@ public class MatchSummaryResponse {
 
         /** 该局是否以投降结束（statsJson 的 gameEndedInSurrender） */
         private Boolean gameEndedInSurrender;
+
+        /** 出装（statsJson 的 item0-6，按槽位顺序） */
+        private List<Integer> items;
+
+        /** 召唤师技能（statsJson 的 spell1Id/spell2Id，按槽位顺序） */
+        private List<Integer> summonerSpells;
+
+        /** 海克斯强化（statsJson 的 playerAugment1-6，按槽位顺序） */
+        private List<Integer> augments;
+
+        /** 符文配置（perks：LCU 平铺字段或 SGP 嵌套对象） */
+        private ParticipantPerks perks;
+
+        /** 双杀次数（statsJson 的 doubleKills） */
+        private Integer doubleKills;
+
+        /** 三杀次数（statsJson 的 tripleKills） */
+        private Integer tripleKills;
+
+        /** 四杀次数（statsJson 的 quadraKills） */
+        private Integer quadraKills;
+
+        /** 五杀次数（statsJson 的 pentaKills） */
+        private Integer pentaKills;
     }
 
     /**
@@ -127,5 +154,69 @@ public class MatchSummaryResponse {
 
         /** 是否获胜 */
         private Boolean win;
+    }
+
+    /**
+     * 参赛者符文配置：perkIds 为主系+副系共 6 颗符文，
+     * 兼容 LCU 平铺（perk0-5 + perkPrimaryStyle + perkSubStyle）与 SGP 嵌套（perks 对象）两种来源
+     */
+    @Data
+    public static class ParticipantPerks {
+
+        /** 符文 ID 列表（perk0-5，或 SGP 嵌套 perks.perkIds） */
+        private List<Integer> perkIds;
+
+        /** 主系符文页样式 ID（perkPrimaryStyle，或 SGP 嵌套 perks.perkStyle） */
+        private Integer perkStyle;
+
+        /** 副系符文页样式 ID（perkSubStyle，或 SGP 嵌套 perks.perkSubStyle） */
+        private Integer perkSubStyle;
+    }
+
+    /**
+     * 参赛者轻量档案：双方 10 人全量（含 self，前端以 puuid 区分），
+     * 供列表页折叠卡展示装备/技能/海克斯/符文
+     */
+    @Data
+    public static class ParticipantLight {
+
+        /** 玩家 puuid，前端以此区分 self */
+        private String puuid;
+
+        /** 召唤师名 */
+        private String summonerName;
+
+        /** 英雄 ID */
+        private Integer championId;
+
+        /** 队伍 ID（100 蓝方 / 200 红方） */
+        private Integer teamId;
+
+        /** 分路，如 TOP / JUNGLE / MIDDLE / BOTTOM / UTILITY */
+        private String position;
+
+        /** 是否获胜 */
+        private Boolean win;
+
+        /** 击杀数 */
+        private Integer kills;
+
+        /** 死亡数 */
+        private Integer deaths;
+
+        /** 助攻数 */
+        private Integer assists;
+
+        /** 出装（statsJson 的 item0-6，按槽位顺序） */
+        private List<Integer> items;
+
+        /** 召唤师技能（statsJson 的 spell1Id/spell2Id，按槽位顺序） */
+        private List<Integer> summonerSpells;
+
+        /** 海克斯强化（statsJson 的 playerAugment1-6，按槽位顺序） */
+        private List<Integer> augments;
+
+        /** 符文配置（perks：LCU 平铺或 SGP 嵌套） */
+        private ParticipantPerks perks;
     }
 }

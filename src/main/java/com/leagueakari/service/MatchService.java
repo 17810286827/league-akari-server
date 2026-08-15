@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -194,11 +195,15 @@ public class MatchService {
     }
 
     /**
-     * 为列表项补充本玩家（self）、所在队伍聚合（teamTotals）与队友摘要（teammates）；
-     * 若 self 行缺失（异常数据），返回全零占位且不抛错，保证列表接口始终可用
+     * 为列表项补充本玩家（self）、队伍聚合（teamTotals）、队友摘要（teammates）
+     * 与双方 10 人轻量档案（participants）；
+     * 若 self 行缺失（异常数据），self/teamTotals/teammates 返回占位且不抛错，保证列表接口始终可用
      */
     private void fillMatchExtras(MatchSummaryResponse resp, String selfPuuid,
                                  List<MatchParticipant> participants) {
+        // 10 人全量轻量档案与 self 是否缺失无关，统一由本页参赛者构建（前端以 puuid 区分 self）
+        resp.setParticipants(buildParticipants(participants));
+
         // 定位本玩家行：puuid 与主表 self_puuid 一致（null 安全比较）
         MatchParticipant self = participants.stream()
                 .filter(p -> Objects.equals(selfPuuid, p.getPuuid()))
@@ -246,6 +251,16 @@ public class MatchService {
         s.setLargestMultiKill(statInt(stats, "largestMultiKill"));
         s.setTurretKills(statInt(stats, "turretKills"));
         s.setGameEndedInSurrender(statBool(stats, "gameEndedInSurrender"));
+        // 折叠卡增强字段：出装/技能/海克斯/符文 + 多杀，全部从 stats_json 提取，缺失写空列表或 0
+        s.setItems(statList(stats, "item0", "item1", "item2", "item3", "item4", "item5", "item6"));
+        s.setSummonerSpells(statList(stats, "spell1Id", "spell2Id"));
+        s.setAugments(statList(stats, "playerAugment1", "playerAugment2", "playerAugment3",
+                "playerAugment4", "playerAugment5", "playerAugment6"));
+        s.setPerks(buildPerks(stats));
+        s.setDoubleKills(statInt(stats, "doubleKills"));
+        s.setTripleKills(statInt(stats, "tripleKills"));
+        s.setQuadraKills(statInt(stats, "quadraKills"));
+        s.setPentaKills(statInt(stats, "pentaKills"));
         return s;
     }
 
@@ -296,6 +311,61 @@ public class MatchService {
     }
 
     /**
+     * 组装双方 10 人轻量档案：直显列透传 + stats_json 提取出装/技能/海克斯/符文，
+     * 含 self 行（前端以 puuid 区分）；stats 缺失时列表字段为空列表、数值写 0
+     */
+    private List<MatchSummaryResponse.ParticipantLight> buildParticipants(
+            List<MatchParticipant> participants) {
+        return participants.stream().map(p -> {
+            MatchSummaryResponse.ParticipantLight pl = new MatchSummaryResponse.ParticipantLight();
+            // 直显列：身份/队伍/分路/胜负与击杀助攻，缺失数值写 0
+            pl.setPuuid(p.getPuuid());
+            pl.setSummonerName(p.getSummonerName());
+            pl.setChampionId(p.getChampionId());
+            pl.setTeamId(p.getTeamId());
+            pl.setPosition(p.getPosition());
+            pl.setWin(p.getWin());
+            pl.setKills(p.getKills() == null ? 0 : p.getKills());
+            pl.setDeaths(p.getDeaths() == null ? 0 : p.getDeaths());
+            pl.setAssists(p.getAssists() == null ? 0 : p.getAssists());
+            // stats 快照字段：item0-6 与 spell1Id/spell2Id 在 LCU/SGP 均位于 stats 顶层，读取路径统一
+            JsonNode stats = parseStatsJson(p.getStatsJson());
+            pl.setItems(statList(stats, "item0", "item1", "item2", "item3", "item4", "item5", "item6"));
+            pl.setSummonerSpells(statList(stats, "spell1Id", "spell2Id"));
+            pl.setAugments(statList(stats, "playerAugment1", "playerAugment2", "playerAugment3",
+                    "playerAugment4", "playerAugment5", "playerAugment6"));
+            pl.setPerks(buildPerks(stats));
+            return pl;
+        }).toList();
+    }
+
+    /**
+     * 组装参赛者符文配置，双路径探测（仅 perks 需要兼容两种来源）：
+     * 1. SGP 嵌套：stats.perks 为对象，读取 perkIds/perkStyle/perkSubStyle；
+     * 2. LCU 平铺：perk0-5 + perkPrimaryStyle + perkSubStyle 位于 stats 顶层。
+     * 两条路径字段缺失时均为空列表/0，保证响应结构稳定
+     */
+    private MatchSummaryResponse.ParticipantPerks buildPerks(JsonNode stats) {
+        MatchSummaryResponse.ParticipantPerks perks = new MatchSummaryResponse.ParticipantPerks();
+        if (stats == null) {
+            return perks;
+        }
+        JsonNode nested = stats.get("perks");
+        if (nested != null && nested.isObject()) {
+            // SGP 嵌套路径：符文 ID 为数组字段，样式字段为对象内标量
+            perks.setPerkIds(statIntArray(nested, "perkIds"));
+            perks.setPerkStyle(statInt(nested, "perkStyle"));
+            perks.setPerkSubStyle(statInt(nested, "perkSubStyle"));
+        } else {
+            // LCU 平铺路径：6 颗符文 + 主副系样式均位于 stats 顶层
+            perks.setPerkIds(statList(stats, "perk0", "perk1", "perk2", "perk3", "perk4", "perk5"));
+            perks.setPerkStyle(statInt(stats, "perkPrimaryStyle"));
+            perks.setPerkSubStyle(statInt(stats, "perkSubStyle"));
+        }
+        return perks;
+    }
+
+    /**
      * 解析 stats_json 快照为 JsonNode，供统计字段读取；
      * 空串或解析失败返回 null，调用方按缺失字段写 0/false 处理
      */
@@ -333,11 +403,41 @@ public class MatchService {
     }
 
     /**
+     * 按连续键名读取 stats 整数列表（如 item0-6、playerAugment1-6、perk0-5）：
+     * 按传入键顺序取值，缺失/为 null 的键跳过，stats 缺失时返回空列表
+     */
+    private List<Integer> statList(JsonNode stats, String... keys) {
+        List<Integer> values = new ArrayList<>();
+        if (stats == null) {
+            return values;
+        }
+        for (String key : keys) {
+            if (stats.has(key) && !stats.get(key).isNull()) {
+                values.add(stats.get(key).asInt(0));
+            }
+        }
+        return values;
+    }
+
+    /**
+     * 读取 stats 数组字段为整数列表（如 SGP 嵌套 perks.perkIds）：
+     * 字段缺失或非数组时返回空列表
+     */
+    private List<Integer> statIntArray(JsonNode stats, String key) {
+        List<Integer> values = new ArrayList<>();
+        if (stats == null || !stats.has(key) || !stats.get(key).isArray()) {
+            return values;
+        }
+        stats.get(key).forEach(node -> values.add(node.asInt(0)));
+        return values;
+    }
+
+    /**
      * self 行缺失时的全零占位：保证列表响应字段结构稳定，前端无需判空
      */
     private MatchSummaryResponse.SelfSummary placeholderSelf() {
         MatchSummaryResponse.SelfSummary s = new MatchSummaryResponse.SelfSummary();
-        // 全零占位：数值 0、布尔 false、召唤师名空串
+        // 全零占位：数值 0、布尔 false、召唤师名空串、列表字段空列表、符文占位对象
         s.setChampionId(0);
         s.setSummonerName("");
         s.setKills(0);
@@ -351,6 +451,19 @@ public class MatchService {
         s.setLargestMultiKill(0);
         s.setTurretKills(0);
         s.setGameEndedInSurrender(false);
+        s.setItems(List.of());
+        s.setSummonerSpells(List.of());
+        s.setAugments(List.of());
+        // 符文占位：空 perkIds + 样式 0，保持折叠卡渲染结构稳定
+        MatchSummaryResponse.ParticipantPerks perks = new MatchSummaryResponse.ParticipantPerks();
+        perks.setPerkIds(List.of());
+        perks.setPerkStyle(0);
+        perks.setPerkSubStyle(0);
+        s.setPerks(perks);
+        s.setDoubleKills(0);
+        s.setTripleKills(0);
+        s.setQuadraKills(0);
+        s.setPentaKills(0);
         return s;
     }
 

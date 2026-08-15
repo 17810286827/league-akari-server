@@ -1,6 +1,9 @@
 package com.leagueakari.service;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.leagueakari.dto.MatchSummaryResponse;
 import com.leagueakari.dto.MatchSyncRequest;
+import com.leagueakari.dto.PageResponse;
 import com.leagueakari.dto.ParticipantSyncRequest;
 import com.leagueakari.entity.Match;
 import com.leagueakari.entity.MatchParticipant;
@@ -14,6 +17,7 @@ import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -112,5 +116,107 @@ class MatchServiceTest {
         // 断言幂等跳过：match 与参赛者均未插入
         verify(matchMapper, never()).insert(any(Match.class));
         verify(matchParticipantMapper, never()).insert(any(MatchParticipant.class));
+    }
+
+    /**
+     * 用例：列表响应包含 10 人轻量参与者档案与 self 增强字段（折叠卡数据）。
+     * <p>覆盖双数据源：0 号位（self）为 LCU 平铺 perks（perk0-5 在 stats 顶层），
+     * 5 号位为 SGP 嵌套 perks（perks 对象含 perkIds/perkStyle/perkSubStyle）。</p>
+     */
+    @Test
+    void 列表响应包含轻量参与者与self增强字段() {
+        // 构造分页结果：单条对局主表记录，self_puuid 指向 0 号位参赛者
+        Match match = new Match();
+        match.setId(1L);
+        match.setGameId(1000000003L);
+        match.setGameCreation(1720000000000L);
+        match.setGameDuration(1830);
+        match.setGameMode("CLASSIC");
+        match.setQueueId(420);
+        match.setRegion("na1");
+        match.setWinnerTeamId(100);
+        match.setSelfPuuid("self-puuid-1");
+        Page<Match> page = new Page<>(1, 10);
+        page.setRecords(List.of(match));
+        page.setTotal(1);
+        when(matchMapper.selectPage(any(), any())).thenReturn(page);
+
+        // 10 名参赛者 fixture：0 号位 self（LCU 平铺）、5 号位 SGP 嵌套 perks
+        List<MatchParticipant> participants = buildParticipantsFixture();
+        when(matchParticipantMapper.selectList(any())).thenReturn(participants);
+
+        // 执行分页查询，取唯一一条列表项
+        PageResponse<MatchSummaryResponse> resp = matchService.pageMatches(1, 10, null, null, null);
+        MatchSummaryResponse item = resp.getData().get(0);
+
+        // self 增强字段：出装 7 槽、海克斯 6 槽、召唤师技能 2 槽、三杀 1 次
+        assertThat(item.getSelf().getItems()).hasSize(7);
+        assertThat(item.getSelf().getAugments()).hasSize(6);
+        assertThat(item.getSelf().getSummonerSpells()).hasSize(2);
+        assertThat(item.getSelf().getTripleKills()).isEqualTo(1);
+        // 10 人轻量档案全量返回（含 self，前端以 puuid 区分）
+        assertThat(item.getParticipants()).hasSize(10);
+        // LCU 平铺 perks：perkStyle 8100、perkIds 6 颗
+        assertThat(item.getParticipants().get(0).getPerks().getPerkStyle()).isEqualTo(8100);
+        assertThat(item.getParticipants().get(0).getPerks().getPerkIds()).hasSize(6);
+        // SGP 嵌套 perks：同样解析出 perkStyle 8100 与 6 颗 perkIds
+        assertThat(item.getParticipants().get(5).getPerks().getPerkStyle()).isEqualTo(8100);
+        assertThat(item.getParticipants().get(5).getPerks().getPerkIds()).hasSize(6);
+    }
+
+    /**
+     * 构造 10 名参赛者 fixture：0 号位为 self（LCU 平铺 statsJson），
+     * 5 号位使用 SGP 嵌套 perks 结构，其余参赛者仅带最简 stats
+     */
+    private List<MatchParticipant> buildParticipantsFixture() {
+        List<MatchParticipant> list = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            MatchParticipant p = new MatchParticipant();
+            p.setMatchId(1L);
+            p.setPuuid("player-" + i);
+            p.setSummonerName("Player" + i);
+            p.setChampionId(103 + i);
+            p.setTeamId(i < 5 ? 100 : 200);
+            p.setPosition(i < 5 ? "TOP" : "BOTTOM");
+            p.setKills(1);
+            p.setDeaths(2);
+            p.setAssists(3);
+            p.setWin(i < 5);
+            if (i == 0) {
+                // self 行：puuid 与主表 self_puuid 一致，statsJson 为 LCU 平铺结构
+                p.setPuuid("self-puuid-1");
+                p.setStatsJson(lcuFlatStatsJson());
+            } else if (i == 5) {
+                // SGP 透传：perks 为嵌套对象（perkIds/perkStyle/perkSubStyle）
+                p.setStatsJson(sgpNestedPerksJson());
+            } else {
+                // 其余参赛者：最简 stats，仅出装一个槽位
+                p.setStatsJson("{\"item0\":1055}");
+            }
+            list.add(p);
+        }
+        return list;
+    }
+
+    /**
+     * LCU 平铺 statsJson fixture：item0-6 / spell1Id / spell2Id / playerAugment1-6 /
+     * perk0-5 / perkPrimaryStyle / perkSubStyle / 多杀字段均在顶层
+     */
+    private String lcuFlatStatsJson() {
+        return "{\"item0\":3157,\"item1\":3089,\"item2\":3020,\"item3\":3135,\"item4\":3152,\"item5\":3340,\"item6\":3364,"
+                + "\"spell1Id\":4,\"spell2Id\":12,"
+                + "\"playerAugment1\":1,\"playerAugment2\":2,\"playerAugment3\":3,\"playerAugment4\":4,\"playerAugment5\":5,\"playerAugment6\":6,"
+                + "\"perk0\":8112,\"perk1\":8128,\"perk2\":8009,\"perk3\":8138,\"perk4\":8304,\"perk5\":8316,"
+                + "\"perkPrimaryStyle\":8100,\"perkSubStyle\":8300,"
+                + "\"doubleKills\":2,\"tripleKills\":1,\"quadraKills\":0,\"pentaKills\":0}";
+    }
+
+    /**
+     * SGP 嵌套 perks statsJson fixture：perks 为对象（perkIds/perkStyle/perkSubStyle），
+     * 验证双路径探测的嵌套分支
+     */
+    private String sgpNestedPerksJson() {
+        return "{\"item0\":3157,\"item1\":3089,\"item2\":3020,\"item3\":3135,\"item4\":3152,\"item5\":3340,\"item6\":3364,"
+                + "\"perks\":{\"perkIds\":[8112,8128,8009,8138,8304,8316],\"perkStyle\":8100,\"perkSubStyle\":8300}}";
     }
 }
