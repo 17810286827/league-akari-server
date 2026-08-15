@@ -24,10 +24,18 @@ public class MatchSyncRequest {
     @NotNull
     private Integer gameDuration;
 
+    /** 模式，如 CLASSIC / CHERRY */
     private String gameMode;
+
+    /** 类型，如 MATCHED_GAME */
     private String gameType;
+
+    /** 队列 ID，如 420（排位） */
     private Integer queueId;
+
+    /** 地图 ID，如 11（召唤师峡谷） */
     private Integer mapId;
+
     private String gameVersion;
     private String region;
     private String rsoPlatformId;
