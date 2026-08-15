@@ -3,12 +3,15 @@ package com.leagueakari.service;
 import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.dto.ParticipantSyncRequest;
 import com.leagueakari.entity.Match;
+import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.mapper.MatchMapper;
 import com.leagueakari.mapper.MatchParticipantMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
@@ -29,6 +32,10 @@ class MatchServiceTest {
 
     @Mock
     private MatchParticipantMapper matchParticipantMapper;
+
+    /** 真实 Jackson 实例（spy），验证 teamsJson/statsJson 序列化路径 */
+    @Spy
+    private ObjectMapper objectMapper = new ObjectMapper();
 
     @InjectMocks
     private MatchService matchService;
@@ -72,7 +79,7 @@ class MatchServiceTest {
         matchService.saveMatch(buildRequest(1000000001L));
 
         verify(matchMapper, times(1)).insert(any(Match.class));
-        verify(matchParticipantMapper, times(1)).insert(any());
+        verify(matchParticipantMapper, times(1)).insert(any(MatchParticipant.class));
     }
 
     @Test
@@ -81,7 +88,7 @@ class MatchServiceTest {
 
         matchService.saveMatch(buildRequest(1000000002L));
 
-        verify(matchMapper, never()).insert(any());
-        verify(matchParticipantMapper, never()).insert(any());
+        verify(matchMapper, never()).insert(any(Match.class));
+        verify(matchParticipantMapper, never()).insert(any(MatchParticipant.class));
     }
 }
