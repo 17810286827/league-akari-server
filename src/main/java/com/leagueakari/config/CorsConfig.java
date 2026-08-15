@@ -6,7 +6,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
  * CORS 跨域配置：允许浏览器从任意来源直连 /api 接口。
- * <p>背景：前端 Vite dev server 运行在 localhost:5173，与后端 8080 端口不同源，
+ * <p>背景：前端 Vite dev server 运行在 localhost:5177，与后端 8081 端口不同源，
  * 浏览器对跨源请求会先发 OPTIONS 预检，后端不返回 CORS 头则请求被直接拦截。
  * 本机自用场景无鉴权，因此对任意来源放开跨域。</p>
  */
