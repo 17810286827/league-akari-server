@@ -1,0 +1,25 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    # MySQL 位于虚拟机 192.168.31.90:3306；createDatabaseIfNotExist 自动建库，allowPublicKeyRetrieval 兼容 caching_sha2_password
+    # characterEncoding 需为 Java 字符集名 UTF-8（Connector/J 8 会自动与服务器协商为 utf8mb4），utf8mb4 不是合法 Java charset 名
+    url: jdbc:mysql://192.168.31.90:3306/league_akari?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:chen9911}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    banner: false
+
+logging:
+  level:
+    com.leagueakari: info
