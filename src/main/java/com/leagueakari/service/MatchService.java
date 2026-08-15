@@ -1,8 +1,12 @@
 package com.leagueakari.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.dto.MatchDetailResponse;
+import com.leagueakari.dto.MatchSummaryResponse;
 import com.leagueakari.dto.MatchSyncRequest;
+import com.leagueakari.dto.PageResponse;
 import com.leagueakari.dto.ParticipantSyncRequest;
 import com.leagueakari.dto.TeamSyncRequest;
 import com.leagueakari.entity.Match;
@@ -110,5 +114,86 @@ public class MatchService {
             log.error("Failed to serialize value to JSON", e);
             return null;
         }
+    }
+
+    /**
+     * 分页查询对局列表，支持队列与时间范围筛选
+     * <p>筛选条件均为可选：queueId 精确匹配，startTime/endTime 为 game_creation
+     * 时间戳区间；结果按创建时间倒序，返回精简的列表项 DTO。</p>
+     */
+    public PageResponse<MatchSummaryResponse> pageMatches(
+            long page, long pageSize, Integer queueId, Long startTime, Long endTime) {
+
+        // 组装查询条件：可选的队列过滤与时间范围过滤
+        QueryWrapper<Match> wrapper = new QueryWrapper<>();
+        if (queueId != null) {
+            wrapper.eq("queue_id", queueId);
+        }
+        if (startTime != null) {
+            wrapper.ge("game_creation", startTime);
+        }
+        if (endTime != null) {
+            wrapper.le("game_creation", endTime);
+        }
+        // 新对局排前面，便于客户端展示最近战绩
+        wrapper.orderByDesc("game_creation");
+
+        // 分页插件改写 SQL：自动生成 COUNT 与 LIMIT，total 为满足条件的总条数
+        Page<Match> result = matchMapper.selectPage(new Page<>(page, pageSize), wrapper);
+        // 实体转列表项 DTO：只透传列表需要的精简字段，不携带 JSON 快照
+        List<MatchSummaryResponse> items = result.getRecords().stream().map(m -> {
+            MatchSummaryResponse resp = new MatchSummaryResponse();
+            resp.setGameId(m.getGameId());
+            resp.setGameCreation(m.getGameCreation());
+            resp.setGameDuration(m.getGameDuration());
+            resp.setGameMode(m.getGameMode());
+            resp.setQueueId(m.getQueueId());
+            resp.setRegion(m.getRegion());
+            resp.setWinnerTeamId(m.getWinnerTeamId());
+            resp.setSelfPuuid(m.getSelfPuuid());
+            return resp;
+        }).toList();
+
+        log.info("Query matches: page={}, pageSize={}, total={}", page, pageSize, result.getTotal());
+        return new PageResponse<>(items, page, pageSize, result.getTotal());
+    }
+
+    /**
+     * 查询对局详情（含参赛者列表），不存在抛 MatchNotFoundException
+     * <p>主表按 game_id 精确查询，命中后按主键关联参赛者明细；
+     * 详情包含 teams_json 与各参赛者的 stats_json 全量快照。</p>
+     */
+    public MatchDetailResponse getMatchDetail(Long gameId) {
+        // 按幂等键 game_id 查询主表记录
+        Match match = matchMapper.selectOne(new QueryWrapper<Match>().eq("game_id", gameId));
+        if (match == null) {
+            // 未命中：抛出领域异常，由全局异常处理器转为 404
+            log.warn("Match not found, gameId={}", gameId);
+            throw new MatchNotFoundException(gameId);
+        }
+
+        // 按主表主键查询参赛者明细（match_participant.match_id 外键）
+        List<MatchParticipant> participants = matchParticipantMapper.selectList(
+                new QueryWrapper<MatchParticipant>().eq("match_id", match.getId()));
+
+        // 实体字段逐一透传到详情 DTO，保证响应契约字段齐全
+        MatchDetailResponse resp = new MatchDetailResponse();
+        resp.setGameId(match.getGameId());
+        resp.setGameCreation(match.getGameCreation());
+        resp.setGameDuration(match.getGameDuration());
+        resp.setGameMode(match.getGameMode());
+        resp.setGameType(match.getGameType());
+        resp.setQueueId(match.getQueueId());
+        resp.setMapId(match.getMapId());
+        resp.setGameVersion(match.getGameVersion());
+        resp.setRegion(match.getRegion());
+        resp.setRsoPlatformId(match.getRsoPlatformId());
+        resp.setDataSource(match.getDataSource());
+        resp.setWinnerTeamId(match.getWinnerTeamId());
+        resp.setSelfPuuid(match.getSelfPuuid());
+        resp.setTeamsJson(match.getTeamsJson());
+        resp.setParticipants(participants);
+        log.info("Query match detail: gameId={}, participants={}", gameId, participants.size());
+        return resp;
     }
 }
