@@ -5,12 +5,14 @@ import com.leagueakari.dto.MatchSummaryResponse;
 import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.dto.PageResponse;
 import com.leagueakari.dto.TimelineSyncRequest;
+import com.leagueakari.service.AiAnalysisService;
 import com.leagueakari.service.MatchNotFoundException;
 import com.leagueakari.service.MatchService;
 import com.leagueakari.service.MatchTimelineService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Map;
 import java.util.Objects;
@@ -35,6 +38,7 @@ public class MatchController {
 
     private final MatchService matchService;
     private final MatchTimelineService matchTimelineService;
+    private final AiAnalysisService aiAnalysisService;
 
     /** 接收对局同步推送，幂等写入 */
     @PostMapping
@@ -68,6 +72,35 @@ public class MatchController {
         // data 包装与分页/同步响应的扁平结构区分，详情契约见规格第 4.2 节
         // 对局不存在时由 service 抛出 MatchNotFoundException，全局处理器转为 404
         return Map.of("data", matchService.getMatchDetail(gameId));
+    }
+
+    /**
+     * AI 对局表现分析（SSE 流式）：取本局详情组装数据摘要，流式调用 opencode go 模型，
+     * 增量推送分析文本（前端打字机效果；结果 JVM 缓存 2 分钟，命中时 start 事件 fromCache=true）。
+     * 事件协议见 AiAnalysisService.analyzeStream；校验失败（无 API Key / 对局不存在）
+     * 由全局异常处理器在 HTTP 响应阶段返回 503/404。
+     * SseEmitter 生命周期回调打日志：连接完成/超时/异常是"无响应"排查的关键边界
+     */
+    @PostMapping(value = "/{gameId}/ai-analysis", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter analyzeMatch(@PathVariable Long gameId) {
+        long startTime = System.currentTimeMillis();
+        log.info("AI analysis requested: gameId={}", gameId);
+        // 前置校验：API Key 未配置（503）或对局不存在（404）时在此抛出，避免流已建立再中断
+        aiAnalysisService.validateAndConfigured(gameId);
+        // SseEmitter 超时 5 分钟：流式分析整体耗时较长，超时后连接自动关闭
+        SseEmitter emitter = new SseEmitter(300_000L);
+        // 连接生命周期日志：正常结束/超时/异常各打一条，用于确认流是否被服务器侧正常收尾
+        emitter.onCompletion(() -> log.info("AI analysis SSE connection completed: gameId={}, elapsed={}ms",
+                gameId, System.currentTimeMillis() - startTime));
+        emitter.onTimeout(() -> log.warn("AI analysis SSE connection timed out: gameId={}, elapsed={}ms",
+                gameId, System.currentTimeMillis() - startTime));
+        emitter.onError(e -> log.error("AI analysis SSE connection error: gameId={}, elapsed={}ms",
+                gameId, System.currentTimeMillis() - startTime, e));
+        // 流式分析在线程池异步执行并推送事件，controller 立即返回响应头
+        aiAnalysisService.analyzeStream(gameId, emitter);
+        log.info("AI analysis stream dispatched: gameId={}, elapsed={}ms",
+                gameId, System.currentTimeMillis() - startTime);
+        return emitter;
     }
 
     /** 接收时间线推送（frames 全量），幂等写入 */
