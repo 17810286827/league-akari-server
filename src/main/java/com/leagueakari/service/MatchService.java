@@ -166,6 +166,7 @@ public class MatchService {
             resp.setGameCreation(m.getGameCreation());
             resp.setGameDuration(m.getGameDuration());
             resp.setGameMode(m.getGameMode());
+            resp.setMapId(m.getMapId());
             resp.setQueueId(m.getQueueId());
             resp.setRegion(m.getRegion());
             resp.setWinnerTeamId(m.getWinnerTeamId());
@@ -335,14 +336,30 @@ public class MatchService {
             pl.setAugments(statList(stats, "playerAugment1", "playerAugment2", "playerAugment3",
                     "playerAugment4", "playerAugment5", "playerAugment6"));
             pl.setPerks(buildPerks(stats));
-            // 折叠卡统计行字段：LCU/SGP 字段名一致，缺失写 0
+            // 折叠卡统计行/雷达图字段：LCU/SGP 字段名一致，缺失写 0
+            pl.setTotalDamageDealtToChampions(statInt(stats, "totalDamageDealtToChampions"));
             pl.setTotalDamageTaken(statInt(stats, "totalDamageTaken"));
             pl.setTotalHeal(statInt(stats, "totalHeal"));
             pl.setVisionScore(statInt(stats, "visionScore"));
             pl.setGoldEarned(statInt(stats, "goldEarned"));
-            pl.setCs(statInt(stats, "totalMinionsKilled"));
+            // 补刀口径与详情接口一致（小兵 + 野怪），避免折叠卡补兵标签与展开态判定不一致
+            pl.setCs(statInt(stats, "neutralMinionsKilled") + statInt(stats, "totalMinionsKilled"));
             pl.setTurretKills(statInt(stats, "turretKills"));
             pl.setWardsPlaced(statInt(stats, "wardsPlaced"));
+            // 折叠卡成就标签字段：多杀/拆塔/护盾/控制读 stats 顶层，
+            // 单杀/塔杀/补刀压制/击飞击杀读 SGP challenges（LCU 缺失按 0）
+            pl.setTotalDamageToTowers(statInt(stats, "damageDealtToTurrets"));
+            pl.setDoubleKills(statInt(stats, "doubleKills"));
+            pl.setTripleKills(statInt(stats, "tripleKills"));
+            pl.setQuadraKills(statInt(stats, "quadraKills"));
+            pl.setPentaKills(statInt(stats, "pentaKills"));
+            pl.setTotalDamageShieldedOnTeammates(statInt(stats, "totalDamageShieldedOnTeammates"));
+            pl.setTimeCCingOthers(statInt(stats, "timeCCingOthers"));
+            pl.setSoloKills(statChallengeInt(stats, "soloKills"));
+            pl.setKillsNearEnemyTurret(statChallengeInt(stats, "killsNearEnemyTurret"));
+            pl.setKillsUnderOwnTurret(statChallengeInt(stats, "killsUnderOwnTurret"));
+            pl.setMaxCsAdvantageOnLaneOpponent(statChallengeInt(stats, "maxCsAdvantageOnLaneOpponent"));
+            pl.setKnockEnemyIntoTeamAndKill(statChallengeInt(stats, "knockEnemyIntoTeamAndKill"));
             return pl;
         }).toList();
     }
@@ -403,6 +420,21 @@ public class MatchService {
             return 0;
         }
         return stats.get(key).asInt(0);
+    }
+
+    /**
+     * 读取 stats.challenges 数值字段（SGP 独有挑战数据，LCU 缺失时为 0）：
+     * challenges 对象或字段缺失、为 null 时返回 0，保证响应结构稳定
+     */
+    private int statChallengeInt(JsonNode stats, String key) {
+        if (stats == null || !stats.has("challenges") || !stats.get("challenges").has(key)) {
+            return 0;
+        }
+        JsonNode value = stats.get("challenges").get(key);
+        if (value.isNull()) {
+            return 0;
+        }
+        return value.asInt(0);
     }
 
     /**
@@ -507,9 +539,12 @@ public class MatchService {
             throw new MatchNotFoundException(gameId);
         }
 
-        // 按主表主键查询参赛者明细（match_participant.match_id 外键）
+        // 按主表主键查询参赛者明细（match_participant.match_id 外键）；
+        // 按 id 升序返回，与列表接口 batchLoadParticipants 口径一致，保证展开卡与折叠卡玩家顺序稳定
         List<MatchParticipant> participants = matchParticipantMapper.selectList(
-                new QueryWrapper<MatchParticipant>().eq("match_id", match.getId()));
+                new QueryWrapper<MatchParticipant>()
+                        .eq("match_id", match.getId())
+                        .orderByAsc("id"));
 
         // 实体字段逐一透传到详情 DTO，保证响应契约字段齐全
         MatchDetailResponse resp = new MatchDetailResponse();

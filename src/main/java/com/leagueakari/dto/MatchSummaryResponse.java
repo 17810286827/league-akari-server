@@ -23,6 +23,9 @@ public class MatchSummaryResponse {
     /** 模式，如 CLASSIC / CHERRY */
     private String gameMode;
 
+    /** 地图 ID（真实值，与详情接口一致；折叠卡塔杀标签等按地图口径计算） */
+    private Integer mapId;
+
     /** 队列 ID */
     private Integer queueId;
 
@@ -219,6 +222,9 @@ public class MatchSummaryResponse {
         /** 符文配置（perks：LCU 平铺或 SGP 嵌套） */
         private ParticipantPerks perks;
 
+        /** 对英雄造成的总伤害（statsJson 的 totalDamageDealtToChampions，折叠卡雷达图/伤害占比使用） */
+        private Integer totalDamageDealtToChampions;
+
         /** 承受总伤害（statsJson 的 totalDamageTaken，折叠卡统计行使用） */
         private Integer totalDamageTaken;
 
@@ -239,5 +245,41 @@ public class MatchSummaryResponse {
 
         /** 插眼数（statsJson 的 wardsPlaced） */
         private Integer wardsPlaced;
+
+        /** 对塔伤害（statsJson 的 damageDealtToTurrets，折叠卡拆塔标签使用） */
+        private Integer totalDamageToTowers;
+
+        /** 双杀数（statsJson 的 doubleKills，折叠卡多杀标签使用） */
+        private Integer doubleKills;
+
+        /** 三杀数（statsJson 的 tripleKills） */
+        private Integer tripleKills;
+
+        /** 四杀数（statsJson 的 quadraKills） */
+        private Integer quadraKills;
+
+        /** 五杀数（statsJson 的 pentaKills） */
+        private Integer pentaKills;
+
+        /** 对友军总护盾量（statsJson 的 totalDamageShieldedOnTeammates，折叠卡护盾标签使用） */
+        private Integer totalDamageShieldedOnTeammates;
+
+        /** 控制他人时长（statsJson 的 timeCCingOthers，折叠卡控制标签使用） */
+        private Integer timeCCingOthers;
+
+        /** 单杀数（statsJson 的 challenges.soloKills，折叠卡单杀标签使用；SGP 独有，LCU 为 0） */
+        private Integer soloKills;
+
+        /** 敌方塔附近击杀数（challenges.killsNearEnemyTurret，折叠卡塔杀标签使用） */
+        private Integer killsNearEnemyTurret;
+
+        /** 己方塔下击杀数（challenges.killsUnderOwnTurret，折叠卡反杀标签使用） */
+        private Integer killsUnderOwnTurret;
+
+        /** 对线最大补刀差（challenges.maxCsAdvantageOnLaneOpponent，折叠卡补刀压制标签使用） */
+        private Integer maxCsAdvantageOnLaneOpponent;
+
+        /** 击飞击杀数（challenges.knockEnemyIntoTeamAndKill，折叠卡击飞标签使用） */
+        private Integer knockEnemyIntoTeamAndKill;
     }
 }

@@ -132,6 +132,7 @@ class MatchServiceTest {
         match.setGameCreation(1720000000000L);
         match.setGameDuration(1830);
         match.setGameMode("CLASSIC");
+        match.setMapId(11);
         match.setQueueId(420);
         match.setRegion("na1");
         match.setWinnerTeamId(100);
@@ -154,6 +155,8 @@ class MatchServiceTest {
         assertThat(item.getSelf().getAugments()).hasSize(6);
         assertThat(item.getSelf().getSummonerSpells()).hasSize(2);
         assertThat(item.getSelf().getTripleKills()).isEqualTo(1);
+        // mapId 透传主表真实值（折叠卡塔杀标签按地图口径计算）
+        assertThat(item.getMapId()).isEqualTo(11);
         // 10 人轻量档案全量返回（含 self，前端以 puuid 区分）
         assertThat(item.getParticipants()).hasSize(10);
         // LCU 平铺 perks：perkStyle 8100、perkIds 6 颗
@@ -162,12 +165,26 @@ class MatchServiceTest {
         // SGP 嵌套 perks：同样解析出 perkStyle 8100 与 6 颗 perkIds
         assertThat(item.getParticipants().get(5).getPerks().getPerkStyle()).isEqualTo(8100);
         assertThat(item.getParticipants().get(5).getPerks().getPerkIds()).hasSize(6);
-        // 折叠卡统计字段：从 statsJson 提取（fixture 0 号位含 totalDamageTaken/totalHeal 等）
+        // 折叠卡统计/雷达图字段：从 statsJson 提取（fixture 0 号位含伤害/承伤/治疗等）
+        assertThat(item.getParticipants().get(0).getTotalDamageDealtToChampions()).isEqualTo(45000);
         assertThat(item.getParticipants().get(0).getTotalDamageTaken()).isEqualTo(33200);
         assertThat(item.getParticipants().get(0).getTotalHeal()).isEqualTo(9200);
         assertThat(item.getParticipants().get(0).getGoldEarned()).isEqualTo(12800);
         assertThat(item.getParticipants().get(0).getCs()).isEqualTo(210);
         assertThat(item.getParticipants().get(0).getWardsPlaced()).isEqualTo(16);
+        // 折叠卡成就标签字段：多杀/拆塔读 stats 顶层，单杀/塔杀等读 challenges
+        assertThat(item.getParticipants().get(0).getDoubleKills()).isEqualTo(5);
+        assertThat(item.getParticipants().get(0).getTripleKills()).isEqualTo(1);
+        assertThat(item.getParticipants().get(0).getQuadraKills()).isEqualTo(1);
+        assertThat(item.getParticipants().get(0).getPentaKills()).isZero();
+        assertThat(item.getParticipants().get(0).getTotalDamageToTowers()).isEqualTo(4600);
+        assertThat(item.getParticipants().get(0).getTotalDamageShieldedOnTeammates()).isEqualTo(1200);
+        assertThat(item.getParticipants().get(0).getTimeCCingOthers()).isEqualTo(30);
+        assertThat(item.getParticipants().get(0).getSoloKills()).isEqualTo(3);
+        assertThat(item.getParticipants().get(0).getKillsNearEnemyTurret()).isEqualTo(5);
+        assertThat(item.getParticipants().get(0).getKillsUnderOwnTurret()).isEqualTo(2);
+        assertThat(item.getParticipants().get(0).getMaxCsAdvantageOnLaneOpponent()).isEqualTo(42);
+        assertThat(item.getParticipants().get(0).getKnockEnemyIntoTeamAndKill()).isEqualTo(7);
     }
 
     /**
@@ -269,9 +286,14 @@ class MatchServiceTest {
                 + "\"perk0\":8112,\"perk1\":8128,\"perk2\":8009,\"perk3\":8138,\"perk4\":8304,\"perk5\":8316,"
                 + "\"perkPrimaryStyle\":8100,\"perkSubStyle\":8300,"
                 + "\"doubleKills\":2,\"tripleKills\":1,\"quadraKills\":0,\"pentaKills\":0,"
-                // 折叠卡统计字段：承伤/治疗/视野/金币/补刀/推塔/插眼（缺失按 0）
-                + "\"totalDamageTaken\":33200,\"totalHeal\":9200,\"visionScore\":42,"
-                + "\"goldEarned\":12800,\"totalMinionsKilled\":210,\"turretKills\":3,\"wardsPlaced\":16}";
+                // 折叠卡统计/雷达图字段：伤害/承伤/治疗/视野/金币/补刀/推塔/插眼（缺失按 0）
+                + "\"totalDamageDealtToChampions\":45000,\"totalDamageTaken\":33200,\"totalHeal\":9200,\"visionScore\":42,"
+                + "\"goldEarned\":12800,\"totalMinionsKilled\":210,\"turretKills\":3,\"wardsPlaced\":16,"
+                // 折叠卡成就标签字段：多杀/拆塔/护盾/控制 + SGP challenges（单杀/塔杀/补刀压制/击飞）
+                + "\"doubleKills\":5,\"tripleKills\":1,\"quadraKills\":1,\"pentaKills\":0,"
+                + "\"damageDealtToTurrets\":4600,\"totalDamageShieldedOnTeammates\":1200,\"timeCCingOthers\":30,"
+                + "\"challenges\":{\"soloKills\":3,\"killsNearEnemyTurret\":5,\"killsUnderOwnTurret\":2,"
+                + "\"maxCsAdvantageOnLaneOpponent\":42,\"knockEnemyIntoTeamAndKill\":7}}";
     }
 
     /**
