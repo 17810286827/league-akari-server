@@ -137,10 +137,12 @@ class MatchControllerIntegrationTest {
                 .andExpect(status().isOk());
 
         // 分页查询：契约返回 { data, page, pageSize, total }。
-        // 用 startTime/endTime 过滤到测试数据的时间戳（1720000000000），
+        // 列表接口要求玩家过滤（puuid/summonerName 二选一，缺失返回空页），
+        // 这里按测试数据的 selfPuuid 过滤；用 startTime/endTime 过滤到测试数据的时间戳（1720000000000），
         // 避免真实对局按 game_creation 倒序排在 data[0]
         mockMvc.perform(get("/api/matches")
                         .param("page", "1").param("pageSize", "10")
+                        .param("puuid", "self-puuid-1")
                         .param("startTime", "1719999999999")
                         .param("endTime", "1720000000001"))
                 .andExpect(status().isOk())
