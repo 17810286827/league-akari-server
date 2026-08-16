@@ -185,6 +185,11 @@ class MatchServiceTest {
         assertThat(item.getParticipants().get(0).getKillsUnderOwnTurret()).isEqualTo(2);
         assertThat(item.getParticipants().get(0).getMaxCsAdvantageOnLaneOpponent()).isEqualTo(42);
         assertThat(item.getParticipants().get(0).getKnockEnemyIntoTeamAndKill()).isEqualTo(7);
+        // 最近对手：列表查询时聚合（红队 5 人，self 蓝队之外的玩家）
+        assertThat(resp.getRecentOpponents()).hasSize(5);
+        assertThat(resp.getRecentOpponents().get(0).getSummonerName()).isEqualTo("Player5");
+        assertThat(resp.getRecentOpponents().get(0).getWins()).isZero();
+        assertThat(resp.getRecentOpponents().get(0).getLosses()).isEqualTo(1);
     }
 
     /**

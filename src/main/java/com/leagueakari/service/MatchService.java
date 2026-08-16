@@ -22,6 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -178,7 +180,63 @@ public class MatchService {
         }).toList();
 
         log.info("Query matches: page={}, pageSize={}, total={}", page, pageSize, result.getTotal());
-        return new PageResponse<>(items, page, pageSize, result.getTotal());
+        PageResponse<MatchSummaryResponse> resp =
+                new PageResponse<>(items, page, pageSize, result.getTotal());
+        // 最近对手：从本页对局参与者聚合（self 队之外玩家），列表查询时即返回，无需展开详情
+        resp.setRecentOpponents(buildRecentOpponents(result.getRecords(), participantsByMatch));
+        return resp;
+    }
+
+    /**
+     * 聚合本页对局的"最近对手"：非 self 所在队的玩家按 puuid 归并，
+     * 胜负数按各局 win 累加，昵称/英雄取最后一次出现，按出现次数降序取前 5
+     * （与前端 computeRecentOpponents 口径一致，改由后端在列表查询时一次性计算）
+     */
+    private List<MatchSummaryResponse.RecentOpponent> buildRecentOpponents(
+            List<Match> matches, Map<Long, List<MatchParticipant>> participantsByMatch) {
+        // puuid → 聚合结果（LinkedHashMap 保持首次出现顺序，出现次数相同时排序稳定）
+        Map<String, MatchSummaryResponse.RecentOpponent> map = new LinkedHashMap<>();
+        Map<String, Integer> appearCount = new HashMap<>();
+        for (Match match : matches) {
+            List<MatchParticipant> participants =
+                    participantsByMatch.getOrDefault(match.getId(), List.of());
+            // 定位 self 所在队伍：self 行缺失时跳过本局（异常数据）
+            MatchParticipant self = participants.stream()
+                    .filter(p -> Objects.equals(match.getSelfPuuid(), p.getPuuid()))
+                    .findFirst()
+                    .orElse(null);
+            if (self == null) {
+                continue;
+            }
+            for (MatchParticipant p : participants) {
+                // 跳过本队成员（含 self 自己）
+                if (Objects.equals(p.getTeamId(), self.getTeamId())) {
+                    continue;
+                }
+                MatchSummaryResponse.RecentOpponent agg =
+                        map.computeIfAbsent(p.getPuuid(), k -> {
+                            MatchSummaryResponse.RecentOpponent o =
+                                    new MatchSummaryResponse.RecentOpponent();
+                            o.setPuuid(p.getPuuid());
+                            o.setWins(0);
+                            o.setLosses(0);
+                            return o;
+                        });
+                // 昵称与英雄取最后一次出现
+                agg.setSummonerName(p.getSummonerName());
+                agg.setChampionId(p.getChampionId());
+                if (Boolean.TRUE.equals(p.getWin())) {
+                    agg.setWins(agg.getWins() + 1);
+                } else {
+                    agg.setLosses(agg.getLosses() + 1);
+                }
+                appearCount.merge(p.getPuuid(), 1, Integer::sum);
+            }
+        }
+        return map.values().stream()
+                .sorted((a, b) -> appearCount.get(b.getPuuid()) - appearCount.get(a.getPuuid()))
+                .limit(5)
+                .toList();
     }
 
     /**

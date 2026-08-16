@@ -282,4 +282,27 @@ public class MatchSummaryResponse {
         /** 击飞击杀数（challenges.knockEnemyIntoTeamAndKill，折叠卡击飞标签使用） */
         private Integer knockEnemyIntoTeamAndKill;
     }
+
+    /**
+     * 最近对手聚合项：本页对局中非 self 队玩家按 puuid 归并，
+     * 胜负数按各局 win 累加，昵称/英雄取最后一次出现（与前端侧栏"最近对手"口径一致）
+     */
+    @Data
+    public static class RecentOpponent {
+
+        /** 玩家 puuid */
+        private String puuid;
+
+        /** 召唤师名（含 #tag，如 "ZZXOOV#qyq"） */
+        private String summonerName;
+
+        /** 使用的英雄 ID（取最后一次出现） */
+        private Integer championId;
+
+        /** 胜场数 */
+        private Integer wins;
+
+        /** 负场数 */
+        private Integer losses;
+    }
 }
