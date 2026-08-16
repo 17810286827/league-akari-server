@@ -162,6 +162,12 @@ class MatchServiceTest {
         // SGP 嵌套 perks：同样解析出 perkStyle 8100 与 6 颗 perkIds
         assertThat(item.getParticipants().get(5).getPerks().getPerkStyle()).isEqualTo(8100);
         assertThat(item.getParticipants().get(5).getPerks().getPerkIds()).hasSize(6);
+        // 折叠卡统计字段：从 statsJson 提取（fixture 0 号位含 totalDamageTaken/totalHeal 等）
+        assertThat(item.getParticipants().get(0).getTotalDamageTaken()).isEqualTo(33200);
+        assertThat(item.getParticipants().get(0).getTotalHeal()).isEqualTo(9200);
+        assertThat(item.getParticipants().get(0).getGoldEarned()).isEqualTo(12800);
+        assertThat(item.getParticipants().get(0).getCs()).isEqualTo(210);
+        assertThat(item.getParticipants().get(0).getWardsPlaced()).isEqualTo(16);
     }
 
     /**
@@ -262,7 +268,10 @@ class MatchServiceTest {
                 + "\"playerAugment1\":1,\"playerAugment2\":2,\"playerAugment3\":3,\"playerAugment4\":4,\"playerAugment5\":5,\"playerAugment6\":6,"
                 + "\"perk0\":8112,\"perk1\":8128,\"perk2\":8009,\"perk3\":8138,\"perk4\":8304,\"perk5\":8316,"
                 + "\"perkPrimaryStyle\":8100,\"perkSubStyle\":8300,"
-                + "\"doubleKills\":2,\"tripleKills\":1,\"quadraKills\":0,\"pentaKills\":0}";
+                + "\"doubleKills\":2,\"tripleKills\":1,\"quadraKills\":0,\"pentaKills\":0,"
+                // 折叠卡统计字段：承伤/治疗/视野/金币/补刀/推塔/插眼（缺失按 0）
+                + "\"totalDamageTaken\":33200,\"totalHeal\":9200,\"visionScore\":42,"
+                + "\"goldEarned\":12800,\"totalMinionsKilled\":210,\"turretKills\":3,\"wardsPlaced\":16}";
     }
 
     /**
