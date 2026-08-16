@@ -218,5 +218,26 @@ public class MatchSummaryResponse {
 
         /** 符文配置（perks：LCU 平铺或 SGP 嵌套） */
         private ParticipantPerks perks;
+
+        /** 承受总伤害（statsJson 的 totalDamageTaken，折叠卡统计行使用） */
+        private Integer totalDamageTaken;
+
+        /** 治疗量（statsJson 的 totalHeal） */
+        private Integer totalHeal;
+
+        /** 视野得分（statsJson 的 visionScore） */
+        private Integer visionScore;
+
+        /** 获得金币（statsJson 的 goldEarned） */
+        private Integer goldEarned;
+
+        /** 补刀数（statsJson 的 totalMinionsKilled） */
+        private Integer cs;
+
+        /** 推塔数（statsJson 的 turretKills） */
+        private Integer turretKills;
+
+        /** 插眼数（statsJson 的 wardsPlaced） */
+        private Integer wardsPlaced;
     }
 }

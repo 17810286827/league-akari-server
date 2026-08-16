@@ -335,6 +335,14 @@ public class MatchService {
             pl.setAugments(statList(stats, "playerAugment1", "playerAugment2", "playerAugment3",
                     "playerAugment4", "playerAugment5", "playerAugment6"));
             pl.setPerks(buildPerks(stats));
+            // 折叠卡统计行字段：LCU/SGP 字段名一致，缺失写 0
+            pl.setTotalDamageTaken(statInt(stats, "totalDamageTaken"));
+            pl.setTotalHeal(statInt(stats, "totalHeal"));
+            pl.setVisionScore(statInt(stats, "visionScore"));
+            pl.setGoldEarned(statInt(stats, "goldEarned"));
+            pl.setCs(statInt(stats, "totalMinionsKilled"));
+            pl.setTurretKills(statInt(stats, "turretKills"));
+            pl.setWardsPlaced(statInt(stats, "wardsPlaced"));
             return pl;
         }).toList();
     }
