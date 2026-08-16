@@ -281,6 +281,12 @@ public class MatchSummaryResponse {
 
         /** 击飞击杀数（challenges.knockEnemyIntoTeamAndKill，折叠卡击飞标签使用） */
         private Integer knockEnemyIntoTeamAndKill;
+
+        /** 召唤师账号等级（statsJson 的 summonerLevel，顶部玩家信息展示） */
+        private Integer summonerLevel;
+
+        /** 召唤师头像 ID（statsJson 的 profileIcon，顶部玩家头像展示） */
+        private Integer profileIcon;
     }
 
     /**

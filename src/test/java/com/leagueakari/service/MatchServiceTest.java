@@ -147,7 +147,7 @@ class MatchServiceTest {
         when(matchParticipantMapper.selectList(any())).thenReturn(participants);
 
         // 执行分页查询，取唯一一条列表项
-        PageResponse<MatchSummaryResponse> resp = matchService.pageMatches(1, 10, null, null, null);
+        PageResponse<MatchSummaryResponse> resp = matchService.pageMatches(1, 10, null, "self-puuid-1", null, null, null);
         MatchSummaryResponse item = resp.getData().get(0);
 
         // self 增强字段：出装 7 槽、海克斯 6 槽、召唤师技能 2 槽、三杀 1 次
@@ -193,6 +193,22 @@ class MatchServiceTest {
     }
 
     /**
+     * 用例：未提供 puuid 时列表接口返回空页（只允许查询指定玩家的对局），
+     * 不触发任何对局查询，避免暴露全量数据
+     */
+    @Test
+    void 未提供puuid时返回空页() {
+        // 不 mock 任何 Mapper：若实现误查库会因 mock 默认返回 null/空而暴露，此处直接断言空页
+        PageResponse<MatchSummaryResponse> resp =
+                matchService.pageMatches(1, 10, null, null, null, null, null);
+
+        // 空页契约：data 空列表、total 0，且不抛错
+        assertThat(resp.getData()).isEmpty();
+        assertThat(resp.getTotal()).isZero();
+        assertThat(resp.getRecentOpponents()).isNull();
+    }
+
+    /**
      * 用例：参赛者 statsJson 缺失（null）时，self 增强字段与 participants 轻量档案
      * 的 perks 应按"缺失写空列表/0"契约兜底，输出空 perkIds + 样式 0，而非 null
      */
@@ -229,7 +245,7 @@ class MatchServiceTest {
         when(matchParticipantMapper.selectList(any())).thenReturn(List.of(p));
 
         // 执行分页查询，取唯一一条列表项
-        PageResponse<MatchSummaryResponse> resp = matchService.pageMatches(1, 10, null, null, null);
+        PageResponse<MatchSummaryResponse> resp = matchService.pageMatches(1, 10, null, "self-puuid-1", null, null, null);
         MatchSummaryResponse item = resp.getData().get(0);
 
         // self 兜底契约：出装/技能/海克斯为空列表，perks 为空 perkIds + 样式 0

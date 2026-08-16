@@ -133,11 +133,23 @@ public class MatchService {
 
     /**
      * 分页查询对局列表，支持队列与时间范围筛选
-     * <p>筛选条件均为可选：queueId 精确匹配，startTime/endTime 为 game_creation
-     * 时间戳区间；结果按创建时间倒序，返回精简的列表项 DTO。</p>
+     * <p>筛选条件：queueId 精确匹配，startTime/endTime 为 game_creation
+     * 时间戳区间，puuid / summonerName 二选一按玩家过滤（仅返回该玩家参与过的对局）；
+     * 结果按创建时间倒序，返回精简的列表项 DTO。</p>
+     * <p>玩家过滤必填（只允许查询指定玩家）：两者均缺失或空白时直接返回空页，避免暴露全量对局。
+     * summonerName 用于数据库按参与者名称精确匹配（如 Riot puuid 与本地对局 ID 体系不一致的场景）。</p>
      */
     public PageResponse<MatchSummaryResponse> pageMatches(
-            long page, long pageSize, Integer queueId, Long startTime, Long endTime) {
+            long page, long pageSize, Integer queueId, String puuid, String summonerName,
+            Long startTime, Long endTime) {
+
+        // 权限约束：只能查询指定玩家的对局，未提供任何玩家标识时返回空页
+        boolean hasPuuid = puuid != null && !puuid.isBlank();
+        boolean hasSummonerName = summonerName != null && !summonerName.isBlank();
+        if (!hasPuuid && !hasSummonerName) {
+            log.warn("Match list queried without player filter, return empty page");
+            return new PageResponse<>(List.of(), page, pageSize, 0);
+        }
 
         // 组装查询条件：可选的队列过滤与时间范围过滤
         QueryWrapper<Match> wrapper = new QueryWrapper<>();
@@ -150,6 +162,25 @@ public class MatchService {
         if (endTime != null) {
             wrapper.le("game_creation", endTime);
         }
+        // 按玩家过滤：puuid 优先（精确），否则按召唤师名精确匹配；
+        // 通过 match_id IN 缩小主表查询范围；无对局时直接返回空页
+        QueryWrapper<MatchParticipant> playerWrapper = new QueryWrapper<MatchParticipant>()
+                .select("match_id");
+        if (hasPuuid) {
+            playerWrapper.eq("puuid", puuid);
+        } else {
+            playerWrapper.eq("summoner_name", summonerName);
+        }
+        List<MatchParticipant> played = matchParticipantMapper.selectList(playerWrapper);
+        if (played.isEmpty()) {
+            log.info("No matches found for player: puuid={}, summonerName={}", puuid, summonerName);
+            return new PageResponse<>(List.of(), page, pageSize, 0);
+        }
+        List<Long> playedMatchIds = played.stream()
+                .map(MatchParticipant::getMatchId)
+                .distinct()
+                .toList();
+        wrapper.in("id", playedMatchIds);
         // 新对局排前面，便于客户端展示最近战绩
         wrapper.orderByDesc("game_creation");
 
@@ -418,6 +449,10 @@ public class MatchService {
             pl.setKillsUnderOwnTurret(statChallengeInt(stats, "killsUnderOwnTurret"));
             pl.setMaxCsAdvantageOnLaneOpponent(statChallengeInt(stats, "maxCsAdvantageOnLaneOpponent"));
             pl.setKnockEnemyIntoTeamAndKill(statChallengeInt(stats, "knockEnemyIntoTeamAndKill"));
+            // 召唤师账号等级：顶部玩家信息展示（缺失按 0）
+            pl.setSummonerLevel(statInt(stats, "summonerLevel"));
+            // 召唤师头像 ID：顶部玩家头像展示（缺失按 0）
+            pl.setProfileIcon(statInt(stats, "profileIcon"));
             return pl;
         }).toList();
     }

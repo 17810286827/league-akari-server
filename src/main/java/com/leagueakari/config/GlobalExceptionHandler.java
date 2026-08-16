@@ -1,6 +1,7 @@
 package com.leagueakari.config;
 
 import com.leagueakari.service.MatchNotFoundException;
+import com.leagueakari.service.RiotAccountNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -46,6 +47,16 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 召唤师不存在：Riot Account-V1 返回 404 时由 service 抛出，转为 404
+     */
+    @ExceptionHandler(RiotAccountNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleRiotAccountNotFound(RiotAccountNotFoundException e) {
+        log.warn("Riot account not found: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("code", 404, "message", e.getMessage()));
+    }
+
+    /**
      * 请求体不可读：JSON 语法错误或字段类型不匹配（如 Boolean 字段收到字符串 "Win"），
      * 属于调用方参数错误，返回 400 而非 500
      */
@@ -74,6 +85,17 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException e) {
         log.warn("Illegal argument: {}", e.getMessage());
         return ResponseEntity.badRequest().body(Map.of("code", 400, "message", e.getMessage()));
+    }
+
+    /**
+     * 服务不可用（如 Riot API Key 未配置、外部 API 调用失败）：
+     * 返回 503 并透出 message，便于前端明确提示原因
+     */
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<Map<String, Object>> handleIllegalState(IllegalStateException e) {
+        log.error("Service unavailable: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("code", 503, "message", e.getMessage()));
     }
 
     /**

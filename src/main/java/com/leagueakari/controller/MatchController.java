@@ -45,16 +45,21 @@ public class MatchController {
         return Map.of("code", 0);
     }
 
-    /** 分页查询对局列表，支持 queueId / startTime / endTime 筛选 */
+    /**
+     * 分页查询对局列表：支持 queueId / puuid / summonerName / startTime / endTime 筛选；
+     * puuid 与 summonerName 二选一（只能查询指定玩家，都缺失时返回空页）
+     */
     @GetMapping
     public PageResponse<MatchSummaryResponse> listMatches(
             @RequestParam(defaultValue = "1") long page,
             @RequestParam(defaultValue = "20") long pageSize,
             @RequestParam(required = false) Integer queueId,
+            @RequestParam(required = false) String puuid,
+            @RequestParam(required = false) String summonerName,
             @RequestParam(required = false) Long startTime,
             @RequestParam(required = false) Long endTime) {
         // 筛选参数均为可选，page/pageSize 缺省时取默认值 1/20
-        return matchService.pageMatches(page, pageSize, queueId, startTime, endTime);
+        return matchService.pageMatches(page, pageSize, queueId, puuid, summonerName, startTime, endTime);
     }
 
     /** 查询对局详情，不存在返回 404 */

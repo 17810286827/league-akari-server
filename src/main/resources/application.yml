@@ -25,3 +25,12 @@ mybatis-plus:
 logging:
   level:
     com.leagueakari: info
+
+riot:
+  # 拳头开发者 API Key（Riot Developer Portal 申请），支持环境变量 RIOT_API_KEY 覆盖；
+  # 为空时召唤师搜索接口返回明确错误，其余功能不受影响
+  api-key: ${RIOT_API_KEY:}
+  # Riot 亚洲区 API 域名（台服账号走 asia 区）
+  account-domain: https://asia.api.riotgames.com
+  # 台服召唤师接口域名（Summoner-V4 按平台路由）
+  summoner-domain: https://sea.api.riotgames.com
