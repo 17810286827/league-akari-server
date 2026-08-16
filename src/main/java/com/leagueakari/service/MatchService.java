@@ -190,7 +190,7 @@ public class MatchService {
             return Map.of();
         }
         List<MatchParticipant> participants = matchParticipantMapper.selectList(
-                new QueryWrapper<MatchParticipant>().in("match_id", matchIds));
+                new QueryWrapper<MatchParticipant>().in("match_id", matchIds).orderByAsc("id"));
         return participants.stream().collect(Collectors.groupingBy(MatchParticipant::getMatchId));
     }
 
@@ -348,6 +348,11 @@ public class MatchService {
     private MatchSummaryResponse.ParticipantPerks buildPerks(JsonNode stats) {
         MatchSummaryResponse.ParticipantPerks perks = new MatchSummaryResponse.ParticipantPerks();
         if (stats == null) {
+            // stats 整体缺失兜底：与"缺失写空列表/0"契约一致（placeholderSelf 同款输出），
+            // 空 perkIds + 样式 0，保证折叠卡渲染结构稳定而非输出 null
+            perks.setPerkIds(List.of());
+            perks.setPerkStyle(0);
+            perks.setPerkSubStyle(0);
             return perks;
         }
         JsonNode nested = stats.get("perks");

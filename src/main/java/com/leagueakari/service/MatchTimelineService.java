@@ -42,7 +42,7 @@ public class MatchTimelineService {
         // 组装时间线记录：frames 全量序列化为 frames_json，原样存储
         MatchTimeline timeline = new MatchTimeline();
         timeline.setGameId(gameId);
-        timeline.setFramesJson(writeJson(frames));
+        timeline.setFramesJson(writeJson(gameId, frames));
         timeline.setCreatedAt(LocalDateTime.now());
         try {
             matchTimelineMapper.insert(timeline);
@@ -81,21 +81,22 @@ public class MatchTimelineService {
     }
 
     /**
-     * 对象转 JSON 字符串（与 MatchService.writeJson 同款 ObjectMapper 逻辑）；
-     * 序列化失败仅记录日志并返回 null，不阻断保存流程
+     * 对象转 JSON 字符串，用于 frames_json 快照列（表结构为 NOT NULL）：
+     * 入参为 null 或序列化失败时直接抛出，避免 NULL 落库触发约束错误
      */
-    private String writeJson(Object value) {
+    private String writeJson(Long gameId, Object value) {
         if (value == null) {
-            // null 直接返回 null，对应快照列落库为 NULL
-            return null;
+            // frames_json 为 NOT NULL 列：null 入参属调用错误，失败即抛并带 gameId 定位
+            throw new IllegalArgumentException("timeline frames 不能为 null: gameId=" + gameId);
         }
         try {
             // 通过 Jackson 序列化为 JSON 字符串
             return objectMapper.writeValueAsString(value);
         } catch (Exception e) {
-            // 序列化失败不抛出：仅记录日志，避免单点异常中断写入
-            log.error("Failed to serialize timeline frames to JSON", e);
-            return null;
+            // 序列化失败即抛：返回 null 会在插入时触发 NOT NULL 约束错误，
+            // 提前抛出并携带 gameId，便于调用方定位与排查
+            log.error("Failed to serialize timeline frames to JSON, gameId={}", gameId, e);
+            throw new IllegalStateException("timeline frames 序列化失败: gameId=" + gameId, e);
         }
     }
 }

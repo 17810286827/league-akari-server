@@ -10,6 +10,7 @@ import com.leagueakari.service.MatchService;
 import com.leagueakari.service.MatchTimelineService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,12 +20,14 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 对局 API：同步写入（幂等）与查询
  * <p>路由层职责：参数校验（@Valid / @RequestParam）与返回值封装；
  * 业务逻辑全部下沉 MatchService，异常由全局异常处理器统一转换。</p>
  */
+@Slf4j
 @RestController
 @RequestMapping("/api/matches")
 @RequiredArgsConstructor
@@ -66,6 +69,12 @@ public class MatchController {
     @PostMapping("/{gameId}/timeline")
     public Map<String, Object> syncTimeline(@PathVariable Long gameId,
             @Valid @RequestBody TimelineSyncRequest request) {
+        // 契约要求 body 与 path 的 gameId 一致：不一致属调用方参数错误，
+        // 拒绝写入而非静默按 path 落库，避免幂等键与调用方预期不符
+        if (!Objects.equals(gameId, request.getGameId())) {
+            log.warn("timeline gameId 不一致, path={}, body={}", gameId, request.getGameId());
+            throw new IllegalArgumentException("path 与 body 的 gameId 不一致");
+        }
         // 幂等保存：重复推送同一 gameId 不会覆盖首次写入的 frames
         matchTimelineService.saveTimeline(gameId, request.getFrames());
         // 同步接口契约：成功即返回 code=0，无需回传实体数据

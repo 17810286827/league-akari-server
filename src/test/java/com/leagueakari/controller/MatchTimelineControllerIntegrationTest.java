@@ -19,7 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 原样查询与 404 三类核心契约。
  * <p>说明：@Transactional 使每个用例结束后回滚，不污染数据库；
  * 幂等用例依赖同事务内对插入数据的可见性，Spring 事务默认传播下成立。
- * 测试专用 gameId 取 9000000051~9000000053 区间，避免与真实数据冲突。</p>
+ * 测试专用 gameId 取 9000000051~9000000056 区间，避免与真实数据冲突。</p>
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -89,5 +89,32 @@ class MatchTimelineControllerIntegrationTest {
         mockMvc.perform(get("/api/matches/{gameId}/timeline", 9999999999L))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(404));
+    }
+
+    /**
+     * 用例：body 与 path 的 gameId 不一致应返回 400（契约要求二者一致），
+     * 拒绝以 path 为准静默落库造成幂等键与调用方预期不符
+     */
+    @Test
+    void postTimeline_gameIdMismatch_returns400() throws Exception {
+        // path 为 9000000055，body 携带 9000000056：二者不一致
+        mockMvc.perform(post("/api/matches/{gameId}/timeline", 9000000055L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"gameId\":9000000056,\"frames\":[{\"timestamp\":1000}]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(400));
+    }
+
+    /**
+     * 用例：body 缺少 frames 字段应返回 400（@NotNull 校验），
+     * 而非落库 NULL 触发 NOT NULL 约束错误
+     */
+    @Test
+    void postTimeline_missingFrames_returns400() throws Exception {
+        mockMvc.perform(post("/api/matches/{gameId}/timeline", 9000000054L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"gameId\":9000000054}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(400));
     }
 }

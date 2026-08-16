@@ -67,6 +67,16 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 业务参数校验失败（如 path 与 body 的 gameId 不一致）：
+     * 属于调用方参数错误，返回 400
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException e) {
+        log.warn("Illegal argument: {}", e.getMessage());
+        return ResponseEntity.badRequest().body(Map.of("code", 400, "message", e.getMessage()));
+    }
+
+    /**
      * 兜底异常：记录完整堆栈后返回 500，避免把内部细节泄露给调用方
      */
     @ExceptionHandler(Exception.class)

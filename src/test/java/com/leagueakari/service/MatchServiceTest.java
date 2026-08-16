@@ -165,6 +165,60 @@ class MatchServiceTest {
     }
 
     /**
+     * 用例：参赛者 statsJson 缺失（null）时，self 增强字段与 participants 轻量档案
+     * 的 perks 应按"缺失写空列表/0"契约兜底，输出空 perkIds + 样式 0，而非 null
+     */
+    @Test
+    void statsJson缺失时perks与列表字段兜底为空() {
+        // 构造分页结果：单条对局主表记录，self_puuid 指向唯一参赛者
+        Match match = new Match();
+        match.setId(1L);
+        match.setGameId(1000000004L);
+        match.setGameCreation(1720000000000L);
+        match.setGameDuration(1830);
+        match.setGameMode("CLASSIC");
+        match.setQueueId(420);
+        match.setRegion("na1");
+        match.setWinnerTeamId(100);
+        match.setSelfPuuid("self-puuid-1");
+        Page<Match> page = new Page<>(1, 10);
+        page.setRecords(List.of(match));
+        page.setTotal(1);
+        when(matchMapper.selectPage(any(), any())).thenReturn(page);
+
+        // 单名参赛者：statsJson 为 null，模拟 stats 快照缺失的数据
+        MatchParticipant p = new MatchParticipant();
+        p.setMatchId(1L);
+        p.setPuuid("self-puuid-1");
+        p.setSummonerName("PlayerOne");
+        p.setChampionId(103);
+        p.setTeamId(100);
+        p.setKills(1);
+        p.setDeaths(0);
+        p.setAssists(0);
+        p.setWin(true);
+        p.setStatsJson(null); // stats 快照缺失
+        when(matchParticipantMapper.selectList(any())).thenReturn(List.of(p));
+
+        // 执行分页查询，取唯一一条列表项
+        PageResponse<MatchSummaryResponse> resp = matchService.pageMatches(1, 10, null, null, null);
+        MatchSummaryResponse item = resp.getData().get(0);
+
+        // self 兜底契约：出装/技能/海克斯为空列表，perks 为空 perkIds + 样式 0
+        assertThat(item.getSelf().getItems()).isEmpty();
+        assertThat(item.getSelf().getSummonerSpells()).isEmpty();
+        assertThat(item.getSelf().getAugments()).isEmpty();
+        assertThat(item.getSelf().getPerks().getPerkIds()).isEmpty();
+        assertThat(item.getSelf().getPerks().getPerkStyle()).isZero();
+        assertThat(item.getSelf().getPerks().getPerkSubStyle()).isZero();
+        // participants 轻量档案同样兜底：perks 非 null 且为空结构
+        assertThat(item.getParticipants()).hasSize(1);
+        assertThat(item.getParticipants().get(0).getPerks().getPerkIds()).isEmpty();
+        assertThat(item.getParticipants().get(0).getPerks().getPerkStyle()).isZero();
+        assertThat(item.getParticipants().get(0).getPerks().getPerkSubStyle()).isZero();
+    }
+
+    /**
      * 构造 10 名参赛者 fixture：0 号位为 self（LCU 平铺 statsJson），
      * 5 号位使用 SGP 嵌套 perks 结构，其余参赛者仅带最简 stats
      */
