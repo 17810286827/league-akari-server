@@ -72,7 +72,7 @@ class RiotAccountClientTest {
     }
 
     @Test
-    void searchDbHitReturnsWithoutApiCall() {
+    void searchDbHitReturnsWithoutApiCall() throws Exception {
         // 库命中：selectOne 返回已入库记录，不发起任何 HTTP 调用（甚至不需要 API Key）
         when(riotAccountMapper.selectOne(any())).thenReturn(mockStoredAccount());
 
