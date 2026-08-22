@@ -41,13 +41,13 @@ ai:
   # API Key（环境变量 AI_API_KEY 可覆盖；为空时分析接口返回明确错误）
   api-key: ${AI_API_KEY:}
   # 分析模型：deepseek-v4-flash
-  model: deepseek-v4-flash
+  model: mimo-v2.5
   # 是否开启模型思考模式（开启）：
   # 开启 → 模型先输出长思维链再出正文，整流约 90s，分析更细致、英雄识别更准；
   # 关闭 → 直接输出正文，整流约 25s（实测快 3.6 倍），配合提示词英雄 ID 映射保证识别准确
   thinking: false
   # 采样参数：抑制长文本重复输出（温度降随机性、频率惩罚抑制循环、存在惩罚减少车轱辘话）
-  temperature: 0.7
+  temperature: 1.0
   frequency-penalty: 0.6
   presence-penalty: 0.3
   # 输出 token 上限（思维链与正文共享）：限制推理模式无限思考。
