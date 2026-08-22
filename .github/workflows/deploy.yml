@@ -84,14 +84,30 @@ jobs:
       - name: 检出本次提交
         uses: actions/checkout@v4
 
-      - name: 通过 SSH 执行部署
-        uses: appleboy/ssh-action@v1
+      - name: 上传代码到云服务器
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
           port: ${{ secrets.SERVER_PORT }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          script_stop: true
+          source: "."
+          target: "/tmp/league-akari-deploy"
+
+      - name: 在云服务器执行部署
+        uses: appleboy/ssh-action@v1
+        env:
+          IMAGE_REPOSITORY: ${{ env.IMAGE_REPOSITORY }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          ALIYUN_REGISTRY: ${{ vars.ALIYUN_REGISTRY }}
+          ALIYUN_USERNAME: ${{ secrets.ALIYUN_USERNAME }}
+          ALIYUN_PASSWORD: ${{ secrets.ALIYUN_PASSWORD }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          port: ${{ secrets.SERVER_PORT }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          envs: IMAGE_REPOSITORY,IMAGE_TAG,ALIYUN_REGISTRY,ALIYUN_USERNAME,ALIYUN_PASSWORD
           script: |
             set -Eeuo pipefail
             sudo mkdir -p /opt/league-akari/repo /opt/league-akari/config
@@ -99,7 +115,8 @@ jobs:
             test -f /opt/league-akari/config/.env || { echo "❌ 缺少 /opt/league-akari/config/.env，请先创建"; exit 1; }
             rm -rf /opt/league-akari/repo
             mkdir -p /opt/league-akari/repo
-            tar --exclude='.git' -C "${GITHUB_WORKSPACE}" -cf - . | tar -C /opt/league-akari/repo -xf -
-            docker login crpi-da59qcl73m93max2.cn-beijing.personal.cr.aliyuncs.com -u ${{ secrets.ALIYUN_USERNAME }} -p ${{ secrets.ALIYUN_PASSWORD }}
+            cp -a /tmp/league-akari-deploy/. /opt/league-akari/repo/
+            rm -rf /tmp/league-akari-deploy
+            docker login "${ALIYUN_REGISTRY}" -u "${ALIYUN_USERNAME}" -p "${ALIYUN_PASSWORD}"
             cd /opt/league-akari/repo
-            IMAGE_REPOSITORY="${{ env.IMAGE_REPOSITORY }}" IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}" ./deploy.sh
+            ./deploy.sh
