@@ -25,6 +25,22 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      - name: 检查 GitHub Actions 配置
+        env:
+          ALIYUN_REGISTRY: ${{ vars.ALIYUN_REGISTRY }}
+          ALIYUN_NAMESPACE: ${{ vars.ALIYUN_NAMESPACE }}
+          IMAGE_NAME: ${{ vars.IMAGE_NAME }}
+          ALIYUN_USERNAME: ${{ secrets.ALIYUN_USERNAME }}
+          ALIYUN_PASSWORD: ${{ secrets.ALIYUN_PASSWORD }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${ALIYUN_REGISTRY}" || { echo "❌ 缺少 Variable: ALIYUN_REGISTRY（阿里云镜像仓库域名，如 registry.cn-hangzhou.aliyuncs.com）"; exit 1; }
+          test -n "${ALIYUN_NAMESPACE}" || { echo "❌ 缺少 Variable: ALIYUN_NAMESPACE（阿里云命名空间）"; exit 1; }
+          test -n "${IMAGE_NAME}" || { echo "❌ 缺少 Variable: IMAGE_NAME（镜像仓库名）"; exit 1; }
+          test -n "${ALIYUN_USERNAME}" || { echo "❌ 缺少 Secret: ALIYUN_USERNAME"; exit 1; }
+          test -n "${ALIYUN_PASSWORD}" || { echo "❌ 缺少 Secret: ALIYUN_PASSWORD"; exit 1; }
+          echo "✓ 配置完整，镜像地址：${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/${IMAGE_NAME}"
+
       - name: 配置 Java 21
         uses: actions/setup-java@v4
         with:
