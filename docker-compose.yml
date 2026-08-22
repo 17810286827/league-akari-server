@@ -15,7 +15,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       RIOT_API_KEY: ${RIOT_API_KEY:-}
       AI_API_KEY: ${AI_API_KEY:-}
-      JAVA_OPTS: ${JAVA_OPTS:}
+      JAVA_OPTS: ${JAVA_OPTS:-}
     extra_hosts:
       # Docker 默认 bridge 网络下，通过宿主机映射端口访问已有 lol-mysql。
       - "host.docker.internal:host-gateway"
