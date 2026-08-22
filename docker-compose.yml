@@ -1,0 +1,27 @@
+services:
+  league-akari-server:
+    image: ${IMAGE_REPOSITORY:?IMAGE_REPOSITORY is required}:${IMAGE_TAG:?IMAGE_TAG is required}
+    container_name: league-akari-server
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      # 生产密钥全部来自服务器外部配置文件，不写入镜像。
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_ADDRESS: 0.0.0.0
+      DB_HOST: ${DB_HOST:?DB_HOST is required}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_USERNAME: ${DB_USERNAME:?DB_USERNAME is required}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      RIOT_API_KEY: ${RIOT_API_KEY:-}
+      AI_API_KEY: ${AI_API_KEY:-}
+      JAVA_OPTS: ${JAVA_OPTS:}
+    extra_hosts:
+      # Docker 默认 bridge 网络下，通过宿主机映射端口访问已有 lol-mysql。
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8081/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

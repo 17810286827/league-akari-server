@@ -1,13 +1,13 @@
 server:
   port: 8081
-  # 仅监听本机回环地址：本应用为个人本机自用后端，收窄网络暴露面，防止局域网内任意访问
-  address: 127.0.0.1
+  # 本地默认仅监听回环地址，容器生产环境通过 SERVER_ADDRESS 覆盖为 0.0.0.0。
+  address: ${SERVER_ADDRESS:127.0.0.1}
 
 spring:
   datasource:
-    # MySQL 位于虚拟机 192.168.31.90:3306；createDatabaseIfNotExist 自动建库，allowPublicKeyRetrieval 兼容 caching_sha2_password
-    # characterEncoding 需为 Java 字符集名 UTF-8（Connector/J 8 会自动与服务器协商为 utf8mb4），utf8mb4 不是合法 Java charset 名
-    url: jdbc:mysql://192.168.31.90:3306/league_akari?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false
+    # MySQL 地址由生产环境 DB_HOST/DB_PORT 注入，默认值仅用于本地开发。
+    # characterEncoding 需为 Java 字符集名 UTF-8（Connector/J 8 会自动与服务器协商为 utf8mb4）。
+    url: jdbc:mysql://${DB_HOST:192.168.31.90}:${DB_PORT:3306}/league_akari?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false
     username: ${DB_USERNAME:root}
     password: ${DB_PASSWORD:chen9911.}
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -15,7 +15,15 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
-mybatis-plus:
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
   configuration:
     map-underscore-to-camel-case: true
     log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl

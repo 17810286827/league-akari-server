@@ -4,3 +4,8 @@ target/
 *.iml
 .vscode/
 .worktrees/
+# 本地敏感配置与构建产物
+*.jar
+.env
+# MySQL 数据目录
+mysql-data/
