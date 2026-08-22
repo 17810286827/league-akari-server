@@ -111,7 +111,7 @@ jobs:
           script: |
             set -Eeuo pipefail
             sudo mkdir -p /opt/league-akari/repo /opt/league-akari/config
-            sudo chown "$USER":"$USER" /opt/league-akari
+            sudo chown -R "$USER":"$USER" /opt/league-akari
             test -f /opt/league-akari/config/.env || { echo "❌ 缺少 /opt/league-akari/config/.env，请先创建"; exit 1; }
             rm -rf /opt/league-akari/repo
             mkdir -p /opt/league-akari/repo
