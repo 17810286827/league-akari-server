@@ -10,6 +10,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.Map;
 
@@ -96,6 +97,18 @@ public class GlobalExceptionHandler {
         log.error("Service unavailable: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(Map.of("code", 503, "message", e.getMessage()));
+    }
+
+    /**
+     * 静态资源/路径未命中（Spring 6.1 的 NoResourceFoundException，如访问不存在的路径）：
+     * 属于正常的 404 语义，返回 404 { code, message }，仅记 warn 不打堆栈，
+     * 避免落入兜底分支被误报为 500 + ERROR 堆栈刷日志
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResource(NoResourceFoundException e) {
+        log.warn("Resource not found: {}", e.getResourcePath());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("code", 404, "message", "资源不存在"));
     }
 
     /**
