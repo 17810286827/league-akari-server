@@ -119,4 +119,5 @@ jobs:
             rm -rf /tmp/league-akari-deploy
             docker login "${ALIYUN_REGISTRY}" -u "${ALIYUN_USERNAME}" -p "${ALIYUN_PASSWORD}"
             cd /opt/league-akari/repo
+            chmod +x deploy.sh
             ./deploy.sh
