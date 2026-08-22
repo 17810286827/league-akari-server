@@ -1,7 +1,11 @@
 package com.leagueakari.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.dto.RiotAccountDto;
+import com.leagueakari.entity.RiotAccount;
+import com.leagueakari.mapper.RiotAccountMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
@@ -14,15 +18,13 @@ import org.springframework.stereotype.Service;
 
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Riot 召唤师搜索客户端（service 层）：
- * 调用 Riot Account-V1 接口按"昵称#tag"查询 puuid；
- * 结果做 JVM 内存缓存（ConcurrentHashMap，按 riotName 键缓存），避免重复打 Riot API
- * （Riot API 有速率限制，缓存可显著降低调用量）。
- * HTTP 调用走 Apache HttpClient 5（全局连接池实例），替换原 RestTemplate 方案
+ * 查询优先级——riot_account 库表（持久化缓存，puuid 终身不变）→ 未命中才调 Riot Account-V1。
+ * API 结果按 puuid 回写入库（一人一行，改名时更新名字），替代原 JVM 内存缓存：
+ * 重启不丢、可积累、查库毫秒级且不消耗 Riot API 配额。
+ * HTTP 调用走 Apache HttpClient 5（全局连接池实例）
  */
 @Slf4j
 @Service
@@ -43,40 +45,41 @@ public class RiotAccountClient {
     /** JSON 解析器（Riot 响应体反序列化） */
     private final ObjectMapper objectMapper;
 
-    /**
-     * JVM 缓存：riotName（"昵称#tag"）→ 账号信息。
-     * 只缓存查询成功的结果；失败（404/网络错误）不缓存，下次重新查询
-     */
-    private final Map<String, RiotAccountDto> accountCache = new ConcurrentHashMap<>();
+    /** riot_account 表 Mapper：持久化缓存查询与回写 */
+    private final RiotAccountMapper riotAccountMapper;
 
     /**
-     * 构造注入 Riot 配置与 HTTP 客户端
+     * 构造注入 Riot 配置、HTTP 客户端与持久化缓存 Mapper
      *
-     * @param apiKey         Riot API Key（可能为空串，为空时搜索接口直接报错）
-     * @param accountDomain  Riot 账号接口域名
-     * @param summonerDomain Riot 召唤师接口域名（台服 sea）
-     * @param httpClient     Apache HttpClient 5 实例
-     * @param objectMapper   Jackson 解析器
+     * @param apiKey            Riot API Key（可能为空串；库命中场景不依赖 Key）
+     * @param accountDomain     Riot 账号接口域名
+     * @param summonerDomain    Riot 召唤师接口域名（台服 sea）
+     * @param httpClient        Apache HttpClient 5 实例
+     * @param objectMapper      Jackson 解析器
+     * @param riotAccountMapper riot_account 表 Mapper
      */
     public RiotAccountClient(
             @Value("${riot.api-key:}") String apiKey,
             @Value("${riot.account-domain:https://asia.api.riotgames.com}") String accountDomain,
             @Value("${riot.summoner-domain:https://sea.api.riotgames.com}") String summonerDomain,
             CloseableHttpClient httpClient,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            RiotAccountMapper riotAccountMapper) {
         this.apiKey = apiKey;
         this.accountDomain = accountDomain;
         this.summonerDomain = summonerDomain;
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
+        this.riotAccountMapper = riotAccountMapper;
     }
 
     /**
-     * 按"昵称#tag"查询召唤师账号信息（优先命中 JVM 缓存）
+     * 按"昵称#tag"查询召唤师账号信息（优先命中持久化缓存 riot_account 表）
      *
      * @param riotName 召唤师名，格式 "昵称#tag"（如 "赌书消得泼茶香#iKun"）
-     * @return 账号信息（puuid/gameName/tagLine）
-     * @throws IllegalArgumentException     riotName 缺少 #tag 或 API Key 未配置
+     * @return 账号信息（puuid/gameName/tagLine/等级/头像）
+     * @throws IllegalArgumentException     riotName 缺少 #tag
+     * @throws IllegalStateException        库未命中且 API Key 未配置，或 API 调用失败
      * @throws RiotAccountNotFoundException 召唤师不存在（Riot 返回 404）
      */
     public RiotAccountDto searchByRiotId(String riotName) {
@@ -85,22 +88,24 @@ public class RiotAccountClient {
             log.warn("Invalid riot name (missing #tag): {}", riotName);
             throw new IllegalArgumentException("召唤师名格式错误，应为 昵称#tag（如 赌书消得泼茶香#iKun）");
         }
-        // 配置校验：API Key 未配置时直接报错，避免无效调用
-        if (apiKey == null || apiKey.isBlank()) {
-            log.error("Riot API key not configured, search skipped: {}", riotName);
-            throw new IllegalStateException("Riot API Key 未配置，无法搜索召唤师");
-        }
-        // JVM 缓存命中：直接返回，避免重复调用 Riot API
-        RiotAccountDto cached = accountCache.get(riotName);
-        if (cached != null) {
-            log.info("Riot account cache hit: {}", riotName);
-            return cached;
-        }
-
         // 拆分 gameName 与 tagLine：只按第一个 # 拆（tagLine 本身不含 #）
         String[] parts = riotName.split("#", 2);
         String gameName = parts[0];
         String tagLine = parts[1];
+
+        // 持久化缓存命中：直接返回库内记录，零 Riot API 调用（不依赖 API Key）
+        RiotAccount stored = findByGameName(gameName, tagLine);
+        if (stored != null) {
+            log.info("Riot account db cache hit: {}#{} -> {}", gameName, tagLine, stored.getPuuid());
+            return toDto(stored);
+        }
+
+        // 配置校验：需要调 Riot API 时才检查 Key，避免库命中场景被误拦截
+        if (apiKey == null || apiKey.isBlank()) {
+            log.error("Riot API key not configured, search skipped: {}", riotName);
+            throw new IllegalStateException("Riot API Key 未配置，无法搜索召唤师");
+        }
+
         // URI 构建：gameName/tagLine 可能含中文与特殊字符，由 URIBuilder.setPathSegments 统一编码（%XX），
         // 不能手工预编码拼接（已编码的 % 会被二次编码为 %25 导致 Riot 侧 404）
         URI uri = buildUri(accountDomain, "riot", "account", "v1", "accounts", "by-riot-id", gameName, tagLine);
@@ -112,14 +117,15 @@ public class RiotAccountClient {
             log.info("Calling Riot Account API: {}#{}", gameName, tagLine);
             RiotAccountDto account = executeForDto(request, uri.toString());
             if (account == null || account.getPuuid() == null) {
-                // 响应体为空或缺少 puuid：视为异常数据，不缓存
+                // 响应体为空或缺少 puuid：视为异常数据，不入库
                 log.warn("Riot Account API returned empty body: {}", riotName);
                 throw new IllegalStateException("Riot 返回异常数据，请稍后重试");
             }
-            // 查询成功写入缓存
-            accountCache.put(riotName, account);
             // 补充召唤师等级与头像 ID（Summoner-V4 by-puuid）：失败不阻塞主流程（等级缺失时前端占位）
             fillSummonerProfile(account);
+            // 按 puuid 回写持久化缓存：后续同名搜索走库，不再消耗 Riot API 配额；
+            // 回写失败仅记日志不阻塞返回（缓存降级为下次重新调 API）
+            persistAccount(account);
             log.info("Riot account found: {} -> {} (level={})", riotName, account.getPuuid(),
                     account.getSummonerLevel());
             return account;
@@ -131,10 +137,78 @@ public class RiotAccountClient {
             // 其余 4xx/5xx 与网络异常：统一抛出提示
             throw e;
         } catch (Exception e) {
-            // 网络/解析等客户端异常：不缓存，抛出便于上层提示
+            // 网络/解析等客户端异常：不入库，抛出便于上层提示
             log.error("Riot Account API request failed: {}", e.getMessage());
             throw new IllegalStateException("Riot API 请求失败，请检查网络后重试");
         }
+    }
+
+    /**
+     * 按"昵称 + tag"查持久化缓存表。
+     * (game_name, tag_line) 不设唯一约束（Riot 名字可释放后被他人占用），
+     * 极端时序下可能出现同名多行，按 updated_at 倒序取最新一条
+     *
+     * @param gameName 昵称（# 前部分）
+     * @param tagLine  尾号（# 后部分）
+     * @return 命中的账号记录；未命中返回 null
+     */
+    private RiotAccount findByGameName(String gameName, String tagLine) {
+        return riotAccountMapper.selectOne(new QueryWrapper<RiotAccount>()
+                .eq("game_name", gameName)
+                .eq("tag_line", tagLine)
+                .orderByDesc("updated_at")
+                .last("LIMIT 1"));
+    }
+
+    /**
+     * 按 puuid 回写账号信息（upsert 语义）：
+     * puuid 已存在 → 更新名字/等级/头像（覆盖改名场景）；不存在 → 插入新行。
+     * 一人一行由 uk_riot_account_puuid 唯一键保证
+     *
+     * @param account Riot API 返回的完整账号信息（puuid 必填）
+     */
+    private void persistAccount(RiotAccountDto account) {
+        try {
+            RiotAccount entity = new RiotAccount();
+            entity.setPuuid(account.getPuuid());
+            entity.setGameName(account.getGameName());
+            entity.setTagLine(account.getTagLine());
+            entity.setSummonerLevel(account.getSummonerLevel());
+            entity.setProfileIconId(account.getProfileIconId());
+
+            Long exists = riotAccountMapper.selectCount(new QueryWrapper<RiotAccount>()
+                    .eq("puuid", account.getPuuid()));
+            if (exists != null && exists > 0) {
+                // 已有该玩家：按 puuid 更新（名字/等级/头像随之刷新）
+                riotAccountMapper.update(entity, new UpdateWrapper<RiotAccount>()
+                        .eq("puuid", account.getPuuid()));
+                log.info("Riot account cache updated: puuid={}", account.getPuuid());
+            } else {
+                // 首次入库：新增一行
+                riotAccountMapper.insert(entity);
+                log.info("Riot account cache persisted: puuid={}", account.getPuuid());
+            }
+        } catch (Exception e) {
+            // 缓存写入失败不影响搜索主流程：下次同名义查询会重新调 API
+            log.error("Failed to persist riot account cache: puuid={}, error={}",
+                    account.getPuuid(), e.getMessage());
+        }
+    }
+
+    /**
+     * 实体转 DTO（库命中路径的返回值组装）
+     *
+     * @param stored 库内账号记录
+     * @return 搜索接口响应 DTO
+     */
+    private RiotAccountDto toDto(RiotAccount stored) {
+        RiotAccountDto dto = new RiotAccountDto();
+        dto.setPuuid(stored.getPuuid());
+        dto.setGameName(stored.getGameName());
+        dto.setTagLine(stored.getTagLine());
+        dto.setSummonerLevel(stored.getSummonerLevel());
+        dto.setProfileIconId(stored.getProfileIconId());
+        return dto;
     }
 
     /**
