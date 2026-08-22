@@ -32,10 +32,7 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: 运行测试
-        run: mvn -B test
-
-      - name: 打包应用
+      - name: 打包应用（跳过测试，CI 无法访问本地 MySQL）
         run: mvn -B package -DskipTests
 
       - name: 计算镜像版本
