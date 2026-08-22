@@ -112,6 +112,17 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 请求方法不支持（如浏览器直接打开 POST-only 接口 URL：ai-analysis / timeline）：
+     * 客户端用法错误，返回 405 并透出该路径支持的方法，仅记 warn 不打堆栈
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Map<String, Object>> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
+        log.warn("Method not supported: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(Map.of("code", 405, "message", "请求方法不支持：" + e.getMessage()));
+    }
+
+    /**
      * 兜底异常：记录完整堆栈后返回 500，避免把内部细节泄露给调用方
      */
     @ExceptionHandler(Exception.class)

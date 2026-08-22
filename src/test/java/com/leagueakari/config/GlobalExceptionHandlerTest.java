@@ -6,6 +6,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -29,6 +30,12 @@ class GlobalExceptionHandlerTest {
         public String boom() throws NoResourceFoundException {
             throw new NoResourceFoundException(HttpMethod.GET, "missing-resource");
         }
+
+        /** 只接受 POST 的路径：GET 访问时由 Spring 抛 HttpRequestMethodNotSupportedException */
+        @PostMapping("/post-only")
+        public String postOnly() {
+            return "ok";
+        }
     }
 
     @BeforeEach
@@ -45,6 +52,16 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(get("/boom"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(404))
+                .andExpect(jsonPath("$.message").exists());
+    }
+
+    @Test
+    void methodNotSupportedReturns405() throws Exception {
+        // GET 访问 POST-only 接口（如浏览器直接打开 ai-analysis/timeline URL）：
+        // 应返回 405 + 统一响应体，而不是 ERROR 堆栈 + 500
+        mockMvc.perform(get("/post-only"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.code").value(405))
                 .andExpect(jsonPath("$.message").exists());
     }
 }
