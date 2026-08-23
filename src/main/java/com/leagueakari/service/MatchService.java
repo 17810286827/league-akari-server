@@ -193,6 +193,11 @@ public class MatchService {
                 .map(MatchParticipant::getMatchId)
                 .distinct()
                 .toList();
+
+        // 查询者视角 puuid：列表的 self 卡片/队友/对手聚合都以此为中心，
+        // 而非 match.self_puuid（后者仅表示"该局数据由谁的客户端推送"，与查询者无关；
+        // 单客户端部署下所有对局推送者都是同一人，误用会导致任何用户查询都看到推送者视角）
+        String viewPuuid = hasPuuid ? puuid : played.get(0).getPuuid();
         wrapper.in("id", playedMatchIds);
         // 新对局排前面，便于客户端展示最近战绩
         wrapper.orderByDesc("game_creation");
@@ -216,9 +221,9 @@ public class MatchService {
             resp.setQueueId(m.getQueueId());
             resp.setRegion(m.getRegion());
             resp.setWinnerTeamId(m.getWinnerTeamId());
-            resp.setSelfPuuid(m.getSelfPuuid());
-            // 填充本玩家/队伍聚合/队友摘要：self 行缺失时输出全零占位，不抛错
-            fillMatchExtras(resp, m.getSelfPuuid(),
+            resp.setSelfPuuid(viewPuuid);
+            // 填充本玩家/队伍聚合/队友摘要：以查询者视角为中心，self 行缺失时输出全零占位，不抛错
+            fillMatchExtras(resp, viewPuuid,
                     participantsByMatch.getOrDefault(m.getId(), List.of()));
             return resp;
         }).toList();
@@ -226,27 +231,29 @@ public class MatchService {
         log.info("Query matches: page={}, pageSize={}, total={}", page, pageSize, result.getTotal());
         PageResponse<MatchSummaryResponse> resp =
                 new PageResponse<>(items, page, pageSize, result.getTotal());
-        // 最近对手：从本页对局参与者聚合（self 队之外玩家），列表查询时即返回，无需展开详情
-        resp.setRecentOpponents(buildRecentOpponents(result.getRecords(), participantsByMatch));
+        // 最近对手：从本页对局参与者聚合（查询视角玩家所在队之外的玩家），列表查询时即返回，无需展开详情
+        resp.setRecentOpponents(buildRecentOpponents(result.getRecords(), participantsByMatch, viewPuuid));
         return resp;
     }
 
     /**
-     * 聚合本页对局的"最近对手"：非 self 所在队的玩家按 puuid 归并，
+     * 聚合本页对局的"最近对手"：查询视角玩家所在队之外的其他玩家按 puuid 归并，
      * 胜负数按各局 win 累加，昵称/英雄取最后一次出现，按出现次数降序取前 5
      * （与前端 computeRecentOpponents 口径一致，改由后端在列表查询时一次性计算）
+     *
+     * @param viewPuuid 查询者视角 puuid：以其所在队伍划分敌我，而非对局推送者
      */
     private List<MatchSummaryResponse.RecentOpponent> buildRecentOpponents(
-            List<Match> matches, Map<Long, List<MatchParticipant>> participantsByMatch) {
+            List<Match> matches, Map<Long, List<MatchParticipant>> participantsByMatch, String viewPuuid) {
         // puuid → 聚合结果（LinkedHashMap 保持首次出现顺序，出现次数相同时排序稳定）
         Map<String, MatchSummaryResponse.RecentOpponent> map = new LinkedHashMap<>();
         Map<String, Integer> appearCount = new HashMap<>();
         for (Match match : matches) {
             List<MatchParticipant> participants =
                     participantsByMatch.getOrDefault(match.getId(), List.of());
-            // 定位 self 所在队伍：self 行缺失时跳过本局（异常数据）
+            // 定位查询视角玩家所在队伍：该行缺失时跳过本局（异常数据）
             MatchParticipant self = participants.stream()
-                    .filter(p -> Objects.equals(match.getSelfPuuid(), p.getPuuid()))
+                    .filter(p -> Objects.equals(viewPuuid, p.getPuuid()))
                     .findFirst()
                     .orElse(null);
             if (self == null) {

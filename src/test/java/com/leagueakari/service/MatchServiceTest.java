@@ -384,6 +384,77 @@ class MatchServiceTest {
     }
 
     /**
+     * 用例：列表 self 增强跟随查询者 puuid（视角归属），而非对局推送者 self_puuid。
+     * <p>场景：所有对局由推送者（如 iKun）客户端同步，match.self_puuid 全是同一人；
+     * 其他玩家查询自己战绩时，self 卡片（召唤师名/英雄/KDA）必须展示查询者本人的数据，
+     * 否则任何用户查战绩都看到推送者的信息（视角串号）。</p>
+     */
+    @Test
+    void 列表self增强跟随查询者puuid而非对局推送者() {
+        // 主表：1 局对局，推送者（记录者）是 ikun-puuid
+        Match match = new Match();
+        match.setId(1L);
+        match.setGameId(1000000008L);
+        match.setGameCreation(1720000000000L);
+        match.setGameDuration(1800);
+        match.setGameMode("CLASSIC");
+        match.setMapId(11);
+        match.setQueueId(420);
+        match.setRegion("na1");
+        match.setWinnerTeamId(100);
+        match.setSelfPuuid("ikun-puuid");
+        Page<Match> page = new Page<>(1, 10);
+        page.setRecords(List.of(match));
+        page.setTotal(1);
+        when(matchMapper.selectPage(any(), any())).thenReturn(page);
+
+        // 参与者：推送者 ikun（100 队）与查询者 other（200 队），两人都在场
+        MatchParticipant ikun = new MatchParticipant();
+        ikun.setMatchId(1L);
+        ikun.setPuuid("ikun-puuid");
+        ikun.setSummonerName("IKun");
+        ikun.setChampionId(22);
+        ikun.setTeamId(100);
+        ikun.setKills(10);
+        ikun.setDeaths(1);
+        ikun.setAssists(5);
+        ikun.setWin(true);
+        ikun.setGoldEarned(15000);
+        ikun.setCs(280);
+        ikun.setStatsJson("{\"item0\":1055,\"totalDamageDealtToChampions\":45000}");
+        MatchParticipant other = new MatchParticipant();
+        other.setMatchId(1L);
+        other.setPuuid("other-puuid");
+        other.setSummonerName("OtherPlayer");
+        other.setChampionId(57);
+        other.setTeamId(200);
+        other.setKills(3);
+        other.setDeaths(4);
+        other.setAssists(8);
+        other.setWin(false);
+        other.setGoldEarned(9000);
+        other.setCs(150);
+        other.setStatsJson("{\"item0\":1055,\"totalDamageDealtToChampions\":12000}");
+
+        // 第一次 selectList：按 puuid 过滤定位查询者参与的对局（返回查询者行）
+        // 第二次 selectList：batchLoadParticipants 批量加载本页对局全部参与者
+        when(matchParticipantMapper.selectList(any()))
+                .thenReturn(List.of(other))
+                .thenReturn(List.of(ikun, other));
+
+        // 查询者视角查询战绩
+        PageResponse<MatchSummaryResponse> resp =
+                matchService.pageMatches(1, 10, null, "other-puuid", null, null, null);
+        MatchSummaryResponse item = resp.getData().get(0);
+
+        // 断言：self 卡片是查询者本人的数据，而不是推送者 ikun 的
+        assertThat(item.getSelfPuuid()).isEqualTo("other-puuid");
+        assertThat(item.getSelf().getSummonerName()).isEqualTo("OtherPlayer");
+        assertThat(item.getSelf().getChampionId()).isEqualTo(57);
+        assertThat(item.getSelf().getKills()).isEqualTo(3);
+    }
+
+    /**
      * 构造 10 名参赛者 fixture：0 号位为 self（LCU 平铺 statsJson），
      * 5 号位使用 SGP 嵌套 perks 结构，其余参赛者仅带最简 stats
      */
