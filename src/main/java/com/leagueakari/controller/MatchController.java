@@ -9,6 +9,7 @@ import com.leagueakari.service.AiAnalysisService;
 import com.leagueakari.service.MatchNotFoundException;
 import com.leagueakari.service.MatchService;
 import com.leagueakari.service.MatchTimelineService;
+import com.leagueakari.util.ClientDisconnectDetector;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -94,8 +95,18 @@ public class MatchController {
                 gameId, System.currentTimeMillis() - startTime));
         emitter.onTimeout(() -> log.warn("AI analysis SSE connection timed out: gameId={}, elapsed={}ms",
                 gameId, System.currentTimeMillis() - startTime));
-        emitter.onError(e -> log.error("AI analysis SSE connection error: gameId={}, elapsed={}ms",
-                gameId, System.currentTimeMillis() - startTime, e));
+        emitter.onError(e -> {
+            // 客户端断开（关页面/刷新/网络断开导致的 Broken pipe）：预期现象，
+            // INFO 一条即可——service 层已记录停止推送，这里不再打 ERROR 堆栈重复刷屏
+            if (ClientDisconnectDetector.isClientDisconnect(e)) {
+                log.info("AI analysis SSE client disconnected: gameId={}, elapsed={}ms",
+                        gameId, System.currentTimeMillis() - startTime);
+                return;
+            }
+            // 其余连接异常（服务端问题）：ERROR + 堆栈，保留排查线索
+            log.error("AI analysis SSE connection error: gameId={}, elapsed={}ms",
+                    gameId, System.currentTimeMillis() - startTime, e);
+        });
         // 流式分析在线程池异步执行并推送事件，controller 立即返回响应头
         aiAnalysisService.analyzeStream(gameId, emitter);
         log.info("AI analysis stream dispatched: gameId={}, elapsed={}ms",

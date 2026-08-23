@@ -2,6 +2,8 @@ package com.leagueakari.config;
 
 import com.leagueakari.service.MatchNotFoundException;
 import com.leagueakari.service.RiotAccountNotFoundException;
+import com.leagueakari.util.ClientDisconnectDetector;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -10,6 +12,7 @@ import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -124,11 +127,40 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 兜底异常：记录完整堆栈后返回 500，避免把内部细节泄露给调用方
+     * 异步响应已不可用（SSE 流式输出中途客户端断开，AsyncRequestNotUsableException）：
+     * 客户端断开是预期现象（关页面/刷新/网络闪断），此时响应头与 Content-Type
+     * （text/event-stream）均已提交，<b>不能再写 JSON 错误体</b>——没有 converter 能
+     * 把 Map 写成 event-stream，强行写会二次抛 HttpMessageNotWritableException。
+     * 仅记 WARN（无堆栈）并返回 null 放弃响应
+     */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public ResponseEntity<Map<String, Object>> handleAsyncNotUsable(AsyncRequestNotUsableException e) {
+        log.warn("Async response not usable (client disconnected during SSE stream): {}", e.getMessage());
+        return null;
+    }
+
+    /**
+     * 兜底异常：记录完整堆栈后返回 500，避免把内部细节泄露给调用方。
+     * <p>两类例外直接放弃写响应体（返回 null）：</p>
+     * <ul>
+     *   <li>客户端断开类异常（ClientAbortException / Broken pipe 等）：预期现象，
+     *       记 WARN 无堆栈，避免同一断开在多层重复打 ERROR 堆栈刷屏；</li>
+     *   <li>响应已提交（如 SSE 流中途中断，Content-Type 已锁定）：再写 JSON 错误体
+     *       会触发 HttpMessageNotWritableException，仅记日志。</li>
+     * </ul>
      */
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, Object>> handleOther(Exception e) {
+    public ResponseEntity<Map<String, Object>> handleOther(Exception e, HttpServletResponse response) {
+        // 客户端断开（关页面/刷新/网络断开导致的 Broken pipe）：预期事件，WARN 无堆栈
+        if (ClientDisconnectDetector.isClientDisconnect(e)) {
+            log.warn("Client disconnected during response: {}", e.getMessage());
+            return null;
+        }
         log.error("Unexpected error", e);
+        // 响应已提交（SSE 流式输出已开始）：无法再写错误体，直接放弃
+        if (response.isCommitted()) {
+            return null;
+        }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("code", 500, "message", "服务器内部错误"));
     }

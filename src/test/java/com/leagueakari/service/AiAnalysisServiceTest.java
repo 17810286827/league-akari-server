@@ -1,5 +1,9 @@
 package com.leagueakari.service;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.entity.MatchParticipant;
@@ -11,6 +15,8 @@ import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.ByteArrayInputStream;
@@ -18,12 +24,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -147,6 +155,59 @@ class AiAnalysisServiceTest {
         detail.setSelfPuuid("p1");
         detail.setParticipants(List.of(self, enemy));
         return detail;
+    }
+
+    /**
+     * 用例：客户端中途断开（SSE 推送抛 AsyncRequestNotUsableException/Broken pipe）
+     * <p>预期行为：立即停止流式推送与上游消费，<b>不推 error 事件、不调 complete</b>
+     * （连接已断，推送无意义），且<b>不产生任何 ERROR 日志</b>——客户端断开是预期现象
+     * （关页面/刷新），不是服务端故障，同一断开不得在多层打 ERROR 堆栈刷屏。</p>
+     */
+    @Test
+    void clientDisconnectStopsStreamWithoutErrorEvent() throws Exception {
+        // 捕获 AiAnalysisService 日志：断开场景应零 ERROR
+        Logger serviceLogger = (Logger) LoggerFactory.getLogger(AiAnalysisService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        serviceLogger.addAppender(appender);
+
+        try {
+            // AI 接口返回正常推理流（start 后第一个数据块是 reasoning）
+            mockAiResponse(200, SSE_STREAM);
+            when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
+
+            SseEmitter emitter = mock(SseEmitter.class);
+            AtomicInteger sendCount = new AtomicInteger();
+            doAnswer(inv -> {
+                if (sendCount.incrementAndGet() >= 2) {
+                    // 第二次推送（reasoning）时客户端已断开：模拟 SSE 输出失效
+                    throw new AsyncRequestNotUsableException(
+                            "ServletOutputStream failed to flush: java.io.IOException: Broken pipe");
+                }
+                // 第一次推送（start）正常：解析进 events 供断言
+                SseEmitter.SseEventBuilder builder = inv.getArgument(0);
+                for (SseEmitter.DataWithMediaType data : builder.build()) {
+                    if (data.getMediaType() == null) {
+                        events.add(objectMapper.readValue((String) data.getData(), Map.class));
+                    }
+                }
+                return null;
+            }).when(emitter).send(any(SseEmitter.SseEventBuilder.class));
+
+            service.analyzeStream(123L, emitter);
+
+            // 断开后流立即终止：只有 start 事件，没有 error/done（连接已断，无需也无法推送）
+            assertThat(events).extracting(e -> e.get("type")).containsExactly("start");
+            // 不调用 complete()：连接已断，complete 无意义
+            verify(emitter, never()).complete();
+            // 不再尝试第三次推送（error 事件）：断开即停，不做无意义的推送
+            verify(emitter, times(2)).send(any(SseEmitter.SseEventBuilder.class));
+            // 日志契约：客户端断开是预期事件，全程零 ERROR（不刷堆栈）
+            assertThat(appender.list)
+                    .noneMatch(evt -> evt.getLevel() == Level.ERROR);
+        } finally {
+            serviceLogger.detachAppender(appender);
+        }
     }
 
     @Test

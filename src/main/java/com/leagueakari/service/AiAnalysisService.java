@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.entity.MatchParticipant;
+import com.leagueakari.util.ClientDisconnectDetector;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
@@ -234,6 +235,12 @@ public class AiAnalysisService {
             emitter.complete();
             log.info("AI analysis stream completed: gameId={}, length={}, truncated={}, elapsed={}ms",
                     gameId, full.length(), truncated, System.currentTimeMillis() - startTime);
+        } catch (ClientDisconnectedException e) {
+            // 客户端已断开（关页面/刷新/网络断开）：预期现象而非服务端故障——
+            // 停止上游消费与推送即可，不推 error 事件、不调 complete（连接已断，均无意义），
+            // 仅记 INFO 无堆栈，避免同一断开在多层重复打 ERROR 堆栈刷屏
+            log.info("AI analysis stream stopped: client disconnected, gameId={}, elapsed={}ms",
+                    gameId, System.currentTimeMillis() - startTime);
         } catch (Exception e) {
             // 流式中途失败（连接已建立，HTTP 状态无法变更）：推送 error 事件后关闭连接，前端据此提示；
             // 打印完整堆栈——SseEmitter 未初始化竞态/连接异常等仅凭 message 无法定位
@@ -246,6 +253,17 @@ public class AiAnalysisService {
                 // 推送失败（连接已断开/未初始化，如前端关闭页面）：仅记日志
                 log.warn("Failed to send AI analysis error event, gameId={}", gameId, sendError);
             }
+        }
+    }
+
+    /**
+     * 客户端断开信号：SSE 推送因对端关闭连接（Broken pipe 等）失败时由 {@link #send}
+     * 抛出，用于让流式主流程<b>立即终止</b>（停止上游 AI 流消费与后续推送），
+     * 并与普通推送失败（IllegalStateException，需推 error 事件）区分处理
+     */
+    private static class ClientDisconnectedException extends RuntimeException {
+        ClientDisconnectedException(Throwable cause) {
+            super(cause);
         }
     }
 
@@ -512,7 +530,13 @@ public class AiAnalysisService {
             event.putAll(payload);
             emitter.send(SseEmitter.event().data(objectMapper.writeValueAsString(event)));
         } catch (Exception e) {
-            // 推送失败：连接已断开（如前端关闭页面）或 SseEmitter 尚未初始化（竞态），无需继续推送
+            if (ClientDisconnectDetector.isClientDisconnect(e)) {
+                // 客户端已断开（关页面/刷新/网络闪断）：预期现象——INFO 无堆栈，
+                // 抛专用信号让流式主流程立即终止（停止上游消费与后续推送）
+                log.info("SSE client disconnected, stop pushing: type={}", type);
+                throw new ClientDisconnectedException(e);
+            }
+            // 其余推送失败（SseEmitter 未初始化竞态等）：完整堆栈，由外层统一收尾
             log.error("SSE send failed: type={}, payload={}", type, payload, e);
             throw new IllegalStateException("SSE 推送失败: " + e.getMessage());
         }
