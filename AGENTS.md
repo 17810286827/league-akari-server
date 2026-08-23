@@ -68,3 +68,13 @@ league-akari-server：英雄联盟对局同步后端。接收 LCU 客户端推�
 - 建议把 `target/*.jar` 加入 `.gitignore`（已自动处理）
 - 生产环境建议使用 Kubernetes 或云厂商容器服务
 - 建议添加 CI/CD 流水线（GitHub Actions / Gitee CI）
+
+## Agent skills
+
+### Issue tracker
+
+Issues 存为 `.scratch/<feature>/` 下的 markdown 文件（本地模式），一个 feature 一个目录。见 `docs/agents/issue-tracker.md`。
+
+### Domain docs
+
+单上下文：根目录 `CONTEXT.md` + `docs/adr/`。见 `docs/agents/domain.md`。
