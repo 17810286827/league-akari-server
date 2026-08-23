@@ -108,6 +108,48 @@ class MatchControllerIntegrationTest {
     }
 
     /**
+     * 用例：按 summonerName 查询时 self 卡片必须填充<b>该召唤师</b>的数据
+     * <p>回归场景：视角 puuid 取自按玩家过滤的投影查询——若投影只 select match_id
+     * 而缺 puuid 列，viewPuuid 恒为 null，所有对局的 self 卡片退化为全零占位，
+     * 前端页面查不到任何数据（Self participant missing 刷屏）。
+     * 用集成测试走真实 SQL 投影锁住该契约。</p>
+     */
+    @Test
+    void queryMatches_bySummonerName_fillsSelfWithQueriedPlayer() throws Exception {
+        // 组装对局：推送者 self-puuid-1（PlayerOne）+ 红队对手"手裂鬼子"（enemy-puuid-1）
+        MatchSyncRequest req = buildRequest(9000000003L);
+        ParticipantSyncRequest enemy = buildParticipant(
+                "enemy-puuid-1", "手裂鬼子", 57, 8, 4, 2, 160, 12000);
+        // 对手在 200 队且失败（与胜方 winnerTeamId=100 相对）
+        enemy.setTeamId(200);
+        enemy.setWin(false);
+        List<ParticipantSyncRequest> all = new ArrayList<>(req.getParticipants());
+        all.add(enemy);
+        req.setParticipants(all);
+
+        mockMvc.perform(post("/api/matches")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk());
+
+        // 只按 summonerName 查询（不传 puuid）：self 卡片必须是"手裂鬼子"的数据
+        mockMvc.perform(get("/api/matches")
+                        .param("page", "1").param("pageSize", "10")
+                        .param("summonerName", "手裂鬼子")
+                        .param("startTime", "1719999999999")
+                        .param("endTime", "1720000000001"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                // self 卡片：召唤师名/英雄/胜负都是查询者（红队败方）的，而非推送者
+                .andExpect(jsonPath("$.data[0].self.summonerName").value("手裂鬼子"))
+                .andExpect(jsonPath("$.data[0].self.championId").value(57))
+                .andExpect(jsonPath("$.data[0].self.kills").value(8))
+                .andExpect(jsonPath("$.data[0].self.win").value(false))
+                // 视角归属：响应的 selfPuuid 是查询者，而非对局推送者
+                .andExpect(jsonPath("$.data[0].selfPuuid").value("enemy-puuid-1"));
+    }
+
+    /**
      * 用例：重复推送同一 gameId 均返回 200 且 code=0，验证服务端幂等跳过
      */
     @Test

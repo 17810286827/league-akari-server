@@ -176,9 +176,11 @@ public class MatchService {
             wrapper.le("game_creation", endTime);
         }
         // 按玩家过滤：puuid 优先（精确），否则按召唤师名精确匹配；
-        // 通过 match_id IN 缩小主表查询范围；无对局时直接返回空页
+        // 通过 match_id IN 缩小主表查询范围；无对局时直接返回空页。
+        // 投影必须包含 puuid 列：summonerName 查询路径的查询者视角 puuid
+        // 取自本结果（只查 match_id 时 getPuuid() 恒为 null，self 卡片会全部退化为占位）
         QueryWrapper<MatchParticipant> playerWrapper = new QueryWrapper<MatchParticipant>()
-                .select("match_id");
+                .select("match_id", "puuid");
         if (hasPuuid) {
             playerWrapper.eq("puuid", puuid);
         } else {
