@@ -1,17 +1,21 @@
 package com.leagueakari.service;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.dto.MatchSummaryResponse;
 import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.dto.PageResponse;
 import com.leagueakari.dto.ParticipantSyncRequest;
 import com.leagueakari.entity.Match;
+import com.leagueakari.entity.MatchMvp;
 import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.mapper.MatchMapper;
+import com.leagueakari.mapper.MatchMvpMapper;
 import com.leagueakari.mapper.MatchParticipantMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
@@ -40,9 +44,17 @@ class MatchServiceTest {
     @Mock
     private MatchParticipantMapper matchParticipantMapper;
 
+    /** MVP/SVP 评选编排服务：saveMatch 参与者落库后触发 */
+    @Mock
+    private MatchMvpService matchMvpService;
+
     /** 真实 Jackson 实例（spy），验证 teamsJson/statsJson 序列化路径 */
     @Spy
     private ObjectMapper objectMapper = new ObjectMapper();
+
+    /** MVP 评选结果查询：详情接口填充 mvp/svp 字段时使用 */
+    @Mock
+    private MatchMvpMapper matchMvpMapper;
 
     @InjectMocks
     private MatchService matchService;
@@ -113,9 +125,118 @@ class MatchServiceTest {
         // 执行被测方法：幂等保存
         matchService.saveMatch(buildRequest(1000000002L));
 
-        // 断言幂等跳过：match 与参赛者均未插入
+        // 断言幂等跳过：match 与参赛者均未插入，也不触发 MVP 评选
         verify(matchMapper, never()).insert(any(Match.class));
         verify(matchParticipantMapper, never()).insert(any(MatchParticipant.class));
+        verify(matchMvpService, never()).evaluateAndSave(any(), any());
+    }
+
+    /**
+     * 用例：新对局保存后应触发 MVP/SVP 评选，
+     * 传入的参与者列表与落库实体一致（含回填后的 id）
+     */
+    @Test
+    void saveMatch_triggersMvpEvaluationAfterInsert() {
+        // 模拟查重结果：0 表示该对局不存在
+        when(matchMapper.selectCount(any())).thenReturn(0L);
+        // 模拟插入回填主键：match.id=1、participant.id=101
+        doAnswer(inv -> {
+            Match m = inv.getArgument(0);
+            m.setId(1L);
+            return 1;
+        }).when(matchMapper).insert(any(Match.class));
+        doAnswer(inv -> {
+            MatchParticipant p = inv.getArgument(0);
+            p.setId(101L);
+            return 1;
+        }).when(matchParticipantMapper).insert(any(MatchParticipant.class));
+
+        // 执行被测方法：幂等保存
+        matchService.saveMatch(buildRequest(1000000005L));
+
+        // 断言：参与者落库后触发评选，传入对局实体与参与者列表
+        ArgumentCaptor<List<MatchParticipant>> captor = ArgumentCaptor.captor();
+        verify(matchMvpService).evaluateAndSave(any(Match.class), captor.capture());
+        assertThat(captor.getValue()).hasSize(1);
+        // 参与者 id 已回填（评选落库依赖该 id 关联 match_mvp.participant_id）
+        assertThat(captor.getValue().get(0).getId()).isEqualTo(101L);
+    }
+
+    /**
+     * 用例：详情响应填充 mvp/svp 字段——称号持有者的玩家档案与得分齐全
+     */
+    @Test
+    void 详情响应包含MVP与SVP字段() {
+        // 主表记录：game_id 命中
+        Match match = new Match();
+        match.setId(1L);
+        match.setGameId(1000000006L);
+        match.setGameMode("CLASSIC");
+        match.setWinnerTeamId(100);
+        when(matchMapper.selectOne(any())).thenReturn(match);
+
+        // 参赛者明细：两人（101 胜方 MVP、102 负方 SVP）
+        MatchParticipant mvpPlayer = new MatchParticipant();
+        mvpPlayer.setId(101L);
+        mvpPlayer.setPuuid("puuid-101");
+        mvpPlayer.setSummonerName("MvpPlayer");
+        mvpPlayer.setChampionId(22);
+        mvpPlayer.setTeamId(100);
+        mvpPlayer.setWin(true);
+        MatchParticipant svpPlayer = new MatchParticipant();
+        svpPlayer.setId(102L);
+        svpPlayer.setPuuid("puuid-102");
+        svpPlayer.setSummonerName("SvpPlayer");
+        svpPlayer.setChampionId(81);
+        svpPlayer.setTeamId(200);
+        svpPlayer.setWin(false);
+        when(matchParticipantMapper.selectList(any())).thenReturn(List.of(mvpPlayer, svpPlayer));
+
+        // 评选结果：两条记录（MVP/SVP）
+        MatchMvp mvpRecord = new MatchMvp();
+        mvpRecord.setMatchId(1L);
+        mvpRecord.setParticipantId(101L);
+        mvpRecord.setType("MVP");
+        mvpRecord.setScore(new java.math.BigDecimal("92.50"));
+        MatchMvp svpRecord = new MatchMvp();
+        svpRecord.setMatchId(1L);
+        svpRecord.setParticipantId(102L);
+        svpRecord.setType("SVP");
+        svpRecord.setScore(new java.math.BigDecimal("85.00"));
+        when(matchMvpMapper.selectList(any())).thenReturn(List.of(mvpRecord, svpRecord));
+
+        // 执行详情查询
+        MatchDetailResponse resp = matchService.getMatchDetail(1000000006L);
+
+        // MVP：称号 + 玩家档案 + 得分
+        assertThat(resp.getMvp()).isNotNull();
+        assertThat(resp.getMvp().getParticipantId()).isEqualTo(101L);
+        assertThat(resp.getMvp().getSummonerName()).isEqualTo("MvpPlayer");
+        assertThat(resp.getMvp().getChampionId()).isEqualTo(22);
+        assertThat(resp.getMvp().getScore()).isEqualByComparingTo(new java.math.BigDecimal("92.50"));
+        // SVP：同上
+        assertThat(resp.getSvp()).isNotNull();
+        assertThat(resp.getSvp().getParticipantId()).isEqualTo(102L);
+        assertThat(resp.getSvp().getSummonerName()).isEqualTo("SvpPlayer");
+        assertThat(resp.getSvp().getScore()).isEqualByComparingTo(new java.math.BigDecimal("85.00"));
+    }
+
+    /**
+     * 用例：对局未评选（老数据无 match_mvp 记录）时 mvp/svp 为 null，不报错
+     */
+    @Test
+    void 详情响应无评选记录时mvpSvp为空() {
+        Match match = new Match();
+        match.setId(1L);
+        match.setGameId(1000000007L);
+        when(matchMapper.selectOne(any())).thenReturn(match);
+        when(matchParticipantMapper.selectList(any())).thenReturn(List.of());
+        when(matchMvpMapper.selectList(any())).thenReturn(List.of());
+
+        MatchDetailResponse resp = matchService.getMatchDetail(1000000007L);
+
+        assertThat(resp.getMvp()).isNull();
+        assertThat(resp.getSvp()).isNull();
     }
 
     /**

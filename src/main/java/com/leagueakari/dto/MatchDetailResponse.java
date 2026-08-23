@@ -55,4 +55,10 @@ public class MatchDetailResponse {
 
     /** 参赛者明细列表，含 stats_json 全量 */
     private List<MatchParticipant> participants;
+
+    /** MVP：胜方最佳选手（未评选或老数据时为 null） */
+    private MvpAwardResponse mvp;
+
+    /** SVP：负方最佳选手（未评选或老数据时为 null） */
+    private MvpAwardResponse svp;
 }

@@ -7,12 +7,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.dto.MatchSummaryResponse;
 import com.leagueakari.dto.MatchSyncRequest;
+import com.leagueakari.dto.MvpAwardResponse;
 import com.leagueakari.dto.PageResponse;
 import com.leagueakari.dto.ParticipantSyncRequest;
 import com.leagueakari.dto.TeamSyncRequest;
 import com.leagueakari.entity.Match;
+import com.leagueakari.entity.MatchMvp;
 import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.mapper.MatchMapper;
+import com.leagueakari.mapper.MatchMvpMapper;
 import com.leagueakari.mapper.MatchParticipantMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,6 +43,10 @@ public class MatchService {
     private final MatchMapper matchMapper;
     private final MatchParticipantMapper matchParticipantMapper;
     private final ObjectMapper objectMapper;
+    /** MVP/SVP 评选编排：参与者落库后触发评选落库 */
+    private final MatchMvpService matchMvpService;
+    /** MVP/SVP 评选结果查询：详情接口填充 mvp/svp 字段 */
+    private final MatchMvpMapper matchMvpMapper;
 
     /**
      * 幂等保存对局（先查后插）：
@@ -86,6 +93,7 @@ public class MatchService {
         }
 
         // 逐条组装参赛者：直显字段缺失时写 0，stats 全量透传存入 stats_json
+        List<MatchParticipant> savedParticipants = new ArrayList<>(request.getParticipants().size());
         for (ParticipantSyncRequest p : request.getParticipants()) {
             // 基础字段：玩家身份、英雄与队伍归属
             MatchParticipant participant = new MatchParticipant();
@@ -107,7 +115,12 @@ public class MatchService {
             participant.setSummonerSpells(writeJson(p.getSummonerSpells()));
             participant.setStatsJson(writeJson(p.getStats()));
             matchParticipantMapper.insert(participant);
+            // 收集落库实体（id 已回填），供 MVP/SVP 评选使用
+            savedParticipants.add(participant);
         }
+
+        // 参与者全部落库后触发 MVP/SVP 评选：同事务内写 match_mvp
+        matchMvpService.evaluateAndSave(match, savedParticipants);
 
         log.info("Match saved: gameId={}, participants={}", gameId, request.getParticipants().size());
     }
@@ -656,7 +669,45 @@ public class MatchService {
         resp.setSelfPuuid(match.getSelfPuuid());
         resp.setTeamsJson(match.getTeamsJson());
         resp.setParticipants(participants);
+        // 填充 MVP/SVP 称号：查 match_mvp 并关联参赛者档案（老数据无记录时保持 null）
+        fillMvpAwards(resp, match.getId(), participants);
         log.info("Query match detail: gameId={}, participants={}", gameId, participants.size());
         return resp;
+    }
+
+    /**
+     * 填充详情响应的 mvp/svp 字段
+     * <p>按 match_id 查评选结果，两条记录分别对应 MVP/SVP；
+     * 关联参赛者档案补充 puuid/summonerName/championId。</p>
+     */
+    private void fillMvpAwards(MatchDetailResponse resp, Long matchId, List<MatchParticipant> participants) {
+        List<MatchMvp> awards = matchMvpMapper.selectList(
+                new QueryWrapper<MatchMvp>().eq("match_id", matchId));
+        if (awards == null || awards.isEmpty()) {
+            return;
+        }
+        // participantId → 参赛者档案，用于补充称号持有者的玩家信息
+        Map<Long, MatchParticipant> byId = participants.stream()
+                .collect(Collectors.toMap(MatchParticipant::getId, p -> p, (a, b) -> a));
+        for (MatchMvp award : awards) {
+            MatchParticipant holder = byId.get(award.getParticipantId());
+            if (holder == null) {
+                // 评选记录与参赛者对不上（异常数据）：跳过该称号
+                log.warn("MVP award participant missing: matchId={}, participantId={}",
+                        matchId, award.getParticipantId());
+                continue;
+            }
+            MvpAwardResponse dto = new MvpAwardResponse();
+            dto.setParticipantId(award.getParticipantId());
+            dto.setPuuid(holder.getPuuid());
+            dto.setSummonerName(holder.getSummonerName());
+            dto.setChampionId(holder.getChampionId());
+            dto.setScore(award.getScore());
+            if ("MVP".equals(award.getType())) {
+                resp.setMvp(dto);
+            } else if ("SVP".equals(award.getType())) {
+                resp.setSvp(dto);
+            }
+        }
     }
 }
