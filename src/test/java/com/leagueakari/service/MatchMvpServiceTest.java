@@ -4,6 +4,7 @@ import com.leagueakari.entity.ChampionClass;
 import com.leagueakari.entity.Match;
 import com.leagueakari.entity.MatchMvp;
 import com.leagueakari.entity.MatchParticipant;
+import com.leagueakari.dto.PlayerScoreView;
 import com.leagueakari.mapper.ChampionClassMapper;
 import com.leagueakari.mapper.MatchMvpMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,12 +20,14 @@ import org.springframework.dao.DuplicateKeyException;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -234,5 +237,50 @@ class MatchMvpServiceTest {
                 .doesNotThrowAnyException();
 
         verify(matchMvpMapper, times(2)).insert(any(MatchMvp.class));
+    }
+
+    /**
+     * 用例：查询时实时计算全员评分——按 puuid 索引，每人有总分与维度明细
+     * <p>口径契约：总分 0-100、dimensions 覆盖引擎输出的全部维度（raw+score），
+     * 与落库评选共用同一引擎（分数一致）。</p>
+     */
+    @Test
+    @DisplayName("computeScores 全员实时评分按 puuid 键返回")
+    void computeScores_returnsAllPlayerScoresByPuuid() {
+        mockClassMap();
+
+        Map<String, PlayerScoreView> scores = matchMvpService.computeScores(
+                buildMatch(1L, "CLASSIC", 100),
+                List.of(winnerAdc(), winnerTank(), loserAdc(), loserSupport()));
+
+        // 全员 4 人都返回，键为 puuid
+        assertThat(scores).hasSize(4);
+        assertThat(scores).containsKeys("puuid-101", "puuid-102", "puuid-103", "puuid-104");
+        // 每人：总分 0-100 且维度明细非空（raw 与 score 齐全）
+        scores.forEach((puuid, view) -> {
+            assertThat(view.getScore()).isBetween(0.0, 100.0);
+            assertThat(view.getDimensions()).isNotEmpty();
+            view.getDimensions().forEach((dim, ds) -> {
+                assertThat(ds.getRaw()).isNotNull();
+                assertThat(ds.getScore()).isBetween(0.0, 100.0);
+            });
+        });
+        // 职业权重生效：ADC（伤害 30000 队内最高）的伤害维度归一化满分
+        assertThat(scores.get("puuid-101").getDimensions().get("damage").getScore()).isEqualTo(100.0);
+    }
+
+    /**
+     * 用例：computeScores 不产生任何落库写入（纯查询路径）
+     */
+    @Test
+    @DisplayName("computeScores 纯计算不落库")
+    void computeScores_writesNothing() {
+        mockClassMap();
+
+        matchMvpService.computeScores(
+                buildMatch(1L, "CLASSIC", 100),
+                List.of(winnerAdc(), winnerTank(), loserAdc(), loserSupport()));
+
+        verify(matchMvpMapper, never()).insert(any(MatchMvp.class));
     }
 }

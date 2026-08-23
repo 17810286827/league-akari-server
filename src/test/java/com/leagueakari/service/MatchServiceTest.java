@@ -3,6 +3,7 @@ package com.leagueakari.service;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.dto.MatchSummaryResponse;
+import com.leagueakari.dto.PlayerScoreView;
 import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.dto.PageResponse;
 import com.leagueakari.dto.ParticipantSyncRequest;
@@ -27,6 +28,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.*;
 
 /**
@@ -237,6 +239,89 @@ class MatchServiceTest {
 
         assertThat(resp.getMvp()).isNull();
         assertThat(resp.getSvp()).isNull();
+    }
+
+    /**
+     * 用例：详情响应附带全员实时评分（playerScores 按 puuid 索引，透传 MatchMvpService 计算结果）
+     */
+    @Test
+    void 详情响应包含全员实时评分() {
+        Match match = new Match();
+        match.setId(1L);
+        match.setGameId(1000000009L);
+        match.setGameMode("CLASSIC");
+        when(matchMapper.selectOne(any())).thenReturn(match);
+        MatchParticipant p = new MatchParticipant();
+        p.setId(101L);
+        p.setPuuid("puuid-101");
+        when(matchParticipantMapper.selectList(any())).thenReturn(List.of(p));
+        when(matchMvpMapper.selectList(any())).thenReturn(List.of());
+        // mock 评分服务：puuid-101 → 88.8
+        Map<String, PlayerScoreView> scores = Map.of("puuid-101",
+                PlayerScoreView.builder().score(88.8).dimensions(Map.of()).build());
+        when(matchMvpService.computeScores(any(Match.class), anyList())).thenReturn(scores);
+
+        MatchDetailResponse resp = matchService.getMatchDetail(1000000009L);
+
+        // 透传契约：playerScores 原样返回，按 puuid 键
+        assertThat(resp.getPlayerScores()).isNotNull();
+        assertThat(resp.getPlayerScores()).containsKey("puuid-101");
+        assertThat(resp.getPlayerScores().get("puuid-101").getScore()).isEqualTo(88.8);
+    }
+
+    /**
+     * 用例：列表响应每条对局附带 mvp/svp（一次批量查询，不逐局查库）
+     */
+    @Test
+    void 列表响应附带mvpSvp称号() {
+        // 主表：1 局对局
+        Match match = new Match();
+        match.setId(1L);
+        match.setGameId(1000000010L);
+        match.setGameCreation(1720000000000L);
+        match.setGameDuration(1800);
+        match.setGameMode("CLASSIC");
+        match.setMapId(11);
+        match.setQueueId(420);
+        match.setRegion("na1");
+        match.setWinnerTeamId(100);
+        match.setSelfPuuid("self-puuid-1");
+        Page<Match> page = new Page<>(1, 10);
+        page.setRecords(List.of(match));
+        page.setTotal(1);
+        when(matchMapper.selectPage(any(), any())).thenReturn(page);
+
+        // 参赛者：两次 selectList（过滤定位 + 批量加载）都返回同一人
+        MatchParticipant p = new MatchParticipant();
+        p.setMatchId(1L);
+        p.setId(101L);
+        p.setPuuid("self-puuid-1");
+        p.setSummonerName("PlayerOne");
+        p.setChampionId(22);
+        p.setTeamId(100);
+        p.setWin(true);
+        when(matchParticipantMapper.selectList(any())).thenReturn(List.of(p));
+
+        // 评选记录：MVP 一条
+        MatchMvp mvpRecord = new MatchMvp();
+        mvpRecord.setMatchId(1L);
+        mvpRecord.setParticipantId(101L);
+        mvpRecord.setType("MVP");
+        mvpRecord.setScore(new java.math.BigDecimal("92.50"));
+        when(matchMvpMapper.selectList(any())).thenReturn(List.of(mvpRecord));
+
+        PageResponse<MatchSummaryResponse> resp =
+                matchService.pageMatches(1, 10, null, "self-puuid-1", null, null, null);
+
+        // 列表项契约：mvp 称号携带玩家档案与得分
+        MatchSummaryResponse item = resp.getData().get(0);
+        assertThat(item.getMvp()).isNotNull();
+        assertThat(item.getMvp().getParticipantId()).isEqualTo(101L);
+        assertThat(item.getMvp().getSummonerName()).isEqualTo("PlayerOne");
+        assertThat(item.getMvp().getScore()).isEqualByComparingTo(new java.math.BigDecimal("92.50"));
+        assertThat(item.getSvp()).isNull();
+        // 批量契约：评选查询只发起一次（matchId IN），不逐局 N+1
+        verify(matchMvpMapper, times(1)).selectList(any());
     }
 
     /**

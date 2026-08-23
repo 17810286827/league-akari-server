@@ -50,6 +50,12 @@ public class MatchSummaryResponse {
     /** 双方 10 人轻量档案（含 self，前端以 puuid 区分），供列表页折叠卡展示 */
     private List<ParticipantLight> participants;
 
+    /** MVP：胜方最佳选手（未评选或老数据时为 null；折叠卡据此给聚焦玩家挂图标） */
+    private MvpAwardResponse mvp;
+
+    /** SVP：负方最佳选手（同上） */
+    private MvpAwardResponse svp;
+
     /**
      * 本玩家个人数据：身份与击杀/死亡/助攻来自参赛者直显列，
      * 伤害/经济/补刀/标记字段来自 stats_json 解析（缺失写 0/false）

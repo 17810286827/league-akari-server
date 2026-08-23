@@ -213,6 +213,8 @@ public class MatchService {
         Map<Long, List<MatchParticipant>> participantsByMatch = batchLoadParticipants(matchIds);
 
         // 实体转列表项 DTO：透传精简字段，并补充本玩家数据、队伍聚合与队友摘要
+        // 批量加载本页对局的 MVP/SVP 评选记录（matchId IN 一次查询，避免逐局 N+1）
+        Map<Long, List<MatchMvp>> awardsByMatch = batchLoadAwards(matchIds);
         List<MatchSummaryResponse> items = result.getRecords().stream().map(m -> {
             MatchSummaryResponse resp = new MatchSummaryResponse();
             resp.setGameId(m.getGameId());
@@ -226,6 +228,9 @@ public class MatchService {
             resp.setSelfPuuid(viewPuuid);
             // 填充本玩家/队伍聚合/队友摘要：以查询者视角为中心，self 行缺失时输出全零占位，不抛错
             fillMatchExtras(resp, viewPuuid,
+                    participantsByMatch.getOrDefault(m.getId(), List.of()));
+            // 填充 MVP/SVP 称号（折叠卡据此给聚焦玩家挂图标；老数据无记录时保持 null）
+            fillSummaryAwards(resp, awardsByMatch.getOrDefault(m.getId(), List.of()),
                     participantsByMatch.getOrDefault(m.getId(), List.of()));
             return resp;
         }).toList();
@@ -680,6 +685,8 @@ public class MatchService {
         resp.setParticipants(participants);
         // 填充 MVP/SVP 称号：查 match_mvp 并关联参赛者档案（老数据无记录时保持 null）
         fillMvpAwards(resp, match.getId(), participants);
+        // 全员实时评分：查询时跑评分引擎（老对局同样可算，口径与落库评选一致）
+        resp.setPlayerScores(matchMvpService.computeScores(match, participants));
         log.info("Query match detail: gameId={}, participants={}", gameId, participants.size());
         return resp;
     }
@@ -695,15 +702,67 @@ public class MatchService {
         if (awards == null || awards.isEmpty()) {
             return;
         }
-        // participantId → 参赛者档案，用于补充称号持有者的玩家信息
-        Map<Long, MatchParticipant> byId = participants.stream()
+        applyAwards(awards, participantsByPuuidHolder(participants),
+                (type, dto) -> {
+                    if ("MVP".equals(type)) {
+                        resp.setMvp(dto);
+                    } else if ("SVP".equals(type)) {
+                        resp.setSvp(dto);
+                    }
+                });
+    }
+
+    /**
+     * 填充列表响应的 mvp/svp 字段（评选记录已由 batchLoadAwards 批量查出）
+     */
+    private void fillSummaryAwards(MatchSummaryResponse resp, List<MatchMvp> awards,
+                                   List<MatchParticipant> participants) {
+        if (awards.isEmpty()) {
+            return;
+        }
+        applyAwards(awards, participantsByPuuidHolder(participants),
+                (type, dto) -> {
+                    if ("MVP".equals(type)) {
+                        resp.setMvp(dto);
+                    } else if ("SVP".equals(type)) {
+                        resp.setSvp(dto);
+                    }
+                });
+    }
+
+    /**
+     * 批量加载本页对局的评选记录（matchId IN 一次查询，避免逐局 N+1）
+     */
+    private Map<Long, List<MatchMvp>> batchLoadAwards(List<Long> matchIds) {
+        if (matchIds == null || matchIds.isEmpty()) {
+            return Map.of();
+        }
+        List<MatchMvp> awards = matchMvpMapper.selectList(
+                new QueryWrapper<MatchMvp>().in("match_id", matchIds));
+        if (awards == null || awards.isEmpty()) {
+            return Map.of();
+        }
+        return awards.stream().collect(Collectors.groupingBy(MatchMvp::getMatchId));
+    }
+
+    /** 参赛者档案索引：participantId → 参赛者（称号持有者档案补充用） */
+    private Map<Long, MatchParticipant> participantsByPuuidHolder(List<MatchParticipant> participants) {
+        return participants.stream()
                 .collect(Collectors.toMap(MatchParticipant::getId, p -> p, (a, b) -> a));
+    }
+
+    /**
+     * 遍历评选记录组装称号 DTO 并回调分发（详情/列表响应共用）
+     */
+    private void applyAwards(List<MatchMvp> awards,
+                             Map<Long, MatchParticipant> holderById,
+                             java.util.function.BiConsumer<String, MvpAwardResponse> setter) {
         for (MatchMvp award : awards) {
-            MatchParticipant holder = byId.get(award.getParticipantId());
+            MatchParticipant holder = holderById.get(award.getParticipantId());
             if (holder == null) {
                 // 评选记录与参赛者对不上（异常数据）：跳过该称号
                 log.warn("MVP award participant missing: matchId={}, participantId={}",
-                        matchId, award.getParticipantId());
+                        award.getMatchId(), award.getParticipantId());
                 continue;
             }
             MvpAwardResponse dto = new MvpAwardResponse();
@@ -712,11 +771,7 @@ public class MatchService {
             dto.setSummonerName(holder.getSummonerName());
             dto.setChampionId(holder.getChampionId());
             dto.setScore(award.getScore());
-            if ("MVP".equals(award.getType())) {
-                resp.setMvp(dto);
-            } else if ("SVP".equals(award.getType())) {
-                resp.setSvp(dto);
-            }
+            setter.accept(award.getType(), dto);
         }
     }
 }

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.dto.MvpScoringInput;
 import com.leagueakari.dto.MvpScoringResult;
+import com.leagueakari.dto.PlayerScoreView;
 import com.leagueakari.entity.ChampionClass;
 import com.leagueakari.entity.Match;
 import com.leagueakari.entity.MatchMvp;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -71,6 +73,51 @@ public class MatchMvpService {
                 match.getGameId(),
                 result.getMvp() == null ? "无" : result.getMvp().getParticipantId(),
                 result.getSvp() == null ? "无" : result.getSvp().getParticipantId());
+    }
+
+    /**
+     * 查询时实时计算全员评分（纯计算路径，不落库）
+     * <p>详情接口调用：对全部参与者跑评分引擎，按 puuid 索引返回总分与维度明细。
+     * 口径与落库评选（evaluateAndSave）完全一致——同一引擎同一权重；
+     * 老对局（未评选）同样可算，且调权重后全局立即生效。</p>
+     *
+     * @param match        对局主表记录（含 gameMode 供大乱斗修正）
+     * @param participants 参与者列表（statsJson 提取维度原始值）
+     * @return puuid → 评分视图（总分 + 维度明细）；参与者不足 2 人时返回空 Map
+     */
+    public Map<String, PlayerScoreView> computeScores(Match match, List<MatchParticipant> participants) {
+        if (match == null || participants == null || participants.size() < 2) {
+            return Map.of();
+        }
+        // 加载英雄职业映射 → 组装引擎输入 → 跑引擎（与落库评选同一路径）
+        Map<Integer, String> classMap = loadChampionClassMap();
+        List<MvpScoringInput> inputs = participants.stream()
+                .map(p -> toScoringInput(p, match))
+                .toList();
+        MvpScoringResult result = mvpScoringEngine.score(inputs, classMap, match.getGameMode());
+
+        // 引擎输出按 participantId 索引，前端以 puuid 为玩家主键——做一次映射
+        Map<Long, String> puuidById = participants.stream()
+                .collect(Collectors.toMap(MatchParticipant::getId, MatchParticipant::getPuuid, (a, b) -> a));
+        Map<String, PlayerScoreView> out = new LinkedHashMap<>();
+        for (MvpScoringResult.PlayerScore ps : result.getPlayerScores()) {
+            String puuid = puuidById.get(ps.getParticipantId());
+            if (puuid == null) {
+                // 引擎输出与参与者对不上（异常数据）：跳过
+                continue;
+            }
+            Map<String, PlayerScoreView.DimensionScore> dimensions = new LinkedHashMap<>();
+            ps.getDimensionScores().forEach((dim, ds) -> dimensions.put(dim,
+                    PlayerScoreView.DimensionScore.builder()
+                            .raw(ds.getRaw() == null ? 0.0 : ds.getRaw())
+                            .score(ds.getScore() == null ? 0.0 : ds.getScore())
+                            .build()));
+            out.put(puuid, PlayerScoreView.builder()
+                    .score(ps.getTotalScore())
+                    .dimensions(dimensions)
+                    .build());
+        }
+        return out;
     }
 
     /**

@@ -4,6 +4,7 @@ import com.leagueakari.entity.MatchParticipant;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 对局详情：主表字段 + 参赛者列表（含 stats_json 全量）
@@ -61,4 +62,7 @@ public class MatchDetailResponse {
 
     /** SVP：负方最佳选手（未评选或老数据时为 null） */
     private MvpAwardResponse svp;
+
+    /** 全员实时评分：puuid → 总分与维度明细（查询时实时计算，与落库评选口径一致） */
+    private Map<String, PlayerScoreView> playerScores;
 }
