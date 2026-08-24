@@ -706,8 +706,8 @@ public class MatchService {
                 (type, dto) -> {
                     if ("MVP".equals(type)) {
                         resp.setMvp(dto);
-                    } else if ("SVP".equals(type)) {
-                        resp.setSvp(dto);
+                    } else if ("ACE".equals(type) || "SVP".equals(type)) {
+                        resp.setAce(dto);
                     }
                 });
     }
@@ -724,8 +724,8 @@ public class MatchService {
                 (type, dto) -> {
                     if ("MVP".equals(type)) {
                         resp.setMvp(dto);
-                    } else if ("SVP".equals(type)) {
-                        resp.setSvp(dto);
+                    } else if ("ACE".equals(type) || "SVP".equals(type)) {
+                        resp.setAce(dto);
                     }
                 });
     }
@@ -771,6 +771,8 @@ public class MatchService {
             dto.setSummonerName(holder.getSummonerName());
             dto.setChampionId(holder.getChampionId());
             dto.setScore(award.getScore());
+            dto.setOpScore(award.getOpScore());
+            dto.setGrade(award.getGrade());
             setter.accept(award.getType(), dto);
         }
     }

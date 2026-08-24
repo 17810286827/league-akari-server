@@ -58,6 +58,21 @@ public class MvpScoringInput {
     /** 控制他人时长秒（timeCCingOthers） */
     private Double timeCCingOthers;
 
+    /** 对塔伤害（damageDealtToTurrets） */
+    private Double damageDealtToTurrets;
+
+    /** 双杀次数（doubleKills） */
+    private Integer doubleKills;
+
+    /** 三杀次数（tripleKills） */
+    private Integer tripleKills;
+
+    /** 四杀次数（quadraKills） */
+    private Integer quadraKills;
+
+    /** 五杀次数（pentaKills） */
+    private Integer pentaKills;
+
     /** 对局时长（秒），用于经济/补刀的每分钟换算 */
     private Integer gameDurationSeconds;
 }

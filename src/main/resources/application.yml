@@ -74,3 +74,83 @@ ai:
   max-tokens: 3072
   # 系统提示词文件（classpath 下，可直接编辑）
   prompt-file: ai/system-prompt.md
+
+scoring:
+  # 评分算法版本号：落库时写入 match_mvp.scoring_version，查询时版本不匹配会实时重算
+  version: 2
+  # 职业差异化权重表（每行和为 1.0）：按英雄职业区分各维度权重，直接改这里即可微调
+  weights:
+    ADC:
+      kda: 0.35
+      damage: 0.30
+      gold: 0.10
+      tank: 0.05
+      vision: 0.0
+      healShield: 0.0
+      cc: 0.05
+      turret: 0.15
+    MAGE:
+      kda: 0.30
+      damage: 0.35
+      gold: 0.10
+      tank: 0.05
+      vision: 0.0
+      healShield: 0.0
+      cc: 0.10
+      turret: 0.10
+    TANK:
+      kda: 0.20
+      damage: 0.05
+      gold: 0.10
+      tank: 0.40
+      vision: 0.0
+      healShield: 0.05
+      cc: 0.15
+      turret: 0.05
+    ASSASSIN:
+      kda: 0.40
+      damage: 0.25
+      gold: 0.10
+      tank: 0.05
+      vision: 0.0
+      healShield: 0.0
+      cc: 0.10
+      turret: 0.10
+    FIGHTER:
+      kda: 0.25
+      damage: 0.20
+      gold: 0.10
+      tank: 0.25
+      vision: 0.0
+      healShield: 0.05
+      cc: 0.10
+      turret: 0.05
+    SUPPORT:
+      kda: 0.20
+      damage: 0.0
+      gold: 0.05
+      tank: 0.05
+      vision: 0.0
+      healShield: 0.40
+      cc: 0.25
+      turret: 0.05
+    UNKNOWN:
+      kda: 0.30
+      damage: 0.25
+      gold: 0.10
+      tank: 0.15
+      vision: 0.0
+      healShield: 0.05
+      cc: 0.10
+      turret: 0.05
+  # 多杀加分：直接加到 OP Score 上（clamp 到 0-10）
+  multi-kill-bonus:
+    double: 0.2
+    triple: 0.5
+    quadra: 1.0
+    penta: 2.0
+  # 基线混合比阈值（按英雄独立统计）：
+  # 样本量 < baseline-threshold-min → 纯局内比较；之间线性过渡；≥ max → 锁定 baseline-mix-max
+  baseline-threshold-min: 10
+  baseline-threshold-max: 30
+  baseline-mix-max: 0.5

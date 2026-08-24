@@ -6,8 +6,8 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * MVP/SVP 评选结果实体（match_mvp 表）
- * <p>对局同步时由评分引擎计算，每场对局最多两条（MVP + SVP）。</p>
+ * MVP/ACE 评选结果实体（match_mvp 表）
+ * <p>对局同步时由评分引擎计算，每场对局最多两条（MVP + ACE）。</p>
  */
 @Data
 public class MatchMvp {
@@ -21,13 +21,22 @@ public class MatchMvp {
     /** 获得称号的参与者（match_participant.id） */
     private Long participantId;
 
-    /** 称号类型：MVP / SVP */
+    /** 称号类型：MVP / ACE */
     private String type;
 
-    /** 归一化总分（0-100） */
+    /** 评分算法版本号（1=旧队内归一化，2=OpScore） */
+    private Integer scoringVersion;
+
+    /** 归一化总分（0-100，兼容旧算法） */
     private BigDecimal score;
 
-    /** 评分明细 JSON：{ "维度名": { "raw": 原始值, "score": 归一化得分 } } */
+    /** OP Score（0-10，一位小数） */
+    private BigDecimal opScore;
+
+    /** 文字等级（完美/卓越/优秀/良好/一般/偏低/较差/糟糕） */
+    private String grade;
+
+    /** 评分明细 JSON：{ "维度名": { "perMinute": ..., "teamRank": ..., "baselineScore": ..., "mix": ..., "finalScore": ... } } */
     private String scoreDetailJson;
 
     /** 记录创建时间 */

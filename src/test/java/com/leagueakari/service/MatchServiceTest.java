@@ -203,7 +203,7 @@ class MatchServiceTest {
         MatchMvp svpRecord = new MatchMvp();
         svpRecord.setMatchId(1L);
         svpRecord.setParticipantId(102L);
-        svpRecord.setType("SVP");
+        svpRecord.setType("ACE");
         svpRecord.setScore(new java.math.BigDecimal("85.00"));
         when(matchMvpMapper.selectList(any())).thenReturn(List.of(mvpRecord, svpRecord));
 
@@ -216,11 +216,11 @@ class MatchServiceTest {
         assertThat(resp.getMvp().getSummonerName()).isEqualTo("MvpPlayer");
         assertThat(resp.getMvp().getChampionId()).isEqualTo(22);
         assertThat(resp.getMvp().getScore()).isEqualByComparingTo(new java.math.BigDecimal("92.50"));
-        // SVP：同上
-        assertThat(resp.getSvp()).isNotNull();
-        assertThat(resp.getSvp().getParticipantId()).isEqualTo(102L);
-        assertThat(resp.getSvp().getSummonerName()).isEqualTo("SvpPlayer");
-        assertThat(resp.getSvp().getScore()).isEqualByComparingTo(new java.math.BigDecimal("85.00"));
+        // ACE：同上
+        assertThat(resp.getAce()).isNotNull();
+        assertThat(resp.getAce().getParticipantId()).isEqualTo(102L);
+        assertThat(resp.getAce().getSummonerName()).isEqualTo("SvpPlayer");
+        assertThat(resp.getAce().getScore()).isEqualByComparingTo(new java.math.BigDecimal("85.00"));
     }
 
     /**
@@ -238,7 +238,7 @@ class MatchServiceTest {
         MatchDetailResponse resp = matchService.getMatchDetail(1000000007L);
 
         assertThat(resp.getMvp()).isNull();
-        assertThat(resp.getSvp()).isNull();
+        assertThat(resp.getAce()).isNull();
     }
 
     /**
@@ -256,9 +256,9 @@ class MatchServiceTest {
         p.setPuuid("puuid-101");
         when(matchParticipantMapper.selectList(any())).thenReturn(List.of(p));
         when(matchMvpMapper.selectList(any())).thenReturn(List.of());
-        // mock 评分服务：puuid-101 → 88.8
+        // mock 评分服务：puuid-101 → opScore 8.88 grade 卓越
         Map<String, PlayerScoreView> scores = Map.of("puuid-101",
-                PlayerScoreView.builder().score(88.8).dimensions(Map.of()).build());
+                PlayerScoreView.builder().opScore(8.88).grade("卓越").dimensions(Map.of()).build());
         when(matchMvpService.computeScores(any(Match.class), anyList())).thenReturn(scores);
 
         MatchDetailResponse resp = matchService.getMatchDetail(1000000009L);
@@ -266,7 +266,8 @@ class MatchServiceTest {
         // 透传契约：playerScores 原样返回，按 puuid 键
         assertThat(resp.getPlayerScores()).isNotNull();
         assertThat(resp.getPlayerScores()).containsKey("puuid-101");
-        assertThat(resp.getPlayerScores().get("puuid-101").getScore()).isEqualTo(88.8);
+        assertThat(resp.getPlayerScores().get("puuid-101").getOpScore()).isEqualTo(8.88);
+        assertThat(resp.getPlayerScores().get("puuid-101").getGrade()).isEqualTo("卓越");
     }
 
     /**
@@ -319,7 +320,7 @@ class MatchServiceTest {
         assertThat(item.getMvp().getParticipantId()).isEqualTo(101L);
         assertThat(item.getMvp().getSummonerName()).isEqualTo("PlayerOne");
         assertThat(item.getMvp().getScore()).isEqualByComparingTo(new java.math.BigDecimal("92.50"));
-        assertThat(item.getSvp()).isNull();
+        assertThat(item.getAce()).isNull();
         // 批量契约：评选查询只发起一次（matchId IN），不逐局 N+1
         verify(matchMvpMapper, times(1)).selectList(any());
     }

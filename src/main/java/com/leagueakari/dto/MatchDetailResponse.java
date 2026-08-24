@@ -60,9 +60,9 @@ public class MatchDetailResponse {
     /** MVP：胜方最佳选手（未评选或老数据时为 null） */
     private MvpAwardResponse mvp;
 
-    /** SVP：负方最佳选手（未评选或老数据时为 null） */
-    private MvpAwardResponse svp;
+    /** ACE：败方最佳选手（未评选或老数据时为 null，旧称 SVP） */
+    private MvpAwardResponse ace;
 
-    /** 全员实时评分：puuid → 总分与维度明细（查询时实时计算，与落库评选口径一致） */
+    /** 全员实时评分：puuid → OP Score + grade + 维度明细（查询时实时计算） */
     private Map<String, PlayerScoreView> playerScores;
 }

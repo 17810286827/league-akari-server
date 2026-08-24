@@ -53,8 +53,8 @@ public class MatchSummaryResponse {
     /** MVP：胜方最佳选手（未评选或老数据时为 null；折叠卡据此给聚焦玩家挂图标） */
     private MvpAwardResponse mvp;
 
-    /** SVP：负方最佳选手（同上） */
-    private MvpAwardResponse svp;
+    /** ACE：败方最佳选手（旧称 SVP，同上） */
+    private MvpAwardResponse ace;
 
     /**
      * 本玩家个人数据：身份与击杀/死亡/助攻来自参赛者直显列，
