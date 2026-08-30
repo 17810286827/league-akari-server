@@ -73,7 +73,11 @@ league-akari-server：英雄联盟对局同步后端。接收 LCU 客户端推�
 
 ### Issue tracker
 
-Issues 存为 `.scratch/<feature>/` 下的 markdown 文件（本地模式），一个 feature 一个目录。见 `docs/agents/issue-tracker.md`。
+Issues and specs for this repo live in GitHub Issues（`17810286827/league-akari-server`）. Use the `gh` CLI for all operations. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
