@@ -10,7 +10,24 @@ _Avoid_：全场最佳、击杀王
 
 **SVP（Second Valuable Player）**：
 负方中按职业差异化评分体系计算得分最高的选手，每场对局至多 1 名。
+落库与接口中的字段值是 `ACE`（`match_mvp.type`），语义即 SVP——沿用历史命名，不要新造第三种叫法。
 _Avoid_：败方MVP、输方最佳
+
+**腾讯侧 puuid（Tencent UUID）**：
+腾讯运营区服（台服 TW2 等）客户端经 LCU/SGP 上报的玩家唯一标识，格式为带连字符的 UUID（如 `3e242ccb-b520-5f29-8551-a7ad71b8f629`）。
+_Riot 全局 puuid 是另一套标识符，两者不可互换、不可互相推导，详见成员身份集合。_
+
+**Riot 全局 puuid（Riot PUUID）**：
+Riot 官方 API（Account-V1 / MATCH-V5）使用的玩家唯一标识，格式为无连字符长串（如 `IZOp3JUSyJct...`）。
+MATCH-V5 历史回填只能按此标识查询。
+_Avoid_：与腾讯侧 puuid 混用；跨体系做等值匹配
+
+**成员身份集合（Member Identity Set）**：
+一名玩家全部已知标识符的并集（腾讯侧 puuid ∪ Riot 全局 puuid），由 `team.roster` 配置的"昵称#tag"经库内反查与 Riot API 解析而来。车队相关的所有匹配（周报/榜单/成员卡/名场面）必须按身份集合进行，跨数据源的聚合按成员（riotId）为键，而不是按单个 puuid。
+_Retry 提示：新增玩家匹配逻辑时，先确认是否可能横跨两种 puuid 体系。_
+
+**车队对局（Fleet Game）**：
+同局出现的车队成员数 ≥ 配置阈值（`team.min-shared-members`，默认 2）的对局，用于过滤成员的单人局/路人局。周报与全部榜单只统计车队对局；成员卡（个人视角）统计个人全部对局。
 
 **英雄职业（Champion Class）**：
 英雄的固有职业分类，与对局中的位置（分路）无关。包括射手、法师、坦克、刺客、战士、辅助六个类别，用于确定评分维度权重。
