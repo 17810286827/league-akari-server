@@ -121,6 +121,8 @@ public class MatchService {
 
         // 参与者全部落库后触发 MVP/SVP 评选：同事务内写 match_mvp
         matchMvpService.evaluateAndSave(match, savedParticipants);
+        // 同一首存路径累积评分基线（scoring_baseline 随对局同步积累，重复推送因幂等查重不会二次累加）
+        matchMvpService.collectBaselines(match, savedParticipants);
 
         log.info("Match saved: gameId={}, participants={}", gameId, request.getParticipants().size());
     }

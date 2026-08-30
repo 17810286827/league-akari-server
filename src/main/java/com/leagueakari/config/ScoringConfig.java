@@ -16,8 +16,8 @@ import java.util.Map;
 @ConfigurationProperties(prefix = "scoring")
 public class ScoringConfig {
 
-    /** 评分算法版本号，用于落库标记（v3：MVP/ACE 评选改按 op_score 取，含多杀加分） */
-    private int version = 3;
+    /** 评分算法版本号，用于落库标记（v4：启用基线分——scoring_baseline 随对局同步累积，混合比随样本量渐进生效） */
+    private int version = 4;
 
     /**
      * 职业差异化权重表

@@ -61,6 +61,9 @@ class MatchMvpServiceTest {
     @Mock
     private OpScoreEngine opScoreEngine;
 
+    @Mock
+    private BaselineService baselineService;
+
     private MatchMvpService matchMvpService;
 
     @BeforeEach
@@ -68,7 +71,7 @@ class MatchMvpServiceTest {
         // 手动构造，不用 @InjectMocks（因为要 mock OpScoreEngine）
         matchMvpService = new MatchMvpService(
                 matchMvpMapper, championClassMapper, scoringBaselineMapper,
-                opScoreEngine, scoringConfig, objectMapper);
+                opScoreEngine, scoringConfig, objectMapper, baselineService);
     }
 
     private Match buildMatch(Long id, Integer winnerTeamId) {
@@ -307,5 +310,41 @@ class MatchMvpServiceTest {
                 List.of(winnerAdc(), winnerTank(), loserAdc(), loserSupport()));
 
         verify(matchMvpMapper, never()).insert(any(MatchMvp.class));
+    }
+
+    @Test
+    @DisplayName("collectBaselines：逐人按英雄累积各维度每分钟值")
+    void collectBaselines_accumulatesPerParticipant() {
+        // winnerAdc：30000 伤害 / 30 分钟 = 1000 每分钟；时长 1800s 原样透传
+        Map<String, Double> adcPerMinute = Map.of(
+                OpScoreEngine.DIM_DAMAGE, 1000.0, OpScoreEngine.DIM_KDA, 5.0);
+        when(opScoreEngine.minutes(any())).thenReturn(30.0);
+        when(opScoreEngine.perMinuteValues(any(), eq(30.0))).thenReturn(adcPerMinute);
+
+        matchMvpService.collectBaselines(
+                buildMatch(1L, 100),
+                List.of(winnerAdc(), winnerTank(), loserAdc(), loserSupport()));
+
+        // 4 名参与者各累积一次基线
+        ArgumentCaptor<Integer> championCaptor = ArgumentCaptor.forClass(Integer.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Double>> perMinuteCaptor = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<Integer> durationCaptor = ArgumentCaptor.forClass(Integer.class);
+        verify(baselineService, times(4)).updateBaseline(
+                championCaptor.capture(), perMinuteCaptor.capture(), durationCaptor.capture());
+
+        // 英雄与时长对号入座
+        assertThat(championCaptor.getAllValues()).containsExactly(22, 57, 81, 16);
+        assertThat(durationCaptor.getAllValues()).containsExactly(1800, 1800, 1800, 1800);
+        // 每分钟值原样传给基线服务（第一名 ADC 的伤害 1000/min）
+        assertThat(perMinuteCaptor.getAllValues().get(0)).isEqualTo(adcPerMinute);
+    }
+
+    @Test
+    @DisplayName("collectBaselines：空参与者直接跳过")
+    void collectBaselines_skipsEmptyParticipants() {
+        matchMvpService.collectBaselines(buildMatch(1L, 100), List.of());
+
+        verify(baselineService, never()).updateBaseline(any(), any(), any());
     }
 }

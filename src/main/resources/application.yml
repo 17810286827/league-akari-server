@@ -103,7 +103,8 @@ ai:
 scoring:
   # 评分算法版本号：落库时写入 match_mvp.scoring_version，查询时版本不匹配会实时重算
   # v3：MVP/ACE 评选改按 op_score 取（含多杀加分，与界面展示评分一致）
-  version: 3
+  # v4：启用基线分累积（对局首存时累加 scoring_baseline，样本 10~30 局间混合比线性过渡，上限 0.5）
+  version: 4
   # 职业差异化权重表（每行和为 1.0）：按英雄职业区分各维度权重，直接改这里即可微调
   weights:
     ADC:

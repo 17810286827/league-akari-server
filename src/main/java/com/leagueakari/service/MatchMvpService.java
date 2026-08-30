@@ -46,6 +46,7 @@ public class MatchMvpService {
     private final OpScoreEngine opScoreEngine;
     private final ScoringConfig scoringConfig;
     private final ObjectMapper objectMapper;
+    private final BaselineService baselineService;
 
     /** 当前评分版本（从配置加载） */
     private int scoringVersion() {
@@ -81,6 +82,30 @@ public class MatchMvpService {
                 match.getGameId(),
                 result.getMvp() == null ? "无" : result.getMvp().getParticipantId(),
                 result.getAce() == null ? "无" : result.getAce().getParticipantId());
+    }
+
+    /**
+     * 累积评分基线：对一局全员逐人计算各维度每分钟值，累加进对应英雄的基线记录
+     * <p>在对局落库（与 MVP 评选同事务、同一首存路径）时调用，让 scoring_baseline
+     * 随对局同步持续积累；基线是 OpScore 基线混合比的分母——无积累时混合比为 0，
+     * 评分退化为纯局内位次。幂等性由调用方保证（saveMatch 按 gameId 查重，
+     * 仅首存触发，重复推送不会二次累加）。</p>
+     *
+     * @param match        对局主表记录（id 已回填）
+     * @param participants 已落库的参与者列表（id 已回填）
+     */
+    public void collectBaselines(Match match, List<MatchParticipant> participants) {
+        if (match == null || participants == null || participants.isEmpty()) {
+            return;
+        }
+        for (MatchParticipant p : participants) {
+            MvpScoringInput input = toScoringInput(p, match);
+            // 与评分主流程同源的每分钟值口径（OpScoreEngine.perMinuteValues）
+            Map<String, Double> perMinute = opScoreEngine.perMinuteValues(
+                    input, opScoreEngine.minutes(input.getGameDurationSeconds()));
+            baselineService.updateBaseline(input.getChampionId(), perMinute, input.getGameDurationSeconds());
+        }
+        log.info("评分基线已累积：matchId={}, participants={}", match.getId(), participants.size());
     }
 
     /**
