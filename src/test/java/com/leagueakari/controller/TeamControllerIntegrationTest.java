@@ -6,6 +6,7 @@ import com.leagueakari.dto.ParticipantSyncRequest;
 import com.leagueakari.dto.TeamSyncRequest;
 import com.leagueakari.service.RiotMatchHistoryService;
 import com.leagueakari.service.TeamRosterService;
+import com.leagueakari.service.WeeklyAiCommentService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,6 +56,13 @@ class TeamControllerIntegrationTest {
     /** 回填触发 Riot 网络：集成测试只验证触发契约 */
     @MockBean
     private RiotMatchHistoryService backfillService;
+
+    /**
+     * AI 周锐评是外部 I/O：集成测试固定返回值，保证断言确定性
+     * （本机若配了 AI_API_KEY，真实调用会产生非确定内容并拖慢测试）
+     */
+    @MockBean
+    private WeeklyAiCommentService aiCommentService;
 
     @BeforeEach
     void setUpRoster() {
@@ -133,6 +141,9 @@ class TeamControllerIntegrationTest {
      */
     @Test
     void weekly_onlyIncludesRequestedWeek() throws Exception {
+        // 周报主体 + AI 锐评透传（AI 服务已被 mock，返回值固定）
+        when(aiCommentService.generateComment(org.mockito.ArgumentMatchers.any()))
+                .thenReturn("测试锐评");
         // 本周两局（甲乙同队全胜）+ 下周一局（不应计入）
         mockMvc.perform(post("/api/matches").contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
@@ -153,8 +164,8 @@ class TeamControllerIntegrationTest {
                 .andExpect(jsonPath("$.data.overview.gameCount").value(2))
                 .andExpect(jsonPath("$.data.overview.winCount").value(4))
                 .andExpect(jsonPath("$.data.attendanceBoard[0].value").value(2))
-                // AI 未配置时锐评为 null（周报主体不受影响，降级语义）
-                .andExpect(jsonPath("$.data.aiComment").value(org.hamcrest.Matchers.nullValue()));
+                // AI 锐评经 TeamStatsService 透传（mock 固定值，验证装配与降级链路之外的正常路径）
+                .andExpect(jsonPath("$.data.aiComment").value("测试锐评"));
     }
 
     /** 用例：roster 未配置时周报接口返回 400 与明确提示（全局异常处理器转换） */

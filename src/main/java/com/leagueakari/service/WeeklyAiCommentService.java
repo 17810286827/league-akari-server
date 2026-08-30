@@ -75,7 +75,7 @@ public class WeeklyAiCommentService {
             @Value("${ai.model:mimo-v2.5}") String model,
             @Value("${ai.weekly-prompt-file:ai/weekly-prompt.md}") String promptFile,
             @Value("${ai.temperature:1.0}") double temperature,
-            @Value("${ai.weekly-max-tokens:512}") int maxTokens,
+            @Value("${ai.weekly-max-tokens:1536}") int maxTokens,
             CloseableHttpClient httpClient,
             ObjectMapper objectMapper) {
         this.baseUrl = baseUrl;
@@ -93,7 +93,7 @@ public class WeeklyAiCommentService {
      *
      * @param report 已聚合完成的周报（只读其摘要字段）
      * @return 锐评文本（中文，一两句话）
-     * @throws IllegalStateException AI Key 未配置 / 接口失败 / 返回内容为空
+     * @throws IllegalStateException AI Key 未配置 / 接口失败 / 重试后正文仍为空
      */
     public String generateComment(WeeklyReportResponse report) {
         if (apiKey == null || apiKey.isBlank()) {
@@ -110,7 +110,18 @@ public class WeeklyAiCommentService {
 
         String summary = buildSummary(report);
         String systemPrompt = loadPrompt();
-        String comment = callAi(systemPrompt, summary);
+        // 空正文重试：推理模型偶发把输出预算耗在思维链上（finish_reason=length，正文为空），
+        // 重试一次通常能拿到正文；两次都为空才判定失败
+        String comment = null;
+        for (int attempt = 1; attempt <= 2 && comment == null; attempt++) {
+            comment = callAi(systemPrompt, summary);
+            if (comment == null) {
+                log.warn("Weekly AI comment empty, retrying: attempt={}/2, week={}", attempt, report.getWeekLabel());
+            }
+        }
+        if (comment == null) {
+            throw new IllegalStateException("AI 返回内容为空，请稍后重试");
+        }
         cache.put(report.getWeekLabel(), new CacheEntry(comment, System.currentTimeMillis()));
         log.info("Weekly AI comment generated: week={}, length={}", report.getWeekLabel(), comment.length());
         return comment;
@@ -192,7 +203,7 @@ public class WeeklyAiCommentService {
 
     /**
      * 非流式调用 chat/completions：{ model, messages, temperature, max_tokens, stream:false }。
-     * 解析 choices[0].message.content；非 200 / 空内容均抛状态异常由调用方降级
+     * 非 200 抛状态异常；正文为空返回 null（由调用方重试），其余情况返回正文
      */
     private String callAi(String systemPrompt, String userContent) {
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -225,12 +236,16 @@ public class WeeklyAiCommentService {
                 log.error("Weekly AI API error: status={}, body={}", status, body);
                 throw new IllegalStateException("AI 接口调用失败（HTTP " + status + "），请稍后重试");
             }
-            JsonNode content = objectMapper.readTree(body)
-                    .path("choices").path(0).path("message").path("content");
-            if (content.asText("").isBlank()) {
-                throw new IllegalStateException("AI 返回内容为空，请稍后重试");
+            JsonNode choice = objectMapper.readTree(body).path("choices").path(0);
+            String finishReason = choice.path("finish_reason").asText("");
+            String content = choice.path("message").path("content").asText("");
+            if (content.isBlank()) {
+                // 正文为空：多为推理模型把输出预算耗在思维链（finish_reason=length），
+                // 返回 null 由调用方重试；finish_reason 落日志便于确认根因
+                log.warn("Weekly AI returned empty content, finishReason={}", finishReason);
+                return null;
             }
-            return content.asText();
+            return content;
         } catch (IOException e) {
             log.error("Weekly AI API request failed: {}", e.getMessage());
             throw new IllegalStateException("AI 接口调用失败，请检查网络与 API Key");

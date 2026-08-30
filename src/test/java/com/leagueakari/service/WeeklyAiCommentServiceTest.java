@@ -128,4 +128,37 @@ class WeeklyAiCommentServiceTest {
         service.generateComment(report("2026-08-31 ~ 2026-09-06"));
         verify(httpClient, times(2)).execute(any(HttpPost.class));
     }
+
+    /**
+     * 用例：正文为空（推理模型把预算耗在思维链，finish_reason=length）自动重试一次——
+     * 第一次空、第二次有正文 → 返回正文且共发起 2 次请求
+     */
+    @Test
+    void generateComment_retriesOnceOnEmptyContent() throws Exception {
+        CloseableHttpResponse empty = mockResponse(200,
+                "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\"}}]}");
+        CloseableHttpResponse ok = mockResponse(200,
+                "{\"choices\":[{\"message\":{\"content\":\"重试后的锐评\"}}]}");
+        when(httpClient.execute(any(HttpPost.class))).thenReturn(empty, ok);
+
+        String comment = service.generateComment(report("2026-08-24 ~ 2026-08-30"));
+
+        assertThat(comment).isEqualTo("重试后的锐评");
+        verify(httpClient, times(2)).execute(any(HttpPost.class));
+    }
+
+    /** 用例：两次调用正文都为空 → 抛状态异常（调用方降级为 null） */
+    @Test
+    void generateComment_throwsWhenBothAttemptsEmpty() throws Exception {
+        CloseableHttpResponse empty1 = mockResponse(200,
+                "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\"}}]}");
+        CloseableHttpResponse empty2 = mockResponse(200,
+                "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\"}}]}");
+        when(httpClient.execute(any(HttpPost.class))).thenReturn(empty1, empty2);
+
+        assertThatThrownBy(() -> service.generateComment(report("2026-08-24 ~ 2026-08-30")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("内容为空");
+        verify(httpClient, times(2)).execute(any(HttpPost.class));
+    }
 }
