@@ -15,6 +15,21 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+team:
+  # 车队名：周报标题与分享图展示用，按车队喜好自行修改
+  name: "周末开黑小队"
+  # 车队成员名单（"昵称#tag"）：周报/榜单的统计口径中心，增删成员改这里即可；
+  # 名单在首次使用时经 Riot API 解析为 puuid（命中 riot_account 缓存表则零 API 消耗）。
+  # ⚠️ 请按实际车队成员维护此名单，成员改名时更新为最新 "昵称#tag"
+  roster:
+    - "赌书消得泼茶香#iKun"
+    - "南風知吾意#iKun"
+    - "手裂鬼子#tw2"
+    - "玉舍奴#tw2"
+    - "達摩克裡斯之劍#tw2"
+  # 车队对局判定阈值：同局出现 ≥N 名车队成员才算"开黑局"（周报/榜单只统计开黑局）
+  min-shared-members: 2
+
 management:
   endpoints:
     web:
@@ -52,6 +67,13 @@ riot:
   account-domain: https://asia.api.riotgames.com
   # 台服召唤师接口域名（Summoner-V4 按平台路由）
   summoner-domain: https://sea.api.riotgames.com
+  # MATCH-V5 历史对局接口域名（台服对局走 sea 路由，用于历史回填）
+  match-domain: ${RIOT_MATCH_DOMAIN:https://sea.api.riotgames.com}
+  # 回填对局的 region 标记（记录到 match.region）
+  match-region: ${RIOT_MATCH_REGION:TW2}
+  # 历史回填：每页对局 ID 数（Riot 上限 100）与单成员最大回填局数（防失控）
+  backfill-page-size: ${RIOT_BACKFILL_PAGE_SIZE:100}
+  backfill-max-matches: ${RIOT_BACKFILL_MAX_MATCHES:200}
 
 ai:
   # opencode go 的 API（OpenAI 兼容 chat/completions）
