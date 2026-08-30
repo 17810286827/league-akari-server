@@ -17,7 +17,9 @@ import java.util.stream.Collectors;
  * OpScore 评分引擎（纯函数，无数据库/HTTP 依赖）
  * <p>按英雄职业差异化权重对每个评分维度做 {@code 局内位次分×混合比 + 基线分×(1-混合比)}
  * 合成，加权平均得 0-100 总分，除以 10 映射到 0-10 OP Score，再加多杀加分。</p>
- * <p>胜方总分最高者为 MVP，败方总分最高者为 ACE。</p>
+ * <p>胜方 op_score 最高者为 MVP，败方 op_score 最高者为 ACE。
+ * 评选以 op_score（含多杀加分，与界面展示的评分一致）为准，总分相同加分反超时同样生效；
+ * op_score 平局时按加权总分决胜。</p>
  */
 @Slf4j
 @Component
@@ -76,10 +78,17 @@ public class OpScoreEngine {
                 .build();
     }
 
-    /** 选择总分最高者（平局取先出现者） */
+    /**
+     * 选择 op_score 最高者（与界面展示的评分一致，含多杀加分）；
+     * op_score 平局时按加权总分决胜，仍平局取先出现者
+     */
     private OpScoreResult.PlayerScore best(List<OpScoreResult.PlayerScore> group) {
         return group.stream()
-                .max((a, b) -> Double.compare(a.getTotalScore(), b.getTotalScore()))
+                .max((a, b) -> {
+                    int byOpScore = Double.compare(a.getOpScore(), b.getOpScore());
+                    return byOpScore != 0 ? byOpScore
+                            : Double.compare(a.getTotalScore(), b.getTotalScore());
+                })
                 .orElse(null);
     }
 

@@ -268,6 +268,23 @@ class OpScoreEngineTest {
     }
 
     @Test
+    @DisplayName("评选按 op_score 取：多杀加分使 op_score 反超时，MVP 归 op_score 最高者")
+    void mvpByOpScoreWhenBonusFlipsRanking() {
+        // 胜方：w1 加权总分更高（伤害位次第一）但无多杀；w2 总分略低但两个五杀（+4.0）→ op_score 反超。
+        // UNKNOWN 职业 2 人队：非伤害维度全员同值位次分 50；damage 位次 100/75。
+        // w1 总分 = 0.25*100 + 0.75*50 = 62.5 → op_score 6.3；w2 总分 = 56.3 → 5.6 + 4.0 = 9.6
+        MvpScoringInput w1 = player(1, 100, true, 1, Map.of("totalDamageDealtToChampions", 20000.0));
+        MvpScoringInput w2 = player(2, 100, true, 1, Map.of("totalDamageDealtToChampions", 19000.0, "pentaKills", 2));
+        MvpScoringInput l1 = player(3, 200, false, 1, Map.of("totalDamageDealtToChampions", 15000.0));
+        MvpScoringInput l2 = player(4, 200, false, 1, Map.of());
+        var result = engine.score(List.of(w1, w2, l1, l2), classMap(1, 1, 1, 1), null);
+        // MVP 按 op_score（含多杀加分，与界面展示的评分一致）取：w2 的 9.6 > w1 的 6.3
+        assertThat(result.getMvp().getParticipantId()).isEqualTo(2L);
+        // SVP 仍为败方 op_score 最高者
+        assertThat(result.getAce().getParticipantId()).isEqualTo(3L);
+    }
+
+    @Test
     @DisplayName("少于 2 人抛 IllegalArgumentException")
     void fewerThan2Throw() {
         assertThatThrownBy(() -> engine.score(List.of(), classMap(), null))
