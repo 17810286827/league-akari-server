@@ -448,6 +448,11 @@ public class TeamStatsService {
         return values.stream().mapToDouble(Double::doubleValue).average().orElse(0);
     }
 
+    /** 四舍五入保留两位小数（对外输出的所有评分/比率类数值统一走这里，避免浮点尾巴） */
+    private static double round2(double value) {
+        return Math.round(value * 100.0) / 100.0;
+    }
+
     /**
      * 计算全部七个榜单（周报与榜单中心共享此口径）
      * <p>聚合键为成员（riotId）而非 puuid——同一成员可能同时存在腾讯 UUID 与 Riot puuid
@@ -564,7 +569,7 @@ public class TeamStatsService {
                 .sorted((a, b) -> Double.compare(avgOf(b.getValue().opScores), avgOf(a.getValue().opScores)))
                 .map(e -> WeeklyReportResponse.BoardEntry.builder()
                         .puuid(memberByRiotId.get(e.getKey()) == null ? null : memberByRiotId.get(e.getKey()).primaryPuuid()).riotId(e.getKey())
-                        .value(avgOf(e.getValue().opScores))
+                        .value(round2(avgOf(e.getValue().opScores)))
                         .detail(e.getValue().games + "场")
                         .build())
                 .toList();
@@ -575,7 +580,7 @@ public class TeamStatsService {
                 .sorted((a, b) -> Double.compare(avgOf(a.getValue().opScores), avgOf(b.getValue().opScores)))
                 .map(e -> WeeklyReportResponse.BoardEntry.builder()
                         .puuid(memberByRiotId.get(e.getKey()) == null ? null : memberByRiotId.get(e.getKey()).primaryPuuid()).riotId(e.getKey())
-                        .value(avgOf(e.getValue().opScores))
+                        .value(round2(avgOf(e.getValue().opScores)))
                         .detail(e.getValue().games + "场 · 最差局 op "
                                 + (e.getValue().worstGameId == null ? "—"
                                 : String.format("%.1f（%d）", e.getValue().worstOpScore, e.getValue().worstGameId)))
@@ -590,7 +595,7 @@ public class TeamStatsService {
                         (double) a.getValue().deaths / a.getValue().games))
                 .map(e -> WeeklyReportResponse.BoardEntry.builder()
                         .puuid(memberByRiotId.get(e.getKey()) == null ? null : memberByRiotId.get(e.getKey()).primaryPuuid()).riotId(e.getKey())
-                        .value((double) e.getValue().deaths / e.getValue().games)
+                        .value(round2((double) e.getValue().deaths / e.getValue().games))
                         .detail("总死亡" + e.getValue().deaths)
                         .build())
                 .toList();
@@ -603,7 +608,7 @@ public class TeamStatsService {
                         a.getValue().kpSum / a.getValue().kpCount))
                 .map(e -> WeeklyReportResponse.BoardEntry.builder()
                         .puuid(memberByRiotId.get(e.getKey()) == null ? null : memberByRiotId.get(e.getKey()).primaryPuuid()).riotId(e.getKey())
-                        .value(e.getValue().kpCount == 0 ? 0 : e.getValue().kpSum / e.getValue().kpCount)
+                        .value(round2(e.getValue().kpCount == 0 ? 0 : e.getValue().kpSum / e.getValue().kpCount))
                         .detail("场均击杀参与 "
                                 + Math.round(e.getValue().kpCount == 0 ? 0
                                 : e.getValue().kpSum / e.getValue().kpCount * 100) + "% · 伤害占比 "
@@ -623,9 +628,13 @@ public class TeamStatsService {
                 if (champ.games >= 2 && !champ.opScores.isEmpty()) {
                     signatureBoard.add(WeeklyReportResponse.BoardEntry.builder()
                             .puuid(member.primaryPuuid()).riotId(member.riotId())
-                            .value(avgOf(champ.opScores))
+                            .value(round2(avgOf(champ.opScores)))
                             .detail(gameDataService.championName(champId) + " " + champ.games + "场 胜率"
                                     + Math.round(champ.wins * 100.0 / champ.games) + "%")
+                            .championId(champId)
+                            .championName(gameDataService.championName(champId))
+                            .games(champ.games)
+                            .wins(champ.wins)
                             .build());
                 }
             });
@@ -893,7 +902,7 @@ public class TeamStatsService {
                 .games(gamesCount)
                 .winRate(gamesCount == 0 ? null : (double) wins / gamesCount)
                 .avgOpScore(opScores.isEmpty() ? null
-                        : opScores.stream().mapToDouble(Double::doubleValue).average().orElse(0))
+                        : round2(opScores.stream().mapToDouble(Double::doubleValue).average().orElse(0)))
                 .build();
     }
 
@@ -906,7 +915,7 @@ public class TeamStatsService {
             if (baseline.getChampionId() != null && baseline.getSampleCount() != null
                     && baseline.getSampleCount() > 0 && baseline.getSumDamage() != null) {
                 baselineDamageByChamp.put(baseline.getChampionId(),
-                        baseline.getSumDamage() / baseline.getSampleCount());
+                        round2(baseline.getSumDamage() / baseline.getSampleCount()));
             }
         }
         // 成员×英雄聚合（身份集合匹配，覆盖腾讯 UUID 局与 Riot puuid 回填局）
@@ -938,9 +947,9 @@ public class TeamStatsService {
                         .games(e.getValue().games)
                         .wins(e.getValue().wins)
                         .avgOpScore(e.getValue().opScores.isEmpty() ? null
-                                : e.getValue().opScores.stream().mapToDouble(Double::doubleValue).average().orElse(0))
+                                : round2(e.getValue().opScores.stream().mapToDouble(Double::doubleValue).average().orElse(0)))
                         .avgDamagePerMin(e.getValue().damagePerMin.isEmpty() ? null
-                                : e.getValue().damagePerMin.stream().mapToDouble(Double::doubleValue).average().orElse(0))
+                                : round2(e.getValue().damagePerMin.stream().mapToDouble(Double::doubleValue).average().orElse(0)))
                         .baselineDamagePerMin(baselineDamageByChamp.get(e.getKey()))
                         .build())
                 .toList();

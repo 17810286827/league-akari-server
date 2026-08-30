@@ -96,7 +96,9 @@ public class WeeklyReportResponse {
     }
 
     /**
-     * 榜单条目：value 为主排序值，detail 为人类可读的补充说明
+     * 榜单条目：value 为主排序值（已四舍五入保留两位小数），detail 为人类可读的补充说明。
+     * 绝活榜额外携带英雄结构化字段（championId/championName/games/wins），
+     * 供前端按英雄分组展示；其余榜单这些字段为 null
      */
     @Data
     @Builder
@@ -110,11 +112,23 @@ public class WeeklyReportResponse {
         /** 成员 riotId（"昵称#tag"） */
         private String riotId;
 
-        /** 主值（含义随榜单不同：次数/场均值/场次数） */
+        /** 主值（含义随榜单不同：次数/场均值/场次数），保留两位小数 */
         private Double value;
 
-        /** 补充说明，如 "MVP×2 SVP×1"、"12场 胜率58%"、"英雄×场次" */
+        /** 补充说明，如 "MVP×1 SVP×1"、"12场 胜率58%"、"英雄×场次" */
         private String detail;
+
+        /** 英雄 ID（仅绝活榜填充） */
+        private Integer championId;
+
+        /** 英雄中文名（仅绝活榜填充） */
+        private String championName;
+
+        /** 该英雄场次数（仅绝活榜填充） */
+        private Integer games;
+
+        /** 该英雄胜场数（仅绝活榜填充） */
+        private Integer wins;
     }
 
     /**
