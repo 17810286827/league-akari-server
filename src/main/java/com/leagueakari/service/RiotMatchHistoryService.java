@@ -138,7 +138,8 @@ public class RiotMatchHistoryService {
         int total = 0;
         for (TeamRosterService.RosterMember member : roster) {
             try {
-                int synced = backfillMember(member.puuid());
+                // 回填使用 Riot 全局 puuid（MATCH-V5 按它索引；腾讯 UUID 查不到）
+                int synced = backfillMember(member.backfillPuuid());
                 total += synced;
                 log.info("Backfill member done: {}, synced={}", member.riotId(), synced);
             } catch (Exception e) {

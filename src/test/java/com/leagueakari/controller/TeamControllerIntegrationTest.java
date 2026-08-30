@@ -59,8 +59,10 @@ class TeamControllerIntegrationTest {
     @BeforeEach
     void setUpRoster() {
         when(teamRosterService.requireMembers()).thenReturn(List.of(
-                new TeamRosterService.RosterMember("fleet-puuid-1", "成员甲#tw2"),
-                new TeamRosterService.RosterMember("fleet-puuid-2", "成员乙#tw2")));
+                new TeamRosterService.RosterMember("成员甲#tw2",
+                        new java.util.LinkedHashSet<>(List.of("fleet-puuid-1"))),
+                new TeamRosterService.RosterMember("成员乙#tw2",
+                        new java.util.LinkedHashSet<>(List.of("fleet-puuid-2")))));
     }
 
     /** 本周内的一天（2026-08-26 14:00 +08:00）的 epoch 毫秒 */

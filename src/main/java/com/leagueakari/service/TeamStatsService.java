@@ -247,7 +247,8 @@ public class TeamStatsService {
             int wins = 0;
             for (GameData g : fleetGames) {
                 for (MatchParticipant p : g.participants()) {
-                    if (member.puuid().equals(p.getPuuid())) {
+                    // 身份集合匹配：同一名成员的腾讯 UUID / Riot puuid 都计入其名下
+                    if (member.owns(p.getPuuid())) {
                         games++;
                         if (Boolean.TRUE.equals(p.getWin())) {
                             wins++;
@@ -256,7 +257,7 @@ public class TeamStatsService {
                 }
             }
             members.add(TeamMembersResponse.Member.builder()
-                    .puuid(member.puuid())
+                    .puuid(member.primaryPuuid())
                     .riotId(member.riotId())
                     .games(games)
                     .wins(wins)
@@ -269,19 +270,19 @@ public class TeamStatsService {
     /**
      * 成员卡：个人成长曲线（近 {@value TREND_WEEKS} 周）+ 英雄基线对比（全时段）
      *
-     * @param puuid 成员 puuid
+     * @param puuid 成员 puuid（主标识或任一别名均可）
      * @throws IllegalArgumentException 非车队成员
      */
     public MemberCardResponse memberCard(String puuid) {
         List<TeamRosterService.RosterMember> roster = rosterService.requireMembers();
-        // 只有车队成员有成员卡：陌生 puuid 直接参数错误
+        // 只有车队成员有成员卡：按身份集合匹配（任一别名 puuid 命中即可），陌生 puuid 直接参数错误
         TeamRosterService.RosterMember member = roster.stream()
-                .filter(m -> m.puuid().equals(puuid))
+                .filter(m -> m.owns(puuid))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("非车队成员：" + puuid));
-        log.info("Building member card: puuid={}", puuid);
+        log.info("Building member card: riotId={}, puuids={}", member.riotId(), member.puuids().size());
 
-        // 成长曲线：近 TREND_WEEKS 周（含当前周），按"个人全部对局"统计
+        // 成长曲线：近 TREND_WEEKS 周（含当前周），按"个人全部对局"统计（含单人局与回填局）
         WeekRange currentWeek = weekRange(LocalDate.now(clock), ZONE);
         LocalDate trendFirstMonday = currentWeek.monday().minusWeeks(TREND_WEEKS - 1);
         long trendStartMs = trendFirstMonday.atStartOfDay(ZONE).toInstant().toEpochMilli();
@@ -294,17 +295,17 @@ public class TeamStatsService {
             List<GameData> inWeek = trendGames.stream()
                     .filter(g -> g.match().getGameCreation() >= week.startMs()
                             && g.match().getGameCreation() < week.endMs())
-                    .filter(g -> hasMember(g, puuid))
+                    .filter(g -> hasMember(g, member))
                     .toList();
-            trend.add(buildTrendPoint(monday, inWeek, puuid));
+            trend.add(buildTrendPoint(monday, inWeek, member));
         }
 
         // 英雄对比：全时段（不设范围），按场次降序
         List<GameData> allGames = loadGames(null, null, null, true);
-        List<MemberCardResponse.ChampionStat> champions = buildChampionStats(allGames, puuid);
+        List<MemberCardResponse.ChampionStat> champions = buildChampionStats(allGames, member);
 
         return MemberCardResponse.builder()
-                .puuid(member.puuid())
+                .puuid(member.primaryPuuid())
                 .riotId(member.riotId())
                 .trend(trend)
                 .champions(champions)
@@ -362,25 +363,24 @@ public class TeamStatsService {
         return games;
     }
 
-    /** 判断对局是否"车队对局"：同局车队成员数 ≥ 配置阈值 */
+    /** 判断对局是否"车队对局"：同局车队成员数 ≥ 配置阈值（按成员身份集合匹配，跨两种 puuid 体系） */
     private boolean isFleet(GameData game, List<TeamRosterService.RosterMember> roster) {
-        Set<String> rosterPuuids = puuidSet(roster);
+        Map<String, TeamRosterService.RosterMember> memberByPuuid = memberIndex(roster);
         long count = game.participants().stream()
-                .filter(p -> p.getPuuid() != null && rosterPuuids.contains(p.getPuuid()))
+                .filter(p -> memberByPuuid.containsKey(p.getPuuid()))
                 .count();
         return count >= Math.max(1, teamProperties.getMinSharedMembers());
     }
 
-    /** 对局中是否有指定成员 */
-    private boolean hasMember(GameData game, String puuid) {
-        return game.participants().stream()
-                .anyMatch(p -> puuid.equals(p.getPuuid()));
+    /** 对局中是否有指定成员（身份集合匹配） */
+    private boolean hasMember(GameData game, TeamRosterService.RosterMember member) {
+        return game.participants().stream().anyMatch(p -> member.owns(p.getPuuid()));
     }
 
     /** 成员在该对局中的参赛记录（找不到返回 null，理论上不发生） */
-    private MatchParticipant memberParticipant(GameData game, String puuid) {
+    private MatchParticipant memberParticipant(GameData game, TeamRosterService.RosterMember member) {
         return game.participants().stream()
-                .filter(p -> puuid.equals(p.getPuuid()))
+                .filter(p -> member.owns(p.getPuuid()))
                 .findFirst()
                 .orElse(null);
     }
@@ -393,7 +393,7 @@ public class TeamStatsService {
      */
     private WeeklyReportResponse.Overview buildOverview(List<GameData> games,
             List<TeamRosterService.RosterMember> roster) {
-        Set<String> rosterPuuids = puuidSet(roster);
+        Map<String, TeamRosterService.RosterMember> memberByPuuid = memberIndex(roster);
         int memberGameCount = 0;
         int winCount = 0;
         long totalDuration = 0;
@@ -403,7 +403,7 @@ public class TeamStatsService {
             String day = dayLabel(g.match().getGameCreation());
             gamesByDay.merge(day, 1, Integer::sum);
             for (MatchParticipant p : g.participants()) {
-                if (p.getPuuid() == null || !rosterPuuids.contains(p.getPuuid())) {
+                if (p.getPuuid() == null || !memberByPuuid.containsKey(p.getPuuid())) {
                     continue;
                 }
                 memberGameCount++;
@@ -414,7 +414,7 @@ public class TeamStatsService {
         }
         // 出勤成员（按配置顺序）：有 ≥1 次参与的成员
         List<String> activeMembers = roster.stream()
-                .filter(m -> games.stream().anyMatch(g -> hasMember(g, m.puuid())))
+                .filter(m -> games.stream().anyMatch(g -> hasMember(g, m)))
                 .map(TeamRosterService.RosterMember::riotId)
                 .toList();
         // 最密集的一天
@@ -450,10 +450,16 @@ public class TeamStatsService {
 
     /**
      * 计算全部七个榜单（周报与榜单中心共享此口径）
+     * <p>聚合键为成员（riotId）而非 puuid——同一成员可能同时存在腾讯 UUID 与 Riot puuid
+     * 两种标识符（LCU/SGP 同步局 vs MATCH-V5 回填局），按 puuid 聚合会把一人拆成两行。</p>
      */
     private Boards computeBoards(List<GameData> games, List<TeamRosterService.RosterMember> roster) {
-        Map<String, String> riotIdByPuuid = riotIdMap(roster);
-        Map<String, MemberAgg> aggByPuuid = new LinkedHashMap<>();
+        Map<String, TeamRosterService.RosterMember> memberByPuuid = memberIndex(roster);
+        // 聚合键是成员的 riotId，榜单输出时经此映射回成员（取主 puuid 展示）
+        Map<String, TeamRosterService.RosterMember> memberByRiotId = roster.stream()
+                .collect(java.util.stream.Collectors.toMap(TeamRosterService.RosterMember::riotId,
+                        m -> m, (a, b) -> a));
+        Map<String, MemberAgg> aggByMember = new LinkedHashMap<>();
         for (GameData g : games) {
             // 每局的队伍总击杀与总伤害（Carry 王击杀参与率/伤害占比的分母，含非车队队友）
             Map<Integer, Integer> teamKills = new HashMap<>();
@@ -464,11 +470,11 @@ public class TeamStatsService {
                 teamDamage.merge(teamKey, totalDamage(p), Double::sum);
             }
             for (MatchParticipant p : g.participants()) {
-                String puuid = p.getPuuid();
-                if (puuid == null || !riotIdByPuuid.containsKey(puuid)) {
+                TeamRosterService.RosterMember member = memberByPuuid.get(p.getPuuid());
+                if (member == null) {
                     continue;
                 }
-                MemberAgg agg = aggByPuuid.computeIfAbsent(puuid, k -> new MemberAgg());
+                MemberAgg agg = aggByMember.computeIfAbsent(member.riotId(), k -> new MemberAgg());
                 agg.games++;
                 if (Boolean.TRUE.equals(p.getWin())) {
                     agg.wins++;
@@ -490,7 +496,7 @@ public class TeamStatsService {
                 }
                 // op_score：来自评分引擎的实时计算（缺失时跳过该局评分维度）；
                 // 同时记录最差一局（战犯榜"代表局"）
-                PlayerScoreView score = g.scores().get(puuid);
+                PlayerScoreView score = g.scores().get(p.getPuuid());
                 if (score != null && score.getOpScore() != null) {
                     agg.opScores.add(score.getOpScore());
                     if (score.getOpScore() < agg.worstOpScore) {
@@ -512,16 +518,17 @@ public class TeamStatsService {
                     champ.damagePerMin.add(dmgPerMin);
                 }
             }
-            // MVP/SVP 计数：按 participantId 回溯到 puuid，只统计车队成员
+            // MVP/SVP 计数：按 participantId 回溯到参赛者，只统计车队成员
             for (MatchMvp award : g.awards()) {
                 MatchParticipant owner = g.participants().stream()
                         .filter(p -> p.getId() != null && p.getId().equals(award.getParticipantId()))
                         .findFirst().orElse(null);
-                if (owner == null || owner.getPuuid() == null
-                        || !riotIdByPuuid.containsKey(owner.getPuuid())) {
+                TeamRosterService.RosterMember ownerMember =
+                        owner == null ? null : memberByPuuid.get(owner.getPuuid());
+                if (ownerMember == null) {
                     continue;
                 }
-                MemberAgg agg = aggByPuuid.computeIfAbsent(owner.getPuuid(), k -> new MemberAgg());
+                MemberAgg agg = aggByMember.computeIfAbsent(ownerMember.riotId(), k -> new MemberAgg());
                 if ("MVP".equals(award.getType())) {
                     agg.mvpCount++;
                 } else if ("ACE".equals(award.getType())) {
@@ -534,7 +541,7 @@ public class TeamStatsService {
         }
 
         // MVP 榜：只收录有称号的成员；次数降序，同次数按评选总分降序
-        List<WeeklyReportResponse.BoardEntry> mvpBoard = aggByPuuid.entrySet().stream()
+        List<WeeklyReportResponse.BoardEntry> mvpBoard = aggByMember.entrySet().stream()
                 .filter(e -> e.getValue().mvpCount + e.getValue().aceCount > 0)
                 .sorted((a, b) -> {
                     int byCount = Integer.compare(b.getValue().mvpCount + b.getValue().aceCount,
@@ -543,7 +550,7 @@ public class TeamStatsService {
                             : Double.compare(b.getValue().awardScoreSum, a.getValue().awardScoreSum);
                 })
                 .map(e -> WeeklyReportResponse.BoardEntry.builder()
-                        .puuid(e.getKey()).riotId(riotIdByPuuid.get(e.getKey()))
+                        .puuid(memberByRiotId.get(e.getKey()) == null ? null : memberByRiotId.get(e.getKey()).primaryPuuid()).riotId(e.getKey())
                         .value((double) (e.getValue().mvpCount + e.getValue().aceCount))
                         .detail((e.getValue().mvpCount > 0 ? "MVP×" + e.getValue().mvpCount : "")
                                 + (e.getValue().mvpCount > 0 && e.getValue().aceCount > 0 ? " " : "")
@@ -552,22 +559,22 @@ public class TeamStatsService {
                 .toList();
 
         // 场均 op_score 排行（降序，与战犯榜同口径反向）
-        List<WeeklyReportResponse.BoardEntry> opScoreBoard = aggByPuuid.entrySet().stream()
+        List<WeeklyReportResponse.BoardEntry> opScoreBoard = aggByMember.entrySet().stream()
                 .filter(e -> !e.getValue().opScores.isEmpty())
                 .sorted((a, b) -> Double.compare(avgOf(b.getValue().opScores), avgOf(a.getValue().opScores)))
                 .map(e -> WeeklyReportResponse.BoardEntry.builder()
-                        .puuid(e.getKey()).riotId(riotIdByPuuid.get(e.getKey()))
+                        .puuid(memberByRiotId.get(e.getKey()) == null ? null : memberByRiotId.get(e.getKey()).primaryPuuid()).riotId(e.getKey())
                         .value(avgOf(e.getValue().opScores))
                         .detail(e.getValue().games + "场")
                         .build())
                 .toList();
 
         // 战犯榜：场均 op_score 升序（最低分最"战犯"），detail 带最差一局（代表局）
-        List<WeeklyReportResponse.BoardEntry> criminalBoard = aggByPuuid.entrySet().stream()
+        List<WeeklyReportResponse.BoardEntry> criminalBoard = aggByMember.entrySet().stream()
                 .filter(e -> !e.getValue().opScores.isEmpty())
                 .sorted((a, b) -> Double.compare(avgOf(a.getValue().opScores), avgOf(b.getValue().opScores)))
                 .map(e -> WeeklyReportResponse.BoardEntry.builder()
-                        .puuid(e.getKey()).riotId(riotIdByPuuid.get(e.getKey()))
+                        .puuid(memberByRiotId.get(e.getKey()) == null ? null : memberByRiotId.get(e.getKey()).primaryPuuid()).riotId(e.getKey())
                         .value(avgOf(e.getValue().opScores))
                         .detail(e.getValue().games + "场 · 最差局 op "
                                 + (e.getValue().worstGameId == null ? "—"
@@ -576,26 +583,26 @@ public class TeamStatsService {
                 .toList();
 
         // 送头王：场均死亡降序
-        List<WeeklyReportResponse.BoardEntry> feederBoard = aggByPuuid.entrySet().stream()
+        List<WeeklyReportResponse.BoardEntry> feederBoard = aggByMember.entrySet().stream()
                 .filter(e -> e.getValue().games > 0)
                 .sorted((a, b) -> Double.compare(
                         (double) b.getValue().deaths / b.getValue().games,
                         (double) a.getValue().deaths / a.getValue().games))
                 .map(e -> WeeklyReportResponse.BoardEntry.builder()
-                        .puuid(e.getKey()).riotId(riotIdByPuuid.get(e.getKey()))
+                        .puuid(memberByRiotId.get(e.getKey()) == null ? null : memberByRiotId.get(e.getKey()).primaryPuuid()).riotId(e.getKey())
                         .value((double) e.getValue().deaths / e.getValue().games)
                         .detail("总死亡" + e.getValue().deaths)
                         .build())
                 .toList();
 
         // Carry 王：场均击杀参与率降序
-        List<WeeklyReportResponse.BoardEntry> carryBoard = aggByPuuid.entrySet().stream()
+        List<WeeklyReportResponse.BoardEntry> carryBoard = aggByMember.entrySet().stream()
                 .filter(e -> e.getValue().kpCount > 0)
                 .sorted((a, b) -> Double.compare(
                         b.getValue().kpSum / b.getValue().kpCount,
                         a.getValue().kpSum / a.getValue().kpCount))
                 .map(e -> WeeklyReportResponse.BoardEntry.builder()
-                        .puuid(e.getKey()).riotId(riotIdByPuuid.get(e.getKey()))
+                        .puuid(memberByRiotId.get(e.getKey()) == null ? null : memberByRiotId.get(e.getKey()).primaryPuuid()).riotId(e.getKey())
                         .value(e.getValue().kpCount == 0 ? 0 : e.getValue().kpSum / e.getValue().kpCount)
                         .detail("场均击杀参与 "
                                 + Math.round(e.getValue().kpCount == 0 ? 0
@@ -605,29 +612,35 @@ public class TeamStatsService {
                         .build())
                 .toList();
 
-        // 绝活榜：成员×英雄场次 ≥2，场均 op_score 降序
+        // 绝活榜：成员×英雄场次 ≥2，场均 op_score 降序（按 roster 顺序遍历成员）
         List<WeeklyReportResponse.BoardEntry> signatureBoard = new ArrayList<>();
-        aggByPuuid.forEach((puuid, agg) -> agg.champs.forEach((champId, champ) -> {
-            if (champ.games >= 2 && !champ.opScores.isEmpty()) {
-                signatureBoard.add(WeeklyReportResponse.BoardEntry.builder()
-                        .puuid(puuid).riotId(riotIdByPuuid.get(puuid))
-                        .value(avgOf(champ.opScores))
-                        .detail(gameDataService.championName(champId) + " " + champ.games + "场 胜率"
-                                + Math.round(champ.wins * 100.0 / champ.games) + "%")
-                        .build());
+        for (TeamRosterService.RosterMember member : roster) {
+            MemberAgg agg = aggByMember.get(member.riotId());
+            if (agg == null) {
+                continue;
             }
-        }));
+            agg.champs.forEach((champId, champ) -> {
+                if (champ.games >= 2 && !champ.opScores.isEmpty()) {
+                    signatureBoard.add(WeeklyReportResponse.BoardEntry.builder()
+                            .puuid(member.primaryPuuid()).riotId(member.riotId())
+                            .value(avgOf(champ.opScores))
+                            .detail(gameDataService.championName(champId) + " " + champ.games + "场 胜率"
+                                    + Math.round(champ.wins * 100.0 / champ.games) + "%")
+                            .build());
+                }
+            });
+        }
         signatureBoard.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
 
         // 出勤榜：场次降序，同场次按胜场降序
-        List<WeeklyReportResponse.BoardEntry> attendanceBoard = aggByPuuid.entrySet().stream()
+        List<WeeklyReportResponse.BoardEntry> attendanceBoard = aggByMember.entrySet().stream()
                 .filter(e -> e.getValue().games > 0)
                 .sorted((a, b) -> {
                     int byGames = Integer.compare(b.getValue().games, a.getValue().games);
                     return byGames != 0 ? byGames : Integer.compare(b.getValue().wins, a.getValue().wins);
                 })
                 .map(e -> WeeklyReportResponse.BoardEntry.builder()
-                        .puuid(e.getKey()).riotId(riotIdByPuuid.get(e.getKey()))
+                        .puuid(memberByRiotId.get(e.getKey()) == null ? null : memberByRiotId.get(e.getKey()).primaryPuuid()).riotId(e.getKey())
                         .value((double) e.getValue().games)
                         .detail(e.getValue().games + "场 胜率"
                                 + Math.round(e.getValue().wins * 100.0 / e.getValue().games) + "%")
@@ -638,16 +651,15 @@ public class TeamStatsService {
                 attendanceBoard);
     }
 
-    /** roster → riotId 映射（榜单展示名；重名 puuid 取先出现者） */
-    private static Map<String, String> riotIdMap(List<TeamRosterService.RosterMember> roster) {
-        return roster.stream()
-                .collect(Collectors.toMap(TeamRosterService.RosterMember::puuid,
-                        TeamRosterService.RosterMember::riotId, (a, b) -> a));
-    }
-
-    /** roster → puuid 集合（车队归属判定） */
-    private static Set<String> puuidSet(List<TeamRosterService.RosterMember> roster) {
-        return roster.stream().map(TeamRosterService.RosterMember::puuid).collect(Collectors.toSet());
+    /** roster → 成员索引：每个成员注册其全部已知 puuid（同一人可能同时有腾讯 UUID 与 Riot puuid 两种标识符） */
+    private static Map<String, TeamRosterService.RosterMember> memberIndex(List<TeamRosterService.RosterMember> roster) {
+        Map<String, TeamRosterService.RosterMember> index = new HashMap<>();
+        for (TeamRosterService.RosterMember member : roster) {
+            for (String puuid : member.puuids()) {
+                index.putIfAbsent(puuid, member);
+            }
+        }
+        return index;
     }
 
     /** 个人对英雄伤害（statsJson.totalDamageDealtToChampions，缺失计 0） */
@@ -690,7 +702,7 @@ public class TeamStatsService {
      */
     private WeeklyReportResponse.Highlights extractHighlights(List<GameData> games,
             List<TeamRosterService.RosterMember> roster) {
-        Map<String, String> riotIdByPuuid = riotIdMap(roster);
+        Map<String, TeamRosterService.RosterMember> memberByPuuid = memberIndex(roster);
 
         WeeklyReportResponse.HighlightItem comeback = null;
         WeeklyReportResponse.HighlightItem worstStreak = null;
@@ -699,11 +711,11 @@ public class TeamStatsService {
         double bestDeficit = -1;
         int bestStreak = 0;
 
-        // 单局最高击杀 + 最惨连败：不依赖时间线
+        // 单局最高击杀：不依赖时间线
         for (GameData g : games) {
             for (MatchParticipant p : g.participants()) {
-                String puuid = p.getPuuid();
-                if (puuid == null || !riotIdByPuuid.containsKey(puuid)) {
+                TeamRosterService.RosterMember member = memberByPuuid.get(p.getPuuid());
+                if (member == null) {
                     continue;
                 }
                 int kills = p.getKills() == null ? 0 : p.getKills();
@@ -711,7 +723,7 @@ public class TeamStatsService {
                     mostKills = WeeklyReportResponse.HighlightItem.builder()
                             .gameId(g.match().getGameId())
                             .title("单局最高击杀")
-                            .detail(riotIdByPuuid.get(puuid) + " 单局 " + kills + " 杀（"
+                            .detail(member.riotId() + " 单局 " + kills + " 杀（"
                                     + gameDataService.championName(p.getChampionId()) + "）")
                             .value((double) kills)
                             .build();
@@ -720,33 +732,33 @@ public class TeamStatsService {
         }
         // 最惨连败：按时间顺序（loadGames 升序）数每个成员的最长连续败场
         Map<String, Integer> currentStreak = new HashMap<>();
-        String bestStreakPuuid = null;
+        String bestStreakMember = null;
         Long bestStreakEndGame = null;
         for (GameData g : games) {
             for (MatchParticipant p : g.participants()) {
-                String puuid = p.getPuuid();
-                if (puuid == null || !riotIdByPuuid.containsKey(puuid)) {
+                TeamRosterService.RosterMember member = memberByPuuid.get(p.getPuuid());
+                if (member == null) {
                     continue;
                 }
                 if (Boolean.TRUE.equals(p.getWin())) {
                     // 胜场重置连败计数
-                    currentStreak.put(puuid, 0);
+                    currentStreak.put(member.riotId(), 0);
                 } else {
-                    int streak = currentStreak.merge(puuid, 1, Integer::sum);
+                    int streak = currentStreak.merge(member.riotId(), 1, Integer::sum);
                     // 实时记录最长连败的归属者与终结局（并列时保留先出现者）
                     if (streak > bestStreak) {
                         bestStreak = streak;
-                        bestStreakPuuid = puuid;
+                        bestStreakMember = member.riotId();
                         bestStreakEndGame = g.match().getGameId();
                     }
                 }
             }
         }
-        if (bestStreakPuuid != null) {
+        if (bestStreakMember != null) {
             worstStreak = WeeklyReportResponse.HighlightItem.builder()
                     .gameId(bestStreakEndGame)
                     .title("最惨连败")
-                    .detail(riotIdByPuuid.get(bestStreakPuuid) + " " + bestStreak + "连败")
+                    .detail(bestStreakMember + " " + bestStreak + "连败")
                     .value((double) bestStreak)
                     .build();
         }
@@ -822,8 +834,9 @@ public class TeamStatsService {
                     if (multiKill == null || streakLength > multiKill.getValue()) {
                         // 击杀者按局内 participantId 定位（而非数据库主键）
                         MatchParticipant killer = byGameSlot.get(event.path("killerId").asInt());
-                        if (killer == null || killer.getPuuid() == null
-                                || !riotIdByPuuid.containsKey(killer.getPuuid())) {
+                        TeamRosterService.RosterMember killerMember =
+                                killer == null ? null : memberByPuuid.get(killer.getPuuid());
+                        if (killerMember == null) {
                             continue;
                         }
                         String streakName = switch (streakLength) {
@@ -834,7 +847,7 @@ public class TeamStatsService {
                         multiKill = WeeklyReportResponse.HighlightItem.builder()
                                 .gameId(g.match().getGameId())
                                 .title(streakName)
-                                .detail(riotIdByPuuid.get(killer.getPuuid()) + " 用 "
+                                .detail(killerMember.riotId() + " 用 "
                                         + gameDataService.championName(killer.getChampionId())
                                         + " 拿下" + streakName.replace("时刻", ""))
                                 .value((double) streakLength)
@@ -856,19 +869,21 @@ public class TeamStatsService {
     // ---------- 成员卡 ----------
 
     /** 构建单周趋势点（成员视角） */
-    private MemberCardResponse.TrendPoint buildTrendPoint(LocalDate monday, List<GameData> games, String puuid) {
+    private MemberCardResponse.TrendPoint buildTrendPoint(LocalDate monday, List<GameData> games,
+            TeamRosterService.RosterMember member) {
         int gamesCount = games.size();
         int wins = 0;
         List<Double> opScores = new ArrayList<>();
         for (GameData g : games) {
-            MatchParticipant p = memberParticipant(g, puuid);
+            MatchParticipant p = memberParticipant(g, member);
             if (p == null) {
                 continue;
             }
             if (Boolean.TRUE.equals(p.getWin())) {
                 wins++;
             }
-            PlayerScoreView score = g.scores().get(puuid);
+            // 评分按该局参赛者自己的 puuid 索引（同一成员不同来源局的标识符可能不同）
+            PlayerScoreView score = g.scores().get(p.getPuuid());
             if (score != null && score.getOpScore() != null) {
                 opScores.add(score.getOpScore());
             }
@@ -883,7 +898,8 @@ public class TeamStatsService {
     }
 
     /** 构建英雄统计与基线对比（按场次降序；基线 = 全库同英雄分均伤害） */
-    private List<MemberCardResponse.ChampionStat> buildChampionStats(List<GameData> games, String puuid) {
+    private List<MemberCardResponse.ChampionStat> buildChampionStats(List<GameData> games,
+            TeamRosterService.RosterMember member) {
         // 全库基线：championId → 分均伤害（sum 为分均值累计，除以样本数即平均分均）
         Map<Integer, Double> baselineDamageByChamp = new HashMap<>();
         for (ScoringBaseline baseline : baselineMapper.selectList(null)) {
@@ -893,10 +909,10 @@ public class TeamStatsService {
                         baseline.getSumDamage() / baseline.getSampleCount());
             }
         }
-        // 成员×英雄聚合
+        // 成员×英雄聚合（身份集合匹配，覆盖腾讯 UUID 局与 Riot puuid 回填局）
         Map<Integer, ChampAgg> champs = new LinkedHashMap<>();
         for (GameData g : games) {
-            MatchParticipant p = memberParticipant(g, puuid);
+            MatchParticipant p = memberParticipant(g, member);
             if (p == null || p.getChampionId() == null) {
                 continue;
             }
@@ -905,7 +921,7 @@ public class TeamStatsService {
             if (Boolean.TRUE.equals(p.getWin())) {
                 champ.wins++;
             }
-            PlayerScoreView score = g.scores().get(puuid);
+            PlayerScoreView score = g.scores().get(p.getPuuid());
             if (score != null && score.getOpScore() != null) {
                 champ.opScores.add(score.getOpScore());
             }

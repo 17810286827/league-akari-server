@@ -139,8 +139,10 @@ class RiotMatchHistoryServiceTest {
     @Test
     void runBackfill_processesAllMembersDespiteIndividualFailure() throws Exception {
         when(rosterService.requireMembers()).thenReturn(List.of(
-                new TeamRosterService.RosterMember("puuid-a", "A#t"),
-                new TeamRosterService.RosterMember("puuid-b", "B#t")));
+                new TeamRosterService.RosterMember("A#t",
+                        new java.util.LinkedHashSet<>(List.of("puuid-a")), "puuid-a"),
+                new TeamRosterService.RosterMember("B#t",
+                        new java.util.LinkedHashSet<>(List.of("puuid-b")), "puuid-b")));
         // 成员 A：ID 列表接口直接 500（模拟 Riot 异常）；成员 B：一局正常
         CloseableHttpResponse broken = mockResponse(500, "boom");
         CloseableHttpResponse ids = mockResponse(200, "[\"TW2_9\"]");

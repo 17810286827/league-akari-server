@@ -61,11 +61,16 @@ class TeamStatsServiceTest {
     private final Clock clock = Clock.fixed(
             ZonedDateTime.of(2026, 9, 6, 10, 0, 0, 0, ZONE).toInstant(), ZONE);
 
-    /** 两名车队成员：A=赌书消得泼茶香（puuid-a）、B=手裂鬼子（puuid-b） */
+    /** 两名车队成员：A=赌书消得泼茶香（puuid-a）、B=手裂鬼子（puuid-b）；身份集合为单元素（单标识符场景） */
     private final TeamRosterService.RosterMember memberA =
-            new TeamRosterService.RosterMember("puuid-a", "赌书消得泼茶香#iKun");
+            member("赌书消得泼茶香#iKun", "puuid-a");
     private final TeamRosterService.RosterMember memberB =
-            new TeamRosterService.RosterMember("puuid-b", "手裂鬼子#tw2");
+            member("手裂鬼子#tw2", "puuid-b");
+
+    /** 构造成员：身份集合按可变参数顺序（首项为主标识符） */
+    private TeamRosterService.RosterMember member(String riotId, String... puuids) {
+        return new TeamRosterService.RosterMember(riotId, new java.util.LinkedHashSet<>(List.of(puuids)));
+    }
 
     // ---------- 测试夹具构造 ----------
 
