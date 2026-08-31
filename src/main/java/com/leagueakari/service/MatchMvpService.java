@@ -13,7 +13,6 @@ import com.leagueakari.entity.MatchMvp;
 import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.mapper.ChampionClassMapper;
 import com.leagueakari.mapper.MatchMvpMapper;
-import com.leagueakari.mapper.ScoringBaselineMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
@@ -42,11 +41,16 @@ public class MatchMvpService {
 
     private final MatchMvpMapper matchMvpMapper;
     private final ChampionClassMapper championClassMapper;
-    private final ScoringBaselineMapper scoringBaselineMapper;
     private final OpScoreEngine opScoreEngine;
     private final ScoringConfig scoringConfig;
     private final ObjectMapper objectMapper;
     private final BaselineService baselineService;
+
+    /**
+     * 英雄职业分类缓存：该表无写入口（随版本更新手工维护），
+     * 懒加载后复用，避免每场评分都全表查询（volatile 保证多线程可见性）
+     */
+    private volatile Map<Integer, String> championClassCache;
 
     /** 当前评分版本（从配置加载） */
     private int scoringVersion() {
@@ -65,9 +69,7 @@ public class MatchMvpService {
             return;
         }
         Map<Integer, String> classMap = loadChampionClassMap();
-        Map<Integer, Map<String, Double>> baseline = scoringBaselineMapper.selectList(null).stream()
-                .collect(Collectors.toMap(com.leagueakari.entity.ScoringBaseline::getChampionId,
-                        b -> toBaselineDimMap(b), (a, b) -> a));
+        Map<Integer, Map<String, Double>> baseline = baselineService.getBaselineMap();
 
         List<MvpScoringInput> inputs = participants.stream()
                 .map(p -> toScoringInput(p, match))
@@ -122,9 +124,7 @@ public class MatchMvpService {
             return Map.of();
         }
         Map<Integer, String> classMap = loadChampionClassMap();
-        Map<Integer, Map<String, Double>> baseline = scoringBaselineMapper.selectList(null).stream()
-                .collect(Collectors.toMap(com.leagueakari.entity.ScoringBaseline::getChampionId,
-                        b -> toBaselineDimMap(b), (a, b) -> a));
+        Map<Integer, Map<String, Double>> baseline = baselineService.getBaselineMap();
         List<MvpScoringInput> inputs = participants.stream()
                 .map(p -> toScoringInput(p, match))
                 .toList();
@@ -163,9 +163,14 @@ public class MatchMvpService {
     }
 
     private Map<Integer, String> loadChampionClassMap() {
-        List<ChampionClass> all = championClassMapper.selectList(null);
-        return all.stream().collect(Collectors.toMap(
-                ChampionClass::getChampionId, ChampionClass::getClassName, (a, b) -> a));
+        Map<Integer, String> cached = championClassCache;
+        if (cached == null) {
+            cached = championClassMapper.selectList(null).stream()
+                    .collect(Collectors.toMap(
+                            ChampionClass::getChampionId, ChampionClass::getClassName, (a, b) -> a));
+            championClassCache = cached;
+        }
+        return cached;
     }
 
     private MvpScoringInput toScoringInput(MatchParticipant p, Match match) {
@@ -255,22 +260,5 @@ public class MatchMvpService {
             log.warn("评分明细序列化失败：{}", e.getMessage());
             return null;
         }
-    }
-
-    private Map<String, Double> toBaselineDimMap(com.leagueakari.entity.ScoringBaseline b) {
-        Map<String, Double> m = new HashMap<>();
-        int n = b.getSampleCount() == null ? 0 : b.getSampleCount();
-        m.put("sampleCount", (double) n);
-        if (n <= 0) {
-            return m;
-        }
-        m.put(OpScoreEngine.DIM_DAMAGE, b.getSumDamage() / n);
-        m.put(OpScoreEngine.DIM_KDA, b.getSumKda() / n);
-        m.put(OpScoreEngine.DIM_GOLD, b.getSumGold() / n);
-        m.put(OpScoreEngine.DIM_TANK, b.getSumTank() / n);
-        m.put(OpScoreEngine.DIM_HEAL, b.getSumHealShield() / n);
-        m.put(OpScoreEngine.DIM_CC, b.getSumCc() / n);
-        m.put(OpScoreEngine.DIM_TURRET, b.getSumTurret() / n);
-        return m;
     }
 }

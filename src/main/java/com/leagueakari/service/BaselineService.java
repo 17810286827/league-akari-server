@@ -23,6 +23,12 @@ public class BaselineService {
     private final ScoringBaselineMapper baselineMapper;
 
     /**
+     * 全量基线缓存快照：写路径 {@link #updateBaseline} 成功后置空失效，
+     * 下次读取重新加载（volatile 保证多线程可见性）
+     */
+    private volatile Map<Integer, Map<String, Double>> baselineCache;
+
+    /**
      * 更新一名参与者的基线数据（INSERT OR UPDATE 累加）
      *
      * @param championId  英雄 ID
@@ -63,6 +69,8 @@ public class BaselineService {
         } else {
             baselineMapper.updateById(record);
         }
+        // 基线已变更：置空全量缓存，下次读取重新加载（关键失效点，避免读到旧基线）
+        baselineCache = null;
         log.debug("基线更新：championId={}, sampleCount={}", championId, record.getSampleCount());
     }
 
@@ -77,6 +85,23 @@ public class BaselineService {
                         ScoringBaseline::getChampionId,
                         this::toDimMap,
                         (a, b) -> a));
+    }
+
+    /**
+     * 全量基线缓存读取：首次查询全表并缓存快照，之后复用；
+     * 写路径 {@link #updateBaseline} 会置空缓存，保证读取始终是最新基线。
+     * 评分/榜单/成员卡共用此入口，避免每次请求重复全表查询。
+     * <p>返回的 Map 为内部缓存快照，调用方必须只读，不得修改。</p>
+     *
+     * @return championId → { dim → 均值, "sampleCount" → 样本量 }
+     */
+    public Map<Integer, Map<String, Double>> getBaselineMap() {
+        Map<Integer, Map<String, Double>> cached = baselineCache;
+        if (cached == null) {
+            cached = loadBaseline();
+            baselineCache = cached;
+        }
+        return cached;
     }
 
     /**
@@ -98,10 +123,13 @@ public class BaselineService {
 
     private Map<String, Double> toDimMap(ScoringBaseline b) {
         Map<String, Double> m = new HashMap<>();
-        int n = b.getSampleCount();
-        if (n <= 0) {
+        // 脏数据容错：样本数或累计值缺失时按"无基线"返回（只有 sampleCount 键），
+        // 调用方据此跳过该英雄，避免整表读取时拆箱 NPE
+        Integer sampleCount = b.getSampleCount();
+        if (sampleCount == null || sampleCount <= 0 || b.getSumDamage() == null) {
             return Map.of("sampleCount", 0.0);
         }
+        int n = sampleCount;
         m.put("sampleCount", (double) n);
         m.put(OpScoreEngine.DIM_DAMAGE, b.getSumDamage() / n);
         m.put(OpScoreEngine.DIM_KDA, b.getSumKda() / n);

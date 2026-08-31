@@ -12,11 +12,9 @@ import com.leagueakari.dto.WeeklyReportResponse;
 import com.leagueakari.entity.Match;
 import com.leagueakari.entity.MatchMvp;
 import com.leagueakari.entity.MatchParticipant;
-import com.leagueakari.entity.ScoringBaseline;
 import com.leagueakari.mapper.MatchMapper;
 import com.leagueakari.mapper.MatchMvpMapper;
 import com.leagueakari.mapper.MatchParticipantMapper;
-import com.leagueakari.mapper.ScoringBaselineMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -111,7 +109,7 @@ public class TeamStatsService {
     private final MatchMvpService mvpService;
     private final GameDataService gameDataService;
     private final WeeklyAiCommentService aiCommentService;
-    private final ScoringBaselineMapper baselineMapper;
+    private final BaselineService baselineService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -119,7 +117,7 @@ public class TeamStatsService {
             MatchMapper matchMapper, MatchParticipantMapper participantMapper,
             MatchMvpMapper mvpMapper, MatchTimelineService timelineService,
             MatchMvpService mvpService, GameDataService gameDataService,
-            WeeklyAiCommentService aiCommentService, ScoringBaselineMapper baselineMapper,
+            WeeklyAiCommentService aiCommentService, BaselineService baselineService,
             ObjectMapper objectMapper, Clock clock) {
         this.teamProperties = teamProperties;
         this.rosterService = rosterService;
@@ -130,7 +128,7 @@ public class TeamStatsService {
         this.mvpService = mvpService;
         this.gameDataService = gameDataService;
         this.aiCommentService = aiCommentService;
-        this.baselineMapper = baselineMapper;
+        this.baselineService = baselineService;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
@@ -324,6 +322,8 @@ public class TeamStatsService {
      * @param withScores 是否实时计算评分（评分引擎纯计算、不落库）
      */
     private List<GameData> loadGames(Long startMs, Long endMs, String gameMode, boolean withScores) {
+        // 分段计时：定位榜单/成员卡慢请求的耗时构成（SQL 装载 vs 实时评分）
+        long startNanos = System.nanoTime();
         QueryWrapper<Match> matchWrapper = new QueryWrapper<>();
         if (startMs != null) {
             matchWrapper.ge("game_creation", startMs);
@@ -340,6 +340,7 @@ public class TeamStatsService {
         if (matches.isEmpty()) {
             return List.of();
         }
+        long participantsLoadedNanos = System.nanoTime();
         List<Long> matchIds = matches.stream().map(Match::getId).toList();
         // 批量装载参赛者与评选记录，避免逐局查库的 N+1
         Map<Long, List<MatchParticipant>> participantsByMatch = participantMapper.selectList(
@@ -348,6 +349,7 @@ public class TeamStatsService {
         Map<Long, List<MatchMvp>> awardsByMatch = mvpMapper.selectList(
                         new QueryWrapper<MatchMvp>().in("match_id", matchIds)).stream()
                 .collect(Collectors.groupingBy(MatchMvp::getMatchId));
+        long scoringStartedNanos = System.nanoTime();
 
         List<GameData> games = new ArrayList<>(matches.size());
         for (Match match : matches) {
@@ -360,6 +362,12 @@ public class TeamStatsService {
             games.add(new GameData(match, participants,
                     awardsByMatch.getOrDefault(match.getId(), List.of()), scores));
         }
+        long scoringDoneNanos = System.nanoTime();
+        log.info("loadGames 耗时分段：games={} 对局装载={}ms 参与者/评选装载={}ms 评分计算={}ms",
+                matches.size(),
+                (participantsLoadedNanos - startNanos) / 1_000_000,
+                (scoringStartedNanos - participantsLoadedNanos) / 1_000_000,
+                (scoringDoneNanos - scoringStartedNanos) / 1_000_000);
         return games;
     }
 
@@ -909,13 +917,13 @@ public class TeamStatsService {
     /** 构建英雄统计与基线对比（按场次降序；基线 = 全库同英雄分均伤害） */
     private List<MemberCardResponse.ChampionStat> buildChampionStats(List<GameData> games,
             TeamRosterService.RosterMember member) {
-        // 全库基线：championId → 分均伤害（sum 为分均值累计，除以样本数即平均分均）
+        // 全库基线：championId → 分均伤害（走 BaselineService 缓存，避免每请求全表查询）
         Map<Integer, Double> baselineDamageByChamp = new HashMap<>();
-        for (ScoringBaseline baseline : baselineMapper.selectList(null)) {
-            if (baseline.getChampionId() != null && baseline.getSampleCount() != null
-                    && baseline.getSampleCount() > 0 && baseline.getSumDamage() != null) {
-                baselineDamageByChamp.put(baseline.getChampionId(),
-                        round2(baseline.getSumDamage() / baseline.getSampleCount()));
+        for (Map.Entry<Integer, Map<String, Double>> entry : baselineService.getBaselineMap().entrySet()) {
+            // 无样本的英雄只有 sampleCount 键，无分均伤害键 → 视为无基线跳过
+            Double meanDamage = entry.getValue().get(OpScoreEngine.DIM_DAMAGE);
+            if (meanDamage != null) {
+                baselineDamageByChamp.put(entry.getKey(), round2(meanDamage));
             }
         }
         // 成员×英雄聚合（身份集合匹配，覆盖腾讯 UUID 局与 Riot puuid 回填局）

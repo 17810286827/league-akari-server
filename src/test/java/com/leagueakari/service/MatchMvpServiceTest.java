@@ -70,7 +70,7 @@ class MatchMvpServiceTest {
     void setUp() {
         // 手动构造，不用 @InjectMocks（因为要 mock OpScoreEngine）
         matchMvpService = new MatchMvpService(
-                matchMvpMapper, championClassMapper, scoringBaselineMapper,
+                matchMvpMapper, championClassMapper,
                 opScoreEngine, scoringConfig, objectMapper, baselineService);
     }
 
@@ -130,7 +130,7 @@ class MatchMvpServiceTest {
     }
 
     private void mockEmptyBaseline() {
-        when(scoringBaselineMapper.selectList(any())).thenReturn(List.of());
+        when(baselineService.getBaselineMap()).thenReturn(Map.of());
     }
 
     private ChampionClass cc(int championId, String className) {
@@ -310,6 +310,39 @@ class MatchMvpServiceTest {
                 List.of(winnerAdc(), winnerTank(), loserAdc(), loserSupport()));
 
         verify(matchMvpMapper, never()).insert(any(MatchMvp.class));
+    }
+
+    @Test
+    @DisplayName("computeScores 连续调用只查一次英雄职业分类（进程内缓存）")
+    void computeScores_cachesChampionClassMap() {
+        mockClassMap();
+        mockEmptyBaseline();
+        when(opScoreEngine.score(any(), any(), any())).thenReturn(makeResult(101, 103));
+
+        matchMvpService.computeScores(
+                buildMatch(1L, 100),
+                List.of(winnerAdc(), winnerTank(), loserAdc(), loserSupport()));
+        matchMvpService.computeScores(
+                buildMatch(2L, 100),
+                List.of(winnerAdc(), winnerTank(), loserAdc(), loserSupport()));
+
+        // 职业分类表无写入口，缓存后全量查询只发生一次
+        verify(championClassMapper, times(1)).selectList(any());
+    }
+
+    @Test
+    @DisplayName("评分读取基线走 BaselineService 缓存（不再直查全表）")
+    void computeScores_readsBaselineFromCache() {
+        mockClassMap();
+        when(baselineService.getBaselineMap()).thenReturn(Map.of(22, Map.of(OpScoreEngine.DIM_DAMAGE, 900.0)));
+        when(opScoreEngine.score(any(), any(), any())).thenReturn(makeResult(101, 103));
+
+        matchMvpService.computeScores(
+                buildMatch(1L, 100),
+                List.of(winnerAdc(), winnerTank(), loserAdc(), loserSupport()));
+
+        verify(baselineService, times(1)).getBaselineMap();
+        verify(scoringBaselineMapper, never()).selectList(any());
     }
 
     @Test

@@ -10,11 +10,9 @@ import com.leagueakari.dto.WeeklyReportResponse;
 import com.leagueakari.entity.Match;
 import com.leagueakari.entity.MatchMvp;
 import com.leagueakari.entity.MatchParticipant;
-import com.leagueakari.entity.ScoringBaseline;
 import com.leagueakari.mapper.MatchMapper;
 import com.leagueakari.mapper.MatchMvpMapper;
 import com.leagueakari.mapper.MatchParticipantMapper;
-import com.leagueakari.mapper.ScoringBaselineMapper;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -55,7 +53,7 @@ class TeamStatsServiceTest {
     private final TeamRosterService rosterService = mock(TeamRosterService.class);
     private final GameDataService gameDataService = mock(GameDataService.class);
     private final WeeklyAiCommentService aiCommentService = mock(WeeklyAiCommentService.class);
-    private final ScoringBaselineMapper baselineMapper = mock(ScoringBaselineMapper.class);
+    private final BaselineService baselineService = mock(BaselineService.class);
 
     /** 固定时钟：2026-09-06（周日）10:00 +08:00，当前周 = 08-31 ~ 09-06，默认周 = 上一周（08-30 ~ 09-05） */
     private final Clock clock = Clock.fixed(
@@ -81,7 +79,7 @@ class TeamStatsServiceTest {
         when(rosterService.requireMembers()).thenReturn(List.of(memberA, memberB));
         return new TeamStatsService(props, rosterService, matchMapper, participantMapper,
                 mvpMapper, timelineService, mvpService, gameDataService, aiCommentService,
-                baselineMapper, new ObjectMapper(), clock);
+                baselineService, new ObjectMapper(), clock);
     }
 
     /** 测试周：2026-08-24（周一）~ 2026-08-30（周日） */
@@ -531,11 +529,7 @@ class TeamStatsServiceTest {
         when(gameDataService.championName(103)).thenReturn("阿狸");
         when(gameDataService.championName(266)).thenReturn("锐雯");
         // 全库基线：阿狸样本 120 场、分均伤害合计 2400 → 基线 20.0；锐雯无样本
-        ScoringBaseline ahrBaseline = new ScoringBaseline();
-        ahrBaseline.setChampionId(103);
-        ahrBaseline.setSampleCount(120);
-        ahrBaseline.setSumDamage(2400.0);
-        when(baselineMapper.selectList(any())).thenReturn(List.of(ahrBaseline));
+        when(baselineService.getBaselineMap()).thenReturn(Map.of(103, Map.of(OpScoreEngine.DIM_DAMAGE, 20.0)));
 
         MemberCardResponse card = svc.memberCard("puuid-a");
 
@@ -585,7 +579,7 @@ class TeamStatsServiceTest {
                 participant(2, 1, "puuid-b", "手裂鬼子", 117, 200, 1, 5, 1, false, 6000)));
         when(mvpMapper.selectList(any())).thenReturn(List.of());
         stubScoresByGame(Map.of(100L, Map.of("puuid-a", 8.0, "puuid-b", 3.0)));
-        when(baselineMapper.selectList(any())).thenReturn(List.of());
+        when(baselineService.getBaselineMap()).thenReturn(Map.of());
 
         MemberCardResponse card = svc.memberCard("puuid-b");
 
