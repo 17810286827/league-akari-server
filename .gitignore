@@ -9,3 +9,4 @@ target/
 .env
 # MySQL 数据目录
 mysql-data/
+AiModelProbeTest.java
