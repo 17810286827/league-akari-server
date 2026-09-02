@@ -233,7 +233,11 @@ public class QqEventWsClient {
                 try {
                     socket.sendText("{\"op\":1,\"d\":null}", true);
                 } catch (Exception e) {
-                    log.debug("QQ WS heartbeat send failed (socket likely closed): {}", e.getMessage());
+                    // 心跳发送失败（socket 半开/网络异常）：静默吞掉会让服务端收不到心跳，
+                    // 约 1-2 个周期后以 4009 Session timed out 踢连接。主动 abort 触发
+                    // 连接循环重连（新连接重新走 hello→心跳），比被动等踢更可控
+                    log.warn("QQ WS heartbeat send failed, force reconnect: {}", e.getMessage());
+                    socket.abort();
                 }
             }
         }, intervalMs, intervalMs, TimeUnit.MILLISECONDS);
