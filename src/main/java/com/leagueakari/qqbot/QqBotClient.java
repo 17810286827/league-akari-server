@@ -279,7 +279,7 @@ public class QqBotClient {
      */
     public String obtainAccessToken() {
         if (!pushProperties.isConfigured()) {
-            throw new QqPushException("QQ 机器人凭证未配置（push.app-id / push.client-secret）");
+            throw new QqPushException("QQ 机器人凭证未配置（push." + pushProperties.missingItems() + "）");
         }
         TokenCache cached = tokenCache;
         if (cached != null && cached.expiresAtMs() - 60_000 > System.currentTimeMillis()) {

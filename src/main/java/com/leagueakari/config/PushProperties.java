@@ -50,4 +50,19 @@ public class PushProperties {
                 && appId != null && !appId.isBlank()
                 && clientSecret != null && !clientSecret.isBlank();
     }
+
+    /** 缺失项描述（排障用）：返回如 "app-id, client-secret"；齐备返回空串 */
+    public String missingItems() {
+        List<String> missing = new java.util.ArrayList<>();
+        if (groupOpenId == null || groupOpenId.isBlank()) {
+            missing.add("group-open-id");
+        }
+        if (appId == null || appId.isBlank()) {
+            missing.add("app-id");
+        }
+        if (clientSecret == null || clientSecret.isBlank()) {
+            missing.add("client-secret");
+        }
+        return String.join(", ", missing);
+    }
 }

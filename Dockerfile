@@ -15,11 +15,8 @@ ENV DB_USERNAME=${DB_USERNAME}
 ENV DB_PASSWORD=${DB_PASSWORD}
 ENV RIOT_API_KEY=${RIOT_API_KEY}
 ENV AI_API_KEY=${AI_API_KEY}
-ENV PUSH_ENABLED=${PUSH_ENABLED}
-ENV PUSH_GROUP_OPEN_ID=${PUSH_GROUP_OPEN_ID}
-ENV QQ_BOT_APP_ID=${QQ_BOT_APP_ID}
-ENV QQ_BOT_CLIENT_SECRET=${QQ_BOT_CLIENT_SECRET}
-ENV PUSH_WS_ENABLED=${PUSH_WS_ENABLED}
+# 局后播报（PUSH_* / QQ_BOT_*）不在此声明：构建环境无这些变量，ENV 会被展开成空串
+# 写进镜像（compose environment 覆盖前容器内读到空值）。统一由 docker-compose 注入。
 
 # 容器内运行时 JVM 参数，可被 ENTRYPOINT 的 ${JAVA_OPTS} 展开
 ENV JAVA_OPTS="-XX:+UseG1GC -XX:+UseStringDeduplication -Duser.timezone=Asia/Shanghai"
