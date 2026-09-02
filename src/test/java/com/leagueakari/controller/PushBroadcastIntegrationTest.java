@@ -129,11 +129,11 @@ class PushBroadcastIntegrationTest {
     }
 
     /**
-     * 用例：推入刚结束的车队对局 → 机器人收到 1 条文本战报（含胜负/比分/成员），
+     * 用例：推入刚结束的车队对局 → 机器人收到 1 条战报图（PNG），
      * 落库状态推进为 SENT
      */
     @Test
-    void postFleetMatch_broadcastsTextAndMarksSent() throws Exception {
+    void postFleetMatch_broadcastsImageAndMarksSent() throws Exception {
         stubRoster();
 
         mockMvc.perform(post("/api/matches")
@@ -142,13 +142,12 @@ class PushBroadcastIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
 
-        // 发送契约：一条文本消息发到配置的车队群，内容含胜负/比分/车队成员
-        ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
-        verify(qqBotClient).sendGroupTextMessage(eq("GROUP-IT"), content.capture());
-        assertThat(content.getValue())
-                .contains("胜利")
-                .contains("32")
-                .contains("赌书消得泼茶香");
+        // 发送契约：一条 PNG 图片消息发到配置的车队群（PNG magic 头校验）
+        ArgumentCaptor<byte[]> png = ArgumentCaptor.forClass(byte[].class);
+        verify(qqBotClient).sendGroupImageMessage(eq("GROUP-IT"), png.capture());
+        assertThat(png.getValue()).isNotEmpty();
+        assertThat(png.getValue())
+                .startsWith((byte) 0x89, (byte) 0x50, (byte) 0x4e, (byte) 0x47);
 
         // 状态推进：PENDING → SENT（push_image_at 已写）
         Match saved = matchMapper.selectOne(new QueryWrapper<Match>().eq("game_id", 9100000001L));
@@ -172,7 +171,7 @@ class PushBroadcastIntegrationTest {
 
         // 只发送一次
         verify(qqBotClient, org.mockito.Mockito.times(1))
-                .sendGroupTextMessage(eq("GROUP-IT"), any(String.class));
+                .sendGroupImageMessage(eq("GROUP-IT"), any(byte[].class));
     }
 
     /**
@@ -190,7 +189,7 @@ class PushBroadcastIntegrationTest {
                         .content(objectMapper.writeValueAsString(fleetRequest(9100000003L))))
                 .andExpect(status().isOk());
 
-        verify(qqBotClient, never()).sendGroupTextMessage(any(), any());
+        verify(qqBotClient, never()).sendGroupImageMessage(any(), any());
         Match saved = matchMapper.selectOne(new QueryWrapper<Match>().eq("game_id", 9100000003L));
         assertThat(saved.getPushStatus()).isEqualTo("SENT");
     }
@@ -201,8 +200,8 @@ class PushBroadcastIntegrationTest {
     @Test
     void postFleetMatch_sendFailureMarksFailedButSyncOk() throws Exception {
         stubRoster();
-        org.mockito.Mockito.doThrow(new com.leagueakari.qqbot.QqPushException("QQ 群消息发送失败（HTTP 401）"))
-                .when(qqBotClient).sendGroupTextMessage(any(), any());
+        org.mockito.Mockito.doThrow(new com.leagueakari.qqbot.QqPushException("QQ 图片消息发送失败（HTTP 401）"))
+                .when(qqBotClient).sendGroupImageMessage(any(), any());
 
         mockMvc.perform(post("/api/matches")
                         .contentType(MediaType.APPLICATION_JSON)

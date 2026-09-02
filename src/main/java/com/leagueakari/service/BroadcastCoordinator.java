@@ -2,6 +2,8 @@ package com.leagueakari.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.config.PushProperties;
 import com.leagueakari.config.TeamProperties;
 import com.leagueakari.entity.Match;
@@ -12,6 +14,8 @@ import com.leagueakari.mapper.MatchMvpMapper;
 import com.leagueakari.mapper.MatchParticipantMapper;
 import com.leagueakari.qqbot.QqBotClient;
 import com.leagueakari.qqbot.QqPushException;
+import com.leagueakari.reportimage.ReportImageData;
+import com.leagueakari.reportimage.ReportImageRenderer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -20,6 +24,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -58,7 +64,11 @@ public class BroadcastCoordinator {
     private final TeamRosterService rosterService;
     private final GameDataService gameDataService;
     private final QqBotClient qqBotClient;
+    /** 战报图渲染器：对局数据 → PNG 字节（Java2D，见 reportimage 包） */
+    private final ReportImageRenderer reportImageRenderer;
     private final Clock clock;
+    /** JSON 解析：teams_json 资源快照与 stats_json 统计字段 */
+    private final ObjectMapper objectMapper;
 
     /**
      * 服务重启恢复：启动时把残留的 PUSHING（上一进程中断在发送途中）恢复为 FAILED，
@@ -160,13 +170,22 @@ public class BroadcastCoordinator {
             return;
         }
 
-        // 6. 组装战报文本并发送
-        String report = buildTextReport(match, participants, memberByPuuid,
+        // 6. 组装战报图数据 → 渲染 PNG → 图片消息发送（图只管数据，不依赖 AI）
+        ReportImageData imageData = buildImageData(match, participants, memberByPuuid,
                 mvpMapper.selectList(new QueryWrapper<MatchMvp>().eq("match_id", match.getId())));
+        byte[] png;
         try {
-            qqBotClient.sendGroupTextMessage(pushProperties.getGroupOpenId(), report);
+            png = reportImageRenderer.renderPng(imageData);
+        } catch (Exception e) {
+            log.error("Broadcast render failed: gameId={}", gameId, e);
+            markFailed(gameId, "战报图渲染失败: " + e.getMessage());
+            return;
+        }
+        try {
+            qqBotClient.sendGroupImageMessage(pushProperties.getGroupOpenId(), png);
             markSent(gameId);
-            log.info("Broadcast sent: gameId={}, fleetMembers={}", gameId, fleetCount);
+            log.info("Broadcast image sent: gameId={}, fleetMembers={}, pngBytes={}",
+                    gameId, fleetCount, png.length);
         } catch (QqPushException e) {
             log.error("Broadcast send failed: gameId={}", gameId, e);
             markFailed(gameId, e.getMessage());
@@ -208,16 +227,19 @@ public class BroadcastCoordinator {
         return index;
     }
 
-    // ---------- 战报文本组装（T2 中间形态：先图后文本中的"文本战报"，T3 起由图替换） ----------
+    // ---------- 战报图数据组装（方案 C v2：顶栏/资源/焦点卡/双列阵容） ----------
 
     /**
-     * 组装纯文本战报：胜负、比分、模式时长、车队成员战绩行（含 MVP 称号标注）。
-     * 车队视角：车队成员多数所在队伍为主队；成员行按击杀降序
+     * 聚合战报图渲染数据：车队视角（主队 = 车队成员多数所在队），
+     * 三指标口径：输出/承伤占比为全 10 人口径，伤转 = 伤害 ÷ 经济
      */
-    private String buildTextReport(Match match, List<MatchParticipant> participants,
-                                   Map<String, TeamRosterService.RosterMember> memberByPuuid,
-                                   List<MatchMvp> awards) {
-        // 车队成员及其所在队伍统计
+    private ReportImageData buildImageData(Match match, List<MatchParticipant> participants,
+                                           Map<String, TeamRosterService.RosterMember> memberByPuuid,
+                                           List<MatchMvp> awards) {
+        ReportImageData d = new ReportImageData();
+        d.teamName = teamProperties.getName();
+
+        // 车队成员与其所在队伍：主队取成员多数侧（常规开黑 5 人同队）
         List<MatchParticipant> fleet = participants.stream()
                 .filter(p -> memberByPuuid.containsKey(p.getPuuid()))
                 .toList();
@@ -225,64 +247,167 @@ public class BroadcastCoordinator {
         for (MatchParticipant p : fleet) {
             teamCount.merge(p.getTeamId(), 1L, Long::sum);
         }
-        // 主队 = 车队成员多数所在队伍（常规开黑为 5 人同队；分散时取人多的一侧）
         int mainTeamId = teamCount.entrySet().stream()
                 .max(Map.Entry.comparingByValue())
                 .map(Map.Entry::getKey)
                 .orElse(match.getWinnerTeamId() == null ? 100 : match.getWinnerTeamId());
         boolean win = match.getWinnerTeamId() != null && match.getWinnerTeamId() == mainTeamId;
+        d.win = win;
+        d.resultLabel = win ? "VICTORY · 胜利" : "DEFEAT · 败北";
+        d.metaLine = queueName(match.getQueueId()) + " · " + formatDuration(match.getGameDuration())
+                + " · " + formatGameTime(match.getGameCreation());
 
-        // 比分：两队击杀合计
-        int mainKills = participants.stream()
-                .filter(p -> p.getTeamId() != null && p.getTeamId() == mainTeamId)
-                .mapToInt(p -> p.getKills() == null ? 0 : p.getKills())
-                .sum();
-        int otherKills = participants.stream()
-                .filter(p -> p.getTeamId() != null && p.getTeamId() != mainTeamId)
-                .mapToInt(p -> p.getKills() == null ? 0 : p.getKills())
-                .sum();
+        // 资源对比与一血：从 teams_json 快照解析（缺失按 -1/空处理）
+        fillResources(d, match.getTeamsJson(), mainTeamId);
 
-        // MVP/ACE 称号：participantId → 称号类型（MVP=胜方最佳 / ACE=败方最佳）
-        Map<Long, String> titleByParticipant = new HashMap<>();
+        // 全 10 人伤害/承伤合计（占比分母）
+        double totalDamage = 0;
+        double totalTaken = 0;
+        for (MatchParticipant p : participants) {
+            totalDamage += statInt(p.getStatsJson(), "totalDamageDealtToChampions");
+            totalTaken += statInt(p.getStatsJson(), "totalDamageTaken");
+        }
+
+        // 称号索引：participantId → award（MVP=胜方最佳 / ACE=败方最佳）
+        Map<Long, MatchMvp> awardByParticipant = new HashMap<>();
         for (MatchMvp award : awards) {
             if (award.getParticipantId() != null && award.getType() != null) {
-                titleByParticipant.put(award.getParticipantId(), award.getType());
+                awardByParticipant.put(award.getParticipantId(), award);
             }
         }
 
-        StringBuilder sb = new StringBuilder();
-        sb.append(win ? "🎉 胜利" : "💀 败北")
-                .append(" · ").append(teamProperties.getName()).append(" 开黑局\n");
-        sb.append(queueName(match.getQueueId())).append(" · ")
-                .append(formatDuration(match.getGameDuration())).append("\n");
-        sb.append("比分 ").append(mainKills).append(" : ").append(otherKills).append("\n");
-        sb.append("━━━ 车队战绩 ━━━\n");
-        fleet.stream()
-                .sorted((a, b) -> (b.getKills() == null ? 0 : b.getKills())
-                        - (a.getKills() == null ? 0 : a.getKills()))
-                .forEach(p -> {
-                    sb.append(p.getSummonerName()).append("（")
-                            .append(safeChampionName(p.getChampionId())).append("）")
-                            .append(" ").append(kda(p)).append("  ");
-                    String title = titleByParticipant.get(p.getId());
-                    if ("MVP".equals(title)) {
-                        sb.append("[MVP]");
-                    } else if ("ACE".equals(title) || "SVP".equals(title)) {
-                        sb.append("[SVP]");
-                    }
-                    sb.append("\n");
-                });
-        return sb.toString();
+        // 双列组装：主队（车队侧）与对方，行内按击杀降序（车队成员不打散，置前列便于群友认领）
+        List<ReportImageData.Player> mainRows = buildTeamRows(participants, mainTeamId, true,
+                awardByParticipant, memberByPuuid, totalDamage, totalTaken);
+        int otherTeamId = mainTeamId == 100 ? 200 : 100;
+        List<ReportImageData.Player> otherRows = buildTeamRows(participants, otherTeamId, false,
+                awardByParticipant, Map.of(), totalDamage, totalTaken);
+        d.mainTeam = mainRows;
+        d.otherTeam = otherRows;
+
+        // 焦点卡：车队内 MVP → 尽力（ACE）→ 默认队内击杀最高
+        ReportImageData.Player hero = mainRows.stream()
+                .filter(p -> "MVP".equals(p.titleTag))
+                .findFirst()
+                .orElse(mainRows.stream().filter(p -> "尽力".equals(p.titleTag)).findFirst().orElse(null));
+        if (hero == null && !mainRows.isEmpty()) {
+            hero = mainRows.get(0); // mainRows 已按击杀降序
+            hero.heroSub = "本队表现最佳";
+        } else if (hero != null && hero.heroSub == null) {
+            hero.heroSub = "MVP".equals(hero.titleTag) ? "本场 MVP" : "尽力局";
+        }
+        d.hero = hero;
+
+        d.footerLeft = teamProperties.getName();
+        d.footerRight = "LEAGUE AKARI 对局战报";
+        return d;
     }
 
-    /** KDA 文本：k/a/d（缺失按 0） */
-    private String kda(MatchParticipant p) {
-        return (p.getKills() == null ? 0 : p.getKills()) + "/"
-                + (p.getDeaths() == null ? 0 : p.getDeaths()) + "/"
-                + (p.getAssists() == null ? 0 : p.getAssists());
+    /** 组装一列 5 行：车队成员置前（保持相对击杀序），其后路人/对手按击杀降序 */
+    private List<ReportImageData.Player> buildTeamRows(List<MatchParticipant> participants, int teamId,
+                                                       boolean isMain,
+                                                       Map<Long, MatchMvp> awardByParticipant,
+                                                       Map<String, TeamRosterService.RosterMember> memberByPuuid,
+                                                       double totalDamage, double totalTaken) {
+        List<MatchParticipant> team = participants.stream()
+                .filter(p -> p.getTeamId() != null && p.getTeamId() == teamId)
+                .sorted(Comparator.comparingInt(
+                        (MatchParticipant p) -> p.getKills() == null ? 0 : p.getKills()).reversed())
+                .toList();
+        // 主队：车队成员排前面（同队内仍按击杀降序）
+        List<MatchParticipant> ordered = new ArrayList<>();
+        if (isMain) {
+            List<MatchParticipant> fleet = team.stream()
+                    .filter(p -> memberByPuuid.containsKey(p.getPuuid())).toList();
+            List<MatchParticipant> others = team.stream()
+                    .filter(p -> !memberByPuuid.containsKey(p.getPuuid())).toList();
+            ordered.addAll(fleet);
+            ordered.addAll(others);
+        } else {
+            ordered.addAll(team);
+        }
+
+        List<ReportImageData.Player> rows = new ArrayList<>();
+        for (MatchParticipant p : ordered) {
+            ReportImageData.Player row = new ReportImageData.Player();
+            row.summonerName = p.getSummonerName();
+            row.championName = safeChampionName(p.getChampionId());
+            row.championId = p.getChampionId() == null ? 0 : p.getChampionId();
+            row.kills = p.getKills() == null ? 0 : p.getKills();
+            row.deaths = p.getDeaths() == null ? 0 : p.getDeaths();
+            row.assists = p.getAssists() == null ? 0 : p.getAssists();
+            row.damageShare = totalDamage > 0
+                    ? statInt(p.getStatsJson(), "totalDamageDealtToChampions") / totalDamage : 0;
+            row.damageTakenShare = totalTaken > 0
+                    ? statInt(p.getStatsJson(), "totalDamageTaken") / totalTaken : 0;
+            double gold = statInt(p.getStatsJson(), "goldEarned");
+            row.damagePerGold = gold > 0
+                    ? statInt(p.getStatsJson(), "totalDamageDealtToChampions") / gold : 0;
+            // 称号：MVP（胜方最佳）恒标；ACE（败方最佳）仅在车队侧标"尽力"
+            MatchMvp award = awardByParticipant.get(p.getId());
+            if (award != null) {
+                if ("MVP".equals(award.getType())) {
+                    row.titleTag = "MVP";
+                    row.opScore = award.getOpScore() == null ? -1 : award.getOpScore().doubleValue();
+                } else if (isMain) {
+                    row.titleTag = "尽力";
+                    row.opScore = award.getOpScore() == null ? -1 : award.getOpScore().doubleValue();
+                } else {
+                    row.opScore = -1;
+                }
+            } else {
+                row.opScore = -1;
+            }
+            rows.add(row);
+        }
+        return rows;
     }
 
-    /** 英雄中文名：数据缺失时返回占位，不让文本出现 null */
+    /** 资源与一血：解析 teams_json（[{teamId, towerKills, dragonKills, baronKills, firstBlood}]） */
+    private void fillResources(ReportImageData d, String teamsJson, int mainTeamId) {
+        if (teamsJson == null || teamsJson.isBlank()) {
+            return;
+        }
+        try {
+            JsonNode teams = objectMapper.readTree(teamsJson);
+            if (!teams.isArray()) {
+                return;
+            }
+            for (JsonNode t : teams) {
+                if (t.path("teamId").asInt(-1) != mainTeamId) {
+                    continue;
+                }
+                d.mainTower = t.path("towerKills").asInt(-1);
+                d.mainDragon = t.path("dragonKills").asInt(-1);
+                d.mainBaron = t.path("baronKills").asInt(-1);
+                if (t.hasNonNull("firstBlood")) {
+                    d.mainFirstBlood = t.path("firstBlood").asBoolean();
+                }
+                return;
+            }
+            // 主队记录缺失时退而求其次：对方数值放主队槽位会误导，保持 -1 不展示
+        } catch (Exception e) {
+            log.warn("Parse teamsJson failed, resources hidden: {}", e.getMessage());
+        }
+    }
+
+    /** 读取 stats_json 数值字段：缺失/非数字返回 0 */
+    private int statInt(String statsJson, String key) {
+        if (statsJson == null || statsJson.isBlank()) {
+            return 0;
+        }
+        try {
+            JsonNode stats = objectMapper.readTree(statsJson);
+            if (stats.has(key) && !stats.get(key).isNull()) {
+                return stats.get(key).asInt(0);
+            }
+        } catch (Exception e) {
+            log.warn("Parse statsJson failed: {}", e.getMessage());
+        }
+        return 0;
+    }
+
+    /** 英雄中文名：数据缺失/查询失败返回占位，不让图出现 null */
     private String safeChampionName(Integer championId) {
         if (championId == null) {
             return "?";
@@ -294,6 +419,18 @@ public class BroadcastCoordinator {
             log.warn("Champion name lookup failed: championId={}", championId, e);
             return "英雄" + championId;
         }
+    }
+
+    /** 对局创建时间 → "08-30 21:47"（北京时间，对齐群里看图的直觉） */
+    private String formatGameTime(Long gameCreationMs) {
+        if (gameCreationMs == null) {
+            return "--";
+        }
+        java.time.LocalDateTime time = java.time.LocalDateTime.ofInstant(
+                java.time.Instant.ofEpochMilli(gameCreationMs),
+                java.time.ZoneId.of("Asia/Shanghai"));
+        return String.format("%02d-%02d %02d:%02d", time.getMonthValue(), time.getDayOfMonth(),
+                time.getHour(), time.getMinute());
     }
 
     /** 常用队列中文名（缺失回退数字），供战报文本可读展示 */

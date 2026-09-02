@@ -161,4 +161,67 @@ class QqBotClientTest {
         when(resp.getEntity()).thenReturn(entity);
         return resp;
     }
+
+    /**
+     * 用例：图片消息全链路——凭证 → 预上传 → 分片 PUT（预签名 URL）→ 分片确认 →
+     * files 注册取 file_info → 富媒体消息（msg_type=7）。请求顺序即官方流程
+     */
+    @Test
+    void sendGroupImageMessage_runsFullUploadFlow() throws Exception {
+        // 六步响应依次就位（先构造再打桩，避免嵌套 stubbing）
+        CloseableHttpResponse tokenResp = tokenResponse("tok-img");
+        CloseableHttpResponse prepareResp = jsonResponse(200,
+                "{\"upload_id\":\"up-1\",\"block_size\":1048576,"
+                        + "\"upload_urls\":[\"https://presigned.example.com/part-1\"]}");
+        CloseableHttpResponse putResp = statusOnlyResponse(200);
+        CloseableHttpResponse finishResp = okResponse();
+        CloseableHttpResponse filesResp = jsonResponse(200,
+                "{\"file_info\":\"fi-1\",\"ttl\":300}");
+        CloseableHttpResponse msgResp = okResponse();
+        when(httpClient.execute(any(org.apache.hc.client5.http.classic.methods.HttpUriRequestBase.class)))
+                .thenReturn(tokenResp, prepareResp, putResp, finishResp, filesResp, msgResp);
+
+        qqBotClient.sendGroupImageMessage("GROUP-1", new byte[]{1, 2, 3});
+
+        // 请求序列与目标：token → prepare → 预签名 PUT → finish → files → messages
+        var captor = org.mockito.ArgumentCaptor.forClass(
+                org.apache.hc.client5.http.classic.methods.HttpUriRequestBase.class);
+        verify(httpClient, times(6)).execute(captor.capture());
+        var urls = captor.getAllValues().stream().map(r -> {
+            try {
+                return r.getUri().toString();
+            } catch (Exception e) {
+                return "?";
+            }
+        }).toList();
+        assertThat(urls.get(0)).isEqualTo("https://api.bot.qq.com/app/getAppAccessToken");
+        assertThat(urls.get(1)).isEqualTo("https://api.bot.qq.com/v2/groups/GROUP-1/upload_prepare");
+        assertThat(urls.get(2)).isEqualTo("https://presigned.example.com/part-1");
+        assertThat(urls.get(3)).isEqualTo("https://api.bot.qq.com/v2/groups/GROUP-1/upload_part_finish");
+        assertThat(urls.get(4)).isEqualTo("https://api.bot.qq.com/v2/groups/GROUP-1/files");
+        assertThat(urls.get(5)).isEqualTo("https://api.bot.qq.com/v2/groups/GROUP-1/messages");
+        // 预上传体含大小与摘要；最终消息体为 msg_type=7 + file_info
+        String prepareBody = EntityUtils.toString(captor.getAllValues().get(1).getEntity(),
+                StandardCharsets.UTF_8);
+        assertThat(prepareBody).contains("\"file_size\":3").contains("\"file_name\":\"report.png\"");
+        String msgBody = EntityUtils.toString(captor.getAllValues().get(5).getEntity(),
+                StandardCharsets.UTF_8);
+        assertThat(msgBody).contains("\"msg_type\":7").contains("\"file_info\":\"fi-1\"");
+    }
+
+    /** 构造 JSON 响应 */
+    private CloseableHttpResponse jsonResponse(int status, String body) {
+        CloseableHttpResponse resp = mock(CloseableHttpResponse.class);
+        when(resp.getCode()).thenReturn(status);
+        HttpEntity entity = new StringEntity(body, StandardCharsets.UTF_8);
+        when(resp.getEntity()).thenReturn(entity);
+        return resp;
+    }
+
+    /** 仅带状态码的响应（分片 PUT 只校验 200，不消费响应体） */
+    private CloseableHttpResponse statusOnlyResponse(int status) {
+        CloseableHttpResponse resp = mock(CloseableHttpResponse.class);
+        when(resp.getCode()).thenReturn(status);
+        return resp;
+    }
 }

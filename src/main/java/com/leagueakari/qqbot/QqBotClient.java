@@ -5,24 +5,33 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.config.PushProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
+import org.apache.hc.client5.http.classic.methods.HttpPut;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.core5.http.ContentType;
+import org.apache.hc.core5.http.io.entity.ByteArrayEntity;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
  * QQ 官方开放平台机器人客户端（外部 I/O 接缝）：
- * 负责换取并缓存 access_token、向车队群发送消息。
+ * 负责换取并缓存 access_token、向车队群发送文本与图片消息。
  * 只做 OpenAPI 协议层，不涉及业务判定（判定在 BroadcastCoordinator）。
  * <p>官方文档：凭证 api.bot.qq.com/app/getAppAccessToken；
- * 群消息 POST /v2/groups/{group_openid}/messages（msg_type 0=纯文本 / 7=富媒体）。</p>
+ * 群消息 POST /v2/groups/{group_openid}/messages（msg_type 0=纯文本 / 7=富媒体）；
+ * 图片先经群文件接口上传拿 file_info（ttl 300s，现传现用）再引用发送。
+ * 上传走分片流程（upload_prepare → 预签名 PUT → upload_part_finish → files 合并），
+ * 支持服务端本地文件（战报图 PNG 无公网 URL 时走此路径）。</p>
  */
 @Slf4j
 @Service
@@ -63,18 +72,201 @@ public class QqBotClient {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("msg_type", 0);
         payload.put("content", content);
+        postJson(API_BASE + "/v2/groups/" + groupOpenId + "/messages", token, payload, "群消息发送");
+    }
 
-        HttpPost post = new HttpPost(API_BASE + "/v2/groups/" + groupOpenId + "/messages");
+    /**
+     * 向车队群发送图片消息（msg_type=7 富媒体）：
+     * 服务端本地 PNG 先按官方分片上传流程换取 file_info，再以媒体消息引用发送。
+     * <p>流程：upload_prepare（摘要与大小）→ 逐片 PUT 预签名 URL → upload_part_finish
+     * → files 合并取 file_info（ttl 300s 现传现用）→ messages msg_type=7。
+     * 战报图单张远小于分片上限，实际走单分片路径；接口字段以官方文档为准，
+     * 联调异常时错误信息携带响应体便于核对。</p>
+     *
+     * @param groupOpenId 目标群 openid
+     * @param pngBytes    战报图 PNG 字节
+     * @throws QqPushException 任一步非 200 / 响应结构异常
+     */
+    public void sendGroupImageMessage(String groupOpenId, byte[] pngBytes) {
+        if (groupOpenId == null || groupOpenId.isBlank()) {
+            throw new QqPushException("QQ 群 openid 未配置，无法推送");
+        }
+        String token = obtainAccessToken();
+        UploadSession session = prepareUpload(token, groupOpenId, pngBytes);
+        uploadParts(token, session, pngBytes);
+        finishUpload(token, groupOpenId, session.uploadId());
+        String fileInfo = registerFile(token, groupOpenId, session.uploadId());
+        sendMediaMessage(token, groupOpenId, fileInfo);
+    }
+
+    /** 上传会话：prepare 响应的一次性状态（upload_id + 预签名 URL 列表 + 分片大小） */
+    private record UploadSession(String uploadId, List<String> urls, int blockSize) {}
+
+    /**
+     * 第 1 步：预上传申请（file_size/file_name/md5/sha1/md5_10m）。
+     * 响应含 upload_id、block_size 与各分片预签名 URL（字段名官方各版本有差异，
+     * upload_urls/urls 双路径宽松兼容），联调异常时错误信息携带响应体便于核对
+     */
+    private UploadSession prepareUpload(String token, String groupOpenId, byte[] bytes) {
+        String md5 = digest("MD5", bytes);
+        String sha1 = digest("SHA-1", bytes);
+        // md5_10m：前 10MB 的 MD5（分片规则；战报图小于 10MB 时即整文件）
+        String md5_10m = bytes.length <= 10 * 1024 * 1024 ? md5 : digest("MD5", head(bytes, 10 * 1024 * 1024));
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("file_size", bytes.length);
+        payload.put("file_name", "report.png");
+        payload.put("md5", md5);
+        payload.put("sha1", sha1);
+        payload.put("md5_10m", md5_10m);
+
+        JsonNode resp = postJson(API_BASE + "/v2/groups/" + groupOpenId + "/upload_prepare",
+                token, payload, "图片预上传");
+        String uploadId = resp.path("upload_id").asText("");
+        if (uploadId.isBlank()) {
+            throw new QqPushException("QQ 图片预上传响应缺少 upload_id: " + resp);
+        }
+        // 预签名 URL：双路径兼容（upload_urls 为主，urls 兜底），缺失时后续 PUT 步骤会报错
+        JsonNode urlsNode = resp.has("upload_urls") ? resp.get("upload_urls")
+                : resp.get("urls");
+        List<String> urls = new ArrayList<>();
+        if (urlsNode != null && urlsNode.isArray()) {
+            urlsNode.forEach(n -> urls.add(n.asText()));
+        }
+        int blockSize = resp.path("block_size").asInt(1024 * 1024);
+        log.info("QQ upload prepared: size={}, uploadId={}, parts={}", bytes.length, uploadId, urls.size());
+        return new UploadSession(uploadId, urls, blockSize);
+    }
+
+    /**
+     * 第 2 步：分片 PUT 到预签名 URL。单分片（战报图实际场景）直接全量 PUT；
+     * 多分片按 block_size 切分逐片 PUT（防御实现）
+     */
+    private void uploadParts(String token, UploadSession session, byte[] bytes) {
+        if (session.urls().isEmpty()) {
+            throw new QqPushException("QQ 图片预上传响应缺少预签名 URL，无法上传分片");
+        }
+        if (bytes.length <= session.blockSize()) {
+            putBytes(session.urls().get(0), bytes);
+            return;
+        }
+        for (int i = 0; i < session.urls().size(); i++) {
+            int from = i * session.blockSize();
+            int to = Math.min(bytes.length, from + session.blockSize());
+            putBytes(session.urls().get(i), java.util.Arrays.copyOfRange(bytes, from, to));
+        }
+    }
+
+    /** PUT 字节到预签名 URL（分片上传；状态码非 200 抛错） */
+    private void putBytes(String url, byte[] data) {
+        HttpPut put = new HttpPut(url);
+        put.setHeader("Content-Type", ContentType.APPLICATION_OCTET_STREAM.toString());
+        put.setEntity(new ByteArrayEntity(data, ContentType.APPLICATION_OCTET_STREAM));
+        try (CloseableHttpResponse response = httpClient.execute(put)) {
+            int status = response.getCode();
+            if (status != 200) {
+                String body = response.getEntity() != null
+                        ? EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8) : "";
+                log.error("QQ upload part failed: status={}, body={}", status, body);
+                throw new QqPushException("QQ 图片分片上传失败（HTTP " + status + "）");
+            }
+        } catch (IOException | org.apache.hc.core5.http.ParseException e) {
+            log.error("QQ upload part request failed: {}", e.getMessage());
+            throw new QqPushException("QQ 图片分片上传请求失败，请检查网络", e);
+        }
+    }
+
+    /** 第 3 步：分片确认（单分片场景直接确认 upload_id） */
+    private void finishUpload(String token, String groupOpenId, String uploadId) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("upload_id", uploadId);
+        postJson(API_BASE + "/v2/groups/" + groupOpenId + "/upload_part_finish",
+                token, payload, "图片分片确认");
+    }
+
+    /** 第 4 步：files 合并注册，返回 file_info（ttl 300s） */
+    private String registerFile(String token, String groupOpenId, String uploadId) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("file_type", 1); // 1=图片
+        payload.put("upload_id", uploadId);
+        JsonNode resp = postJson(API_BASE + "/v2/groups/" + groupOpenId + "/files",
+                token, payload, "图片注册");
+        String fileInfo = resp.path("file_info").asText("");
+        if (fileInfo.isBlank()) {
+            throw new QqPushException("QQ 图片注册响应缺少 file_info: " + resp);
+        }
+        log.info("QQ file registered: ttl={}", resp.path("ttl").asText(""));
+        return fileInfo;
+    }
+
+    /** 第 5 步：富媒体消息（msg_type=7）引用 file_info 发送 */
+    private void sendMediaMessage(String token, String groupOpenId, String fileInfo) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("msg_type", 7);
+        payload.put("media", Map.of("file_info", fileInfo));
+        postJson(API_BASE + "/v2/groups/" + groupOpenId + "/messages",
+                token, payload, "图片消息发送");
+    }
+
+    /**
+     * 统一 JSON POST 组装：设置 Content-Type/Bearer 与 JSON 实体后执行。
+     * 所有业务 POST（文本/凭证/上传各步）共用，避免各调用点重复 setEntity
+     */
+    private JsonNode postJson(String url, String token, Map<String, Object> payload, String action) {
+        HttpPost post = new HttpPost(url);
         post.setHeader("Content-Type", ContentType.APPLICATION_JSON.toString());
         post.setHeader("Authorization", "Bearer " + token);
         try {
             post.setEntity(new StringEntity(objectMapper.writeValueAsString(payload),
                     ContentType.APPLICATION_JSON));
         } catch (Exception e) {
-            log.error("Failed to serialize QQ message payload: {}", e.getMessage());
-            throw new QqPushException("QQ 消息请求组装失败", e);
+            log.error("Failed to serialize QQ payload: {}", e.getMessage());
+            throw new QqPushException("QQ " + action + "请求组装失败", e);
         }
-        executeChecked(post, "群消息发送");
+        return executeJson(post, action);
+    }
+
+    /** 摘要计算（MD5/SHA-1），用于上传前置校验 */
+    private static String digest(String algorithm, byte[] data) {
+        try {
+            MessageDigest md = MessageDigest.getInstance(algorithm);
+            byte[] out = md.digest(data);
+            StringBuilder sb = new StringBuilder();
+            for (byte b : out) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("摘要算法不可用: " + algorithm, e);
+        }
+    }
+
+    private static byte[] head(byte[] data, int n) {
+        byte[] out = new byte[Math.min(n, data.length)];
+        System.arraycopy(data, 0, out, 0, out.length);
+        return out;
+    }
+
+    /** 执行 POST 并解析 JSON 响应；非 200 抛 QqPushException */
+    private JsonNode executeJson(HttpPost post, String action) {
+        try (CloseableHttpResponse response = httpClient.execute(post)) {
+            int status = response.getCode();
+            String body = response.getEntity() != null
+                    ? EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8) : "";
+            if (status != 200) {
+                log.error("QQ {} API error: status={}, body={}", action, status, body);
+                throw new QqPushException("QQ " + action + "失败（HTTP " + status + "）：" + body);
+            }
+            try {
+                return objectMapper.readTree(body);
+            } catch (Exception e) {
+                log.error("QQ {} response parse failed: body={}", action, body);
+                throw new QqPushException("QQ " + action + "响应解析失败", e);
+            }
+        } catch (IOException | org.apache.hc.core5.http.ParseException e) {
+            log.error("QQ {} request failed: {}", action, e.getMessage());
+            throw new QqPushException("QQ " + action + "请求失败，请检查网络", e);
+        }
     }
 
     /**
