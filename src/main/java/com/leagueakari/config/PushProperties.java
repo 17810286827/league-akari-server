@@ -4,6 +4,9 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * 局后播报（QQ 群推送）配置：从 application.yml 的 push.* 前缀加载，启动时绑定。
  * <p>机器人凭证与车队群 openid 属部署机密，生产环境用环境变量覆盖
@@ -53,7 +56,7 @@ public class PushProperties {
 
     /** 缺失项描述（排障用）：返回如 "app-id, client-secret"；齐备返回空串 */
     public String missingItems() {
-        List<String> missing = new java.util.ArrayList<>();
+        List<String> missing = new ArrayList<>();
         if (groupOpenId == null || groupOpenId.isBlank()) {
             missing.add("group-open-id");
         }
