@@ -7,6 +7,7 @@ import com.leagueakari.dto.ParticipantSyncRequest;
 import com.leagueakari.entity.Match;
 import com.leagueakari.mapper.MatchMapper;
 import com.leagueakari.qqbot.QqBotClient;
+import com.leagueakari.service.PostGameCommentService;
 import com.leagueakari.service.TeamRosterService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -63,6 +64,10 @@ class PushBroadcastIntegrationTest {
     /** 机器人发送端口：mock 掉真实 HTTP 调用 */
     @MockBean
     private QqBotClient qqBotClient;
+
+    /** 局后锐评 AI：mock 掉外部模型调用（成功/失败由用例控制） */
+    @MockBean
+    private PostGameCommentService postGameCommentService;
 
     /** 车队名单解析依赖 Riot API（网络），mock 返回两名测试成员 */
     @MockBean
@@ -129,12 +134,14 @@ class PushBroadcastIntegrationTest {
     }
 
     /**
-     * 用例：推入刚结束的车队对局 → 机器人收到 1 条战报图（PNG），
-     * 落库状态推进为 SENT
+     * 用例：推入刚结束的车队对局 → 机器人收到 1 张战报图 + 1 条锐评文本（先图后文），
+     * 落库状态推进为 SENT 且两个时间戳齐备
      */
     @Test
-    void postFleetMatch_broadcastsImageAndMarksSent() throws Exception {
+    void postFleetMatch_broadcastsImageAndCommentAndMarksSent() throws Exception {
         stubRoster();
+        when(postGameCommentService.generateComment(org.mockito.ArgumentMatchers.anyMap()))
+                .thenReturn("养鱼人今天把对面野区当自己家，建议下把换个打法。");
 
         mockMvc.perform(post("/api/matches")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -142,18 +149,47 @@ class PushBroadcastIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
 
-        // 发送契约：一条 PNG 图片消息发到配置的车队群（PNG magic 头校验）
+        // 消息序列：先图（PNG magic 校验）后锐评文本
         ArgumentCaptor<byte[]> png = ArgumentCaptor.forClass(byte[].class);
         verify(qqBotClient).sendGroupImageMessage(eq("GROUP-IT"), png.capture());
         assertThat(png.getValue()).isNotEmpty();
         assertThat(png.getValue())
                 .startsWith((byte) 0x89, (byte) 0x50, (byte) 0x4e, (byte) 0x47);
+        verify(qqBotClient).sendGroupTextMessage(eq("GROUP-IT"),
+                eq("养鱼人今天把对面野区当自己家，建议下把换个打法。"));
 
-        // 状态推进：PENDING → SENT（push_image_at 已写）
+        // 状态推进：SENT + 图/锐评时间戳均已写
         Match saved = matchMapper.selectOne(new QueryWrapper<Match>().eq("game_id", 9100000001L));
         assertThat(saved.getPushStatus()).isEqualTo("SENT");
         assertThat(saved.getPushImageAt()).isNotNull();
+        assertThat(saved.getPushCommentAt()).isNotNull();
         assertThat(saved.getPushError()).isNull();
+    }
+
+    /**
+     * 用例：AI 锐评生成失败 → 图已送达、改发缺席提示，状态 AI_FAILED
+     */
+    @Test
+    void postFleetMatch_aiFailureSendsAbsenceTip() throws Exception {
+        stubRoster();
+        when(postGameCommentService.generateComment(org.mockito.ArgumentMatchers.anyMap()))
+                .thenThrow(new IllegalStateException("AI 返回内容为空，局后锐评生成失败"));
+
+        mockMvc.perform(post("/api/matches")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(fleetRequest(9100000005L))))
+                .andExpect(status().isOk());
+
+        // 图照发；文本是缺席提示
+        verify(qqBotClient).sendGroupImageMessage(eq("GROUP-IT"), any(byte[].class));
+        ArgumentCaptor<String> tip = ArgumentCaptor.forClass(String.class);
+        verify(qqBotClient).sendGroupTextMessage(eq("GROUP-IT"), tip.capture());
+        assertThat(tip.getValue()).contains("缺席");
+
+        Match saved = matchMapper.selectOne(new QueryWrapper<Match>().eq("game_id", 9100000005L));
+        assertThat(saved.getPushStatus()).isEqualTo("AI_FAILED");
+        assertThat(saved.getPushImageAt()).isNotNull();
+        assertThat(saved.getPushCommentAt()).isNotNull();
     }
 
     /**
@@ -162,6 +198,8 @@ class PushBroadcastIntegrationTest {
     @Test
     void postSameFleetMatchTwice_broadcastsOnlyOnce() throws Exception {
         stubRoster();
+        when(postGameCommentService.generateComment(org.mockito.ArgumentMatchers.anyMap()))
+                .thenReturn("锐评");
         String body = objectMapper.writeValueAsString(fleetRequest(9100000002L));
 
         mockMvc.perform(post("/api/matches").contentType(MediaType.APPLICATION_JSON).content(body))
@@ -172,6 +210,8 @@ class PushBroadcastIntegrationTest {
         // 只发送一次
         verify(qqBotClient, org.mockito.Mockito.times(1))
                 .sendGroupImageMessage(eq("GROUP-IT"), any(byte[].class));
+        verify(qqBotClient, org.mockito.Mockito.times(1))
+                .sendGroupTextMessage(eq("GROUP-IT"), any(String.class));
     }
 
     /**

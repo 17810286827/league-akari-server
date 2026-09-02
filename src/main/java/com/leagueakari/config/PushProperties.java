@@ -38,6 +38,12 @@ public class PushProperties {
      */
     private int recentWindowMinutes = 30;
 
+    /**
+     * 局后锐评开关：false 时战报图发送后直接完成（SENT），
+     * 不触发 AI 生成、不发缺席提示（AI 不可用时的降级体验由 true 提供）
+     */
+    private boolean aiCommentEnabled = true;
+
     /** 配置是否齐备：开关之外还需要群与凭证都已填写 */
     public boolean isConfigured() {
         return groupOpenId != null && !groupOpenId.isBlank()

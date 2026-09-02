@@ -99,6 +99,9 @@ ai:
   weekly-max-tokens: 1536
   # 系统提示词文件（classpath 下，可直接编辑）
   prompt-file: ai/system-prompt.md
+  # 局后锐评提示词与输出上限（车队群视角、正文短，随局后播报发送）
+  post-game-prompt-file: ai/post-game-prompt.md
+  post-game-max-tokens: 1024
 
 push:
   # 局后播报（Post-Game Broadcast）：开黑局结束后自动向车队群推送战报

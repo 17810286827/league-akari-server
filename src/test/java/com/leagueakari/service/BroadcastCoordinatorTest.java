@@ -70,6 +70,9 @@ class BroadcastCoordinatorTest {
     @Mock
     private QqBotClient qqBotClient;
 
+    @Mock
+    private PostGameCommentService postGameCommentService;
+
     private PushProperties pushProperties;
 
     private TeamProperties teamProperties;
@@ -92,7 +95,7 @@ class BroadcastCoordinatorTest {
 
         coordinator = new BroadcastCoordinator(matchMapper, participantMapper, mvpMapper,
                 pushProperties, teamProperties, rosterService, gameDataService, qqBotClient,
-                new ReportImageRenderer(), FIXED_CLOCK, new ObjectMapper());
+                new ReportImageRenderer(), postGameCommentService, FIXED_CLOCK, new ObjectMapper());
     }
 
     /**
@@ -164,26 +167,29 @@ class BroadcastCoordinatorTest {
     }
 
     /**
-     * 用例：刚结束的车队局（状态 PENDING）→ 渲染战报图并发送图片消息，
-     * 状态先 CAS 为 PUSHING 再置 SENT（两次 update）
+     * 用例：刚结束的车队局（状态 PENDING）→ 渲染战报图发送 + 锐评文本补发，
+     * 状态推进：CAS(PUSHING) + SENT + comment 送达共三次 update
      */
     @Test
-    void maybeBroadcast_sendsImageAndMarksSentForFreshFleetGame() {
+    void maybeBroadcast_sendsImageAndCommentForFreshFleetGame() {
         stubCommon();
         stubNoAwards();
         when(gameDataService.championName(103)).thenReturn("阿狸");
         when(gameDataService.championName(11)).thenReturn("大师");
+        when(postGameCommentService.generateComment(any())).thenReturn("这把养鱼人把对面野区当自己家");
 
         coordinator.maybeBroadcast(2000000001L);
 
-        // 发送一次 PNG 战报图（PNG magic 头校验），内容为渲染产物不做字节级断言
+        // 第一条：PNG 战报图（PNG magic 头校验）
         ArgumentCaptor<byte[]> png = ArgumentCaptor.forClass(byte[].class);
         verify(qqBotClient).sendGroupImageMessage(eq("GROUP-1"), png.capture());
         assertThat(png.getValue())
                 .startsWith((byte) 0x89, (byte) 0x50, (byte) 0x4e, (byte) 0x47)
                 .isNotEmpty();
-        // 状态机：CAS(PUSHING) + SENT 共两次更新
-        verify(matchMapper, org.mockito.Mockito.times(2)).update(isNull(), any(Wrapper.class));
+        // 第二条：锐评文本补发
+        verify(qqBotClient).sendGroupTextMessage(eq("GROUP-1"), eq("这把养鱼人把对面野区当自己家"));
+        // 状态机：CAS(PUSHING) + SENT + comment 送达共三次更新
+        verify(matchMapper, org.mockito.Mockito.times(3)).update(isNull(), any(Wrapper.class));
     }
 
     /**
@@ -275,6 +281,46 @@ class BroadcastCoordinatorTest {
     }
 
     /**
+     * 用例：AI 锐评生成失败（重试耗尽）→ 图已送达，改发"AI 缺席提示"，
+     * 状态 AI_FAILED（用户诉求：AI 挂了群里也要有提示）
+     */
+    @Test
+    void maybeBroadcast_aiFailureSendsAbsenceTip() {
+        stubCommon();
+        stubNoAwards();
+        when(postGameCommentService.generateComment(any()))
+                .thenThrow(new IllegalStateException("AI 返回内容为空"));
+
+        coordinator.maybeBroadcast(2000000001L);
+
+        // 图正常发送；文本改为缺席提示
+        verify(qqBotClient).sendGroupImageMessage(eq("GROUP-1"), any(byte[].class));
+        ArgumentCaptor<String> tip = ArgumentCaptor.forClass(String.class);
+        verify(qqBotClient).sendGroupTextMessage(eq("GROUP-1"), tip.capture());
+        assertThat(tip.getValue()).contains("缺席");
+        // 状态：CAS + SENT + AI_FAILED 共三次更新
+        verify(matchMapper, org.mockito.Mockito.times(3)).update(isNull(), any(Wrapper.class));
+    }
+
+    /**
+     * 用例：锐评开关关闭 → 只发战报图，不触发 AI、不发缺席提示（SENT 即完成）
+     */
+    @Test
+    void maybeBroadcast_commentDisabledSendsImageOnly() {
+        pushProperties.setAiCommentEnabled(false);
+        stubCommon();
+        stubNoAwards();
+
+        coordinator.maybeBroadcast(2000000001L);
+
+        verify(qqBotClient).sendGroupImageMessage(eq("GROUP-1"), any(byte[].class));
+        verify(qqBotClient, never()).sendGroupTextMessage(any(), any());
+        verify(postGameCommentService, never()).generateComment(any());
+        // 状态：CAS + SENT 共两次更新
+        verify(matchMapper, org.mockito.Mockito.times(2)).update(isNull(), any(Wrapper.class));
+    }
+
+    /**
      * 用例：车队局含本队 MVP 评选记录时仍正常渲染发送（称号落在图内行标签）
      */
     @Test
@@ -286,13 +332,14 @@ class BroadcastCoordinatorTest {
         mvp.setParticipantId(101L);
         mvp.setType("MVP");
         when(mvpMapper.selectList(any(QueryWrapper.class))).thenReturn(List.of(mvp));
+        when(postGameCommentService.generateComment(any())).thenReturn("锐评正文");
 
         coordinator.maybeBroadcast(2000000001L);
 
         ArgumentCaptor<byte[]> png = ArgumentCaptor.forClass(byte[].class);
         verify(qqBotClient).sendGroupImageMessage(eq("GROUP-1"), png.capture());
         assertThat(png.getValue()).isNotEmpty();
-        // 状态推进到 SENT
-        verify(matchMapper, org.mockito.Mockito.times(2)).update(isNull(), any(Wrapper.class));
+        // 状态推进：CAS + SENT + comment 送达共三次 update
+        verify(matchMapper, org.mockito.Mockito.times(3)).update(isNull(), any(Wrapper.class));
     }
 }

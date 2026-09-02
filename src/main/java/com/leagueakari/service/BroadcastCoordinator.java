@@ -56,6 +56,10 @@ public class BroadcastCoordinator {
     /** 错误原因落库上限（列 VARCHAR(512)） */
     private static final int ERROR_MAX_LENGTH = 500;
 
+    /** AI 全挂时的缺席提示（战报图已送达后补发，保证群里永远有交代） */
+    private static final String AI_ABSENCE_TIP =
+            "🤖 AI 评阅官本局不在线，锐评缺席一次——战报图已送达，欢迎人工复盘。";
+
     private final MatchMapper matchMapper;
     private final MatchParticipantMapper participantMapper;
     private final MatchMvpMapper mvpMapper;
@@ -66,6 +70,8 @@ public class BroadcastCoordinator {
     private final QqBotClient qqBotClient;
     /** 战报图渲染器：对局数据 → PNG 字节（Java2D，见 reportimage 包） */
     private final ReportImageRenderer reportImageRenderer;
+    /** 局后锐评：图发送后生成第二条文本消息；AI 不可用由本编排降级 */
+    private final PostGameCommentService postGameCommentService;
     private final Clock clock;
     /** JSON 解析：teams_json 资源快照与 stats_json 统计字段 */
     private final ObjectMapper objectMapper;
@@ -171,8 +177,9 @@ public class BroadcastCoordinator {
         }
 
         // 6. 组装战报图数据 → 渲染 PNG → 图片消息发送（图只管数据，不依赖 AI）
-        ReportImageData imageData = buildImageData(match, participants, memberByPuuid,
-                mvpMapper.selectList(new QueryWrapper<MatchMvp>().eq("match_id", match.getId())));
+        List<MatchMvp> awards = mvpMapper.selectList(
+                new QueryWrapper<MatchMvp>().eq("match_id", match.getId()));
+        ReportImageData imageData = buildImageData(match, participants, memberByPuuid, awards);
         byte[] png;
         try {
             png = reportImageRenderer.renderPng(imageData);
@@ -183,13 +190,133 @@ public class BroadcastCoordinator {
         }
         try {
             qqBotClient.sendGroupImageMessage(pushProperties.getGroupOpenId(), png);
+            // 图已送达：先落 SENT 与发送时间，锐评结果随后补状态（comment 阶段失败不重发图）
             markSent(gameId);
             log.info("Broadcast image sent: gameId={}, fleetMembers={}, pngBytes={}",
                     gameId, fleetCount, png.length);
         } catch (QqPushException e) {
             log.error("Broadcast send failed: gameId={}", gameId, e);
             markFailed(gameId, e.getMessage());
+            return;
         }
+
+        // 7. 局后锐评（第二条消息）：AI 生成失败重试耗尽后发缺席提示；
+        //    提示也失败则整局 FAILED，由桌面端补推整局重播
+        if (pushProperties.isAiCommentEnabled()) {
+            broadcastComment(gameId, match, participants, memberByPuuid, awards);
+        }
+    }
+
+    /** 局后锐评阶段：生成 → 发文本 → 记送达；AI/发送失败 → 缺席提示兜底 */
+    private void broadcastComment(Long gameId, Match match, List<MatchParticipant> participants,
+                                  Map<String, TeamRosterService.RosterMember> memberByPuuid,
+                                  List<MatchMvp> awards) {
+        String comment;
+        try {
+            comment = postGameCommentService.generateComment(
+                    buildCommentSummary(match, participants, memberByPuuid, awards));
+        } catch (Exception e) {
+            // AI 不可用（key 未配/接口失败/重试后空正文）：发缺席提示，不静默
+            log.warn("Post-game comment failed, send absence tip: gameId={}, err={}",
+                    gameId, e.getMessage());
+            sendAbsenceTip(gameId);
+            return;
+        }
+        try {
+            qqBotClient.sendGroupTextMessage(pushProperties.getGroupOpenId(), comment);
+            markCommentDelivered(gameId);
+            log.info("Post-game comment sent: gameId={}", gameId);
+        } catch (QqPushException e) {
+            log.error("Post-game comment send failed, send absence tip: gameId={}", gameId, e);
+            sendAbsenceTip(gameId);
+        }
+    }
+
+    /** 发送 AI 缺席提示：成功 → AI_FAILED（图已发、AI 缺席已提示）；失败 → FAILED 等补推 */
+    private void sendAbsenceTip(Long gameId) {
+        try {
+            qqBotClient.sendGroupTextMessage(pushProperties.getGroupOpenId(), AI_ABSENCE_TIP);
+            markAiAbsent(gameId);
+            log.info("AI absence tip sent: gameId={}", gameId);
+        } catch (QqPushException e) {
+            log.error("AI absence tip send failed: gameId={}", gameId, e);
+            markFailed(gameId, "AI 缺席提示发送失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 组装局后锐评输入摘要（轻量 JSON，只给"点名素材"不给逐人全量）：
+     * 胜负/比分/模式/车队成员（含称号）/焦点成员。英雄用中文名
+     */
+    private Map<String, Object> buildCommentSummary(Match match, List<MatchParticipant> participants,
+                                                    Map<String, TeamRosterService.RosterMember> memberByPuuid,
+                                                    List<MatchMvp> awards) {
+        Map<String, Object> summary = new LinkedHashMap<>();
+        boolean win = match.getWinnerTeamId() != null
+                && match.getWinnerTeamId() == mainTeamIdOf(match, participants, memberByPuuid);
+        summary.put("result", win ? "胜利" : "败北");
+        summary.put("meta", queueName(match.getQueueId()) + " · " + formatDuration(match.getGameDuration()));
+        summary.put("teamName", teamProperties.getName());
+
+        // 车队成员行（含称号：MVP / 尽力）
+        Map<Long, String> titleByParticipant = new HashMap<>();
+        for (MatchMvp award : awards) {
+            if (award.getParticipantId() == null || award.getType() == null) {
+                continue;
+            }
+            if ("MVP".equals(award.getType())) {
+                titleByParticipant.put(award.getParticipantId(), "MVP");
+            } else if ("ACE".equals(award.getType()) || "SVP".equals(award.getType())) {
+                titleByParticipant.put(award.getParticipantId(), "尽力");
+            }
+        }
+        List<Map<String, Object>> fleet = new ArrayList<>();
+        MatchParticipant best = null;
+        int bestKills = -1;
+        for (MatchParticipant p : participants) {
+            if (!memberByPuuid.containsKey(p.getPuuid())) {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("name", p.getSummonerName());
+            row.put("champion", safeChampionName(p.getChampionId()));
+            row.put("kda", (p.getKills() == null ? 0 : p.getKills()) + "/"
+                    + (p.getDeaths() == null ? 0 : p.getDeaths()) + "/"
+                    + (p.getAssists() == null ? 0 : p.getAssists()));
+            String title = titleByParticipant.get(p.getId());
+            if (title != null) {
+                row.put("title", title);
+            }
+            fleet.add(row);
+            int kills = p.getKills() == null ? 0 : p.getKills();
+            if (kills > bestKills) {
+                bestKills = kills;
+                best = p;
+            }
+        }
+        summary.put("fleet", fleet);
+        // 焦点：车队内带称号者优先，否则击杀最高者
+        if (best != null) {
+            summary.put("hero", Map.of("name", best.getSummonerName(),
+                    "champion", safeChampionName(best.getChampionId()),
+                    "kda", best.getKills() + "/" + best.getDeaths() + "/" + best.getAssists()));
+        }
+        return summary;
+    }
+
+    /** 车队主队判定（与 buildImageData 同口径）：车队成员多数所在队伍 */
+    private int mainTeamIdOf(Match match, List<MatchParticipant> participants,
+                             Map<String, TeamRosterService.RosterMember> memberByPuuid) {
+        Map<Integer, Long> teamCount = new LinkedHashMap<>();
+        for (MatchParticipant p : participants) {
+            if (memberByPuuid.containsKey(p.getPuuid()) && p.getTeamId() != null) {
+                teamCount.merge(p.getTeamId(), 1L, Long::sum);
+            }
+        }
+        return teamCount.entrySet().stream()
+                .max(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey)
+                .orElse(match.getWinnerTeamId() == null ? 100 : match.getWinnerTeamId());
     }
 
     /** 推送成功：状态 SENT + 战报消息发送时间 */
@@ -209,6 +336,21 @@ public class BroadcastCoordinator {
         matchMapper.update(null, new UpdateWrapper<Match>()
                 .set("push_status", STATUS_FAILED)
                 .set("push_error", detail)
+                .eq("game_id", gameId));
+    }
+
+    /** 锐评文本已送达：补记发送时间（状态保持 SENT） */
+    private void markCommentDelivered(Long gameId) {
+        matchMapper.update(null, new UpdateWrapper<Match>()
+                .set("push_comment_at", LocalDateTime.now())
+                .eq("game_id", gameId));
+    }
+
+    /** AI 缺席：状态 AI_FAILED（图已发、缺席提示已发）+ 提示发送时间 */
+    private void markAiAbsent(Long gameId) {
+        matchMapper.update(null, new UpdateWrapper<Match>()
+                .set("push_status", STATUS_AI_FAILED)
+                .set("push_comment_at", LocalDateTime.now())
                 .eq("game_id", gameId));
     }
 
