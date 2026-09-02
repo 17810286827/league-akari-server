@@ -3,7 +3,6 @@ package com.leagueakari.qqbot;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.config.PushProperties;
 import jakarta.annotation.PreDestroy;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -31,7 +30,6 @@ import java.util.concurrent.TimeUnit;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class QqEventWsClient {
 
     /** 群相关事件订阅位（GROUP_AND_C2C_EVENT）：官方文档 intents 位定义 */
@@ -45,12 +43,11 @@ public class QqEventWsClient {
     private final QqEventDispatcher dispatcher;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    @Value("${push.ws-enabled:false}")
-    private boolean wsEnabled;
+    /** WS 事件通道开关（默认关闭，联调核对协议后开启） */
+    private final boolean wsEnabled;
 
     /** 事件网关地址（官方域名统一后为 api.bot.qq.com；沙箱/版本差异可覆盖） */
-    @Value("${push.ws-url:wss://api.bot.qq.com/websocket}")
-    private String wsUrl;
+    private final String wsUrl;
 
     /** 心跳调度（daemon）：hello 帧给出间隔后启动 */
     private final ScheduledExecutorService heartbeatScheduler =
@@ -63,21 +60,37 @@ public class QqEventWsClient {
     private volatile boolean running;
     private volatile WebSocket currentSocket;
 
+    public QqEventWsClient(PushProperties pushProperties, QqEventDispatcher dispatcher,
+                           @Value("${push.ws-enabled:false}") boolean wsEnabled,
+                           @Value("${push.ws-url:wss://api.bot.qq.com/websocket}") String wsUrl) {
+        this.pushProperties = pushProperties;
+        this.dispatcher = dispatcher;
+        this.wsEnabled = wsEnabled;
+        this.wsUrl = wsUrl;
+    }
+
     /** 应用就绪后启动连接（enabled=false 不连接，事件通道纯可选能力） */
     @EventListener(ApplicationReadyEvent.class)
     public void start() {
-        if (!wsEnabled) {
-            log.info("QQ WS event channel disabled (push.ws-enabled=false)");
-            return;
-        }
-        if (!pushProperties.isConfigured()) {
-            log.warn("QQ WS event channel skipped: push 配置不齐（group/appId/secret）");
+        if (!canConnect()) {
+            log.warn("QQ WS event channel skipped: push.ws-enabled=false 或机器人凭证未配置（appId/secret）");
             return;
         }
         running = true;
         Thread connector = new Thread(this::connectLoop, "qq-ws-connector");
         connector.setDaemon(true);
         connector.start();
+    }
+
+    /**
+     * WS 连接前置判定：仅需开关与机器人凭证（appId/secret）。
+     * 注意：不要求 push.group-open-id——群 openid 正是靠本通道的入群事件获取的
+     * （鸡生蛋：若把 openid 纳入前置，将永远无法通过事件拿到它）
+     */
+    boolean canConnect() {
+        return wsEnabled
+                && pushProperties.getAppId() != null && !pushProperties.getAppId().isBlank()
+                && pushProperties.getClientSecret() != null && !pushProperties.getClientSecret().isBlank();
     }
 
     @PreDestroy
