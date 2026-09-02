@@ -92,9 +92,10 @@ class QqBotClientTest {
         // 凭证体：appId + clientSecret
         String tokenBody = EntityUtils.toString(captor.getAllValues().get(0).getEntity(), StandardCharsets.UTF_8);
         assertThat(tokenBody).contains("\"appId\":\"app-1\"").contains("\"clientSecret\":\"secret-1\"");
-        // 消息体：msg_type=0 纯文本 + Authorization Bearer
+        // 消息体：msg_type=0 纯文本 + 鉴权头（官方 SDK 格式：QQBot + access_token + X-Union-Appid）
         HttpPost msgPost = captor.getAllValues().get(1);
-        assertThat(msgPost.getFirstHeader("Authorization").getValue()).isEqualTo("Bearer tok-abc");
+        assertThat(msgPost.getFirstHeader("Authorization").getValue()).isEqualTo("QQBot tok-abc");
+        assertThat(msgPost.getFirstHeader("X-Union-Appid").getValue()).isEqualTo("app-1");
         assertThat(msgPost.getFirstHeader("Content-Type").getValue()).contains("application/json");
         String msgBody = EntityUtils.toString(msgPost.getEntity(), StandardCharsets.UTF_8);
         assertThat(msgBody).contains("\"msg_type\":0").contains("\"content\":\"本局战报……\"");

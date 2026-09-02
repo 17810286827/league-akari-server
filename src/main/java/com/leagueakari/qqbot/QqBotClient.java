@@ -209,13 +209,15 @@ public class QqBotClient {
     }
 
     /**
-     * 统一 JSON POST 组装：设置 Content-Type/Bearer 与 JSON 实体后执行。
-     * 所有业务 POST（文本/凭证/上传各步）共用，避免各调用点重复 setEntity
+     * 统一 JSON POST 组装：设置 Content-Type、鉴权头与 JSON 实体后执行。
+     * 鉴权头按官方 SDK（botpy）：Authorization = "QQBot " + access_token（非 Bearer），
+     * 另附 X-Union-Appid 头；凭证换取请求本身不带这些头
      */
     private JsonNode postJson(String url, String token, Map<String, Object> payload, String action) {
         HttpPost post = new HttpPost(url);
         post.setHeader("Content-Type", ContentType.APPLICATION_JSON.toString());
-        post.setHeader("Authorization", "Bearer " + token);
+        post.setHeader("Authorization", "QQBot " + token);
+        post.setHeader("X-Union-Appid", pushProperties.getAppId());
         try {
             post.setEntity(new StringEntity(objectMapper.writeValueAsString(payload),
                     ContentType.APPLICATION_JSON));
