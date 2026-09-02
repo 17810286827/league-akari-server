@@ -49,10 +49,12 @@ public class PostGameCommentService {
     public PostGameCommentService(
             @Value("${ai.base-url}") String baseUrl,
             @Value("${ai.api-key:}") String apiKey,
-            @Value("${ai.model:mimo-v2.5}") String model,
+            // 局后锐评独立模型：短任务用 deepseek-v4-flash（thinking=false 真正生效，
+            // 直出正文首 token ~1s；mimo-v2.5 无视该参数仍先推理 ~60s，实测差 20 倍）
+            @Value("${ai.post-game-model:${ai.model:mimo-v2.5}}") String model,
             @Value("${ai.post-game-prompt-file:ai/post-game-prompt.md}") String promptFile,
             @Value("${ai.temperature:1.0}") double temperature,
-            @Value("${ai.post-game-max-tokens:1024}") int maxTokens,
+            @Value("${ai.post-game-max-tokens:2048}") int maxTokens,
             CloseableHttpClient httpClient,
             ObjectMapper objectMapper) {
         this.baseUrl = baseUrl;

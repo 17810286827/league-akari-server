@@ -101,7 +101,10 @@ ai:
   prompt-file: ai/system-prompt.md
   # 局后锐评提示词与输出上限（车队群视角、正文短，随局后播报发送）
   post-game-prompt-file: ai/post-game-prompt.md
-  post-game-max-tokens: 1024
+  post-game-max-tokens: 2048
+  # 局后锐评独立模型：短任务用 deepseek-v4-flash——thinking=false 真正生效（首 token ~1s）；
+  # mimo-v2.5 无视该参数仍先推理 ~60s（实测差 20 倍），只适合长分析任务
+  post-game-model: deepseek-v4-flash
 
 push:
   # 局后播报（Post-Game Broadcast）：开黑局结束后自动向车队群推送战报
