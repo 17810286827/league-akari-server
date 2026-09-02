@@ -15,6 +15,13 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       RIOT_API_KEY: ${RIOT_API_KEY:-}
       AI_API_KEY: ${AI_API_KEY:-}
+      # 局后播报（QQ 官方开放平台机器人）：默认关闭，配置齐备后开启
+      PUSH_ENABLED: ${PUSH_ENABLED:-false}
+      PUSH_GROUP_OPEN_ID: ${PUSH_GROUP_OPEN_ID:-}
+      QQ_BOT_APP_ID: ${QQ_BOT_APP_ID:-}
+      QQ_BOT_CLIENT_SECRET: ${QQ_BOT_CLIENT_SECRET:-}
+      PUSH_AI_COMMENT_ENABLED: ${PUSH_AI_COMMENT_ENABLED:-true}
+      PUSH_WS_ENABLED: ${PUSH_WS_ENABLED:-false}
       JAVA_OPTS: ${JAVA_OPTS:-}
     extra_hosts:
       # Docker 默认 bridge 网络下，通过宿主机映射端口访问已有 lol-mysql。

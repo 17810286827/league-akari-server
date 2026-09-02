@@ -34,8 +34,34 @@ DB_USERNAME=your_database_user
 DB_PASSWORD=replace_with_strong_password
 RIOT_API_KEY=
 AI_API_KEY=
+# 局后播报（QQ 官方开放平台机器人，默认关闭；设计见 docs/adr/0003 与 docs/spec/post-game-broadcast.md）
+PUSH_ENABLED=false
+# 车队群 openid（非群号）：机器人被拉入群后服务端 WS 事件日志会提示，填入后启用
+PUSH_GROUP_OPEN_ID=
+# 机器人凭证（q.qq.com 应用管理）
+QQ_BOT_APP_ID=
+QQ_BOT_CLIENT_SECRET=
+# 局后锐评开关：false = 只发战报图不调 AI（AI 不可用但想开图时用）
+PUSH_AI_COMMENT_ENABLED=true
+# 事件通道（WS）开关：用于收"机器人入群/退群"事件提示 openid 与保活，默认关闭
+PUSH_WS_ENABLED=false
 JAVA_OPTS=-XX:+UseG1GC -XX:MaxRAMPercentage=75.0 -Duser.timezone=Asia/Shanghai
 ```
+
+### 局后播报上线检查清单
+
+开黑局打完后自动推送战报图 + AI 锐评到车队群，上线顺序：
+
+1. 开放平台（q.qq.com）完成个人实名认证，机器人昵称/头像/简介过审；
+2. 管理端配置服务范围（QQ 群）、事件方式 WebSocket、IP 白名单为云服务器出口 IP；
+3. 群主在 QQ 客户端把机器人拉进车队群；开启 `PUSH_WS_ENABLED=true` 后从日志
+   （`机器人已加入群 group_openid=...`）取得群 openid，填入 `PUSH_GROUP_OPEN_ID`；
+4. 测试群实测一条主动消息可达（群侧"接收主动消息"开关关闭会导致发送失败落 FAILED）；
+5. 分阶段放量：先 `PUSH_ENABLED=false` 部署观察落库 → 只发图
+   （`PUSH_ENABLED=true` + `PUSH_AI_COMMENT_ENABLED=false`）→ 全开。
+
+失败语义：发送失败落 `match.push_status=FAILED`，桌面端每 2 分钟补推错过的对局，
+同一局会自动重试，无需人工介入；AI 生成失败会向群里发"缺席提示"。
 
 ```bash
 chown deploy:deploy /opt/league-akari/config/.env

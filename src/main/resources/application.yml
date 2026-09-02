@@ -116,6 +116,8 @@ push:
   # 判定时间窗（分钟）：落库时刻距估算的对局结束时刻（game_creation + game_duration*1000）
   # 超过该窗口视为旧局（backfill/补推历史），不播报
   recent-window-minutes: 30
+  # 局后锐评开关：false = 只发战报图（不调 AI、不发缺席提示）
+  ai-comment-enabled: ${PUSH_AI_COMMENT_ENABLED:true}
 
 scoring:
   # 评分算法版本号：落库时写入 match_mvp.scoring_version，查询时版本不匹配会实时重算
