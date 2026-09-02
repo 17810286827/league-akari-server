@@ -89,7 +89,7 @@ jobs:
       # 服务器只需 compose 编排与部署脚本。传整个仓库会把 .git 与内置字体（~65MB）
       # 也拉上服务器，慢带宽下 scp 长时间无进度（曾卡 10 分钟+）。
       - name: 上传部署文件到云服务器
-        uses: appleboy/scp-action@v0.1.9
+        uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.SERVER_HOST }}
           port: ${{ secrets.SERVER_PORT }}
