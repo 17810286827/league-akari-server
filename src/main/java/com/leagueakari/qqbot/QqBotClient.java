@@ -278,8 +278,11 @@ public class QqBotClient {
      * @throws QqPushException 凭证未配置或换取失败
      */
     public String obtainAccessToken() {
-        if (!pushProperties.isConfigured()) {
-            throw new QqPushException("QQ 机器人凭证未配置（push." + pushProperties.missingItems() + "）");
+        // 仅需机器人凭证（appId/secret）：不检查 group-open-id——群 openid 是推送目标，
+        // 与凭证换取无关（曾误用 isConfigured() 把 openid 纳入，导致 WS identify 永远被拒）
+        if (pushProperties.getAppId() == null || pushProperties.getAppId().isBlank()
+                || pushProperties.getClientSecret() == null || pushProperties.getClientSecret().isBlank()) {
+            throw new QqPushException("QQ 机器人凭证未配置（push.app-id / push.client-secret）");
         }
         TokenCache cached = tokenCache;
         if (cached != null && cached.expiresAtMs() - 60_000 > System.currentTimeMillis()) {
