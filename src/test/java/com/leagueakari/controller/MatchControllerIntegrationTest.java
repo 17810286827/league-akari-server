@@ -1,8 +1,11 @@
 package com.leagueakari.controller;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.dto.ParticipantSyncRequest;
+import com.leagueakari.entity.Match;
+import com.leagueakari.mapper.MatchMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -15,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -35,6 +39,9 @@ class MatchControllerIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private MatchMapper matchMapper;
 
     /**
      * 构造合法的对局同步请求：1 名本玩家（puuid 与 selfPuuid 一致）+ 4 名同队队友，
@@ -165,6 +172,33 @@ class MatchControllerIntegrationTest {
         mockMvc.perform(post("/api/matches").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
+    }
+
+    /**
+     * 用例：新对局首次入库后 push_status 初始为 PENDING（局后播报待触发）；
+     * 重复推送幂等跳过，不会重置状态列
+     */
+    @Test
+    void postMatch_newMatchInitializesPushStatusPending() throws Exception {
+        long gameId = 9000000004L;
+        String body = objectMapper.writeValueAsString(buildRequest(gameId));
+
+        // 首次推送落库
+        mockMvc.perform(post("/api/matches").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+
+        // 状态列契约：新局初始 PENDING，其余播报字段为空
+        Match saved = matchMapper.selectOne(new QueryWrapper<Match>().eq("game_id", gameId));
+        assertThat(saved).isNotNull();
+        assertThat(saved.getPushStatus()).isEqualTo("PENDING");
+        assertThat(saved.getPushImageAt()).isNull();
+        assertThat(saved.getPushCommentAt()).isNull();
+
+        // 重复推送后状态不被重置（幂等跳过路径不触碰状态列）
+        mockMvc.perform(post("/api/matches").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        Match afterDup = matchMapper.selectOne(new QueryWrapper<Match>().eq("game_id", gameId));
+        assertThat(afterDup.getPushStatus()).isEqualTo("PENDING");
     }
 
     /**

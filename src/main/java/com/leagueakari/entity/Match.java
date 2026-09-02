@@ -62,4 +62,16 @@ public class Match {
 
     /** 落库时间 */
     private LocalDateTime createdAt;
+
+    /** 局后播报状态：PENDING 待推送 / SENT 已送达 / AI_FAILED 图已发 AI 缺席 / FAILED 失败待补推（V7 新增） */
+    private String pushStatus;
+
+    /** 战报图发送时间（V7 新增） */
+    private LocalDateTime pushImageAt;
+
+    /** 局后锐评（或 AI 缺席提示）发送时间（V7 新增） */
+    private LocalDateTime pushCommentAt;
+
+    /** 最近一次失败原因（V7 新增） */
+    private String pushError;
 }

@@ -52,9 +52,12 @@ public class MatchService {
      * 幂等保存对局（先查后插）：
      * 1. 按 game_id 查重，已存在则直接跳过，避免重复入库；
      * 2. 不存在则写入 match 主表，并逐条写入参赛者明细。
+     *
+     * @return 本请求是否完成首次插入（true=新对局落库，false=已存在或并发兜底）。
+     *         局后播报等"仅首次入库触发"的下游以此为依据，避免同一局重复触发。
      */
     @Transactional
-    public void saveMatch(MatchSyncRequest request) {
+    public boolean saveMatch(MatchSyncRequest request) {
         // 幂等检查：先查后插，以 game_id 为唯一键判断该对局是否已同步
         Long gameId = request.getGameId();
         Long exists = matchMapper.selectCount(
@@ -62,7 +65,7 @@ public class MatchService {
         // 对局已存在：直接返回，不产生任何写入（调用方无需感知）
         if (exists != null && exists > 0) {
             log.info("Match already exists, skip sync: gameId={}", gameId);
-            return;
+            return false;
         }
 
         // 组装 match 主表记录：字段与实体一一对应，teams 整体序列化为 teams_json
@@ -89,7 +92,7 @@ public class MatchService {
             // 并发兜底：两个请求同时通过"先查后插"的幂等检查，后插入者撞 game_id 唯一键。
             // 异常已在方法内吞掉、不向事务边界传播，事务不会标记回滚，视为幂等成功直接返回
             log.info("Match concurrently inserted, skip sync: gameId={}", gameId);
-            return;
+            return false;
         }
 
         // 逐条组装参赛者：直显字段缺失时写 0，stats 全量透传存入 stats_json
@@ -125,6 +128,8 @@ public class MatchService {
         matchMvpService.collectBaselines(match, savedParticipants);
 
         log.info("Match saved: gameId={}, participants={}", gameId, request.getParticipants().size());
+        // 首次插入完成：返回 true，供 controller 编排"仅首插触发"的下游（如局后播报判定）
+        return true;
     }
 
     /**

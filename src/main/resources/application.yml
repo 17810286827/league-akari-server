@@ -100,6 +100,20 @@ ai:
   # 系统提示词文件（classpath 下，可直接编辑）
   prompt-file: ai/system-prompt.md
 
+push:
+  # 局后播报（Post-Game Broadcast）：开黑局结束后自动向车队群推送战报
+  # （QQ 官方开放平台机器人通道，决策见 docs/adr/0003；默认关闭，配置齐备后打开）
+  enabled: ${PUSH_ENABLED:false}
+  # 车队群 openid（官方平台下发的群标识，非群号）：机器人入群后从 GROUP_ADD_ROBOT
+  # 事件日志取得后填入（T5 WS 事件通道上线后日志自动给出）
+  group-open-id: ${PUSH_GROUP_OPEN_ID:}
+  # 机器人凭证（q.qq.com 应用管理）
+  app-id: ${QQ_BOT_APP_ID:}
+  client-secret: ${QQ_BOT_CLIENT_SECRET:}
+  # 判定时间窗（分钟）：落库时刻距估算的对局结束时刻（game_creation + game_duration*1000）
+  # 超过该窗口视为旧局（backfill/补推历史），不播报
+  recent-window-minutes: 30
+
 scoring:
   # 评分算法版本号：落库时写入 match_mvp.scoring_version，查询时版本不匹配会实时重算
   # v3：MVP/ACE 评选改按 op_score 取（含多杀加分，与界面展示评分一致）

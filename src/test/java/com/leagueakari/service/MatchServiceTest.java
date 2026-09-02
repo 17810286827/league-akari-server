@@ -21,6 +21,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -538,6 +539,57 @@ class MatchServiceTest {
         assertThat(item.getSelf().getSummonerName()).isEqualTo("OtherPlayer");
         assertThat(item.getSelf().getChampionId()).isEqualTo(57);
         assertThat(item.getSelf().getKills()).isEqualTo(3);
+    }
+
+    /**
+     * 用例：game_id 首次插入成功时 saveMatch 返回 true（调用方据此触发局后播报判定）
+     */
+    @Test
+    void saveMatch_returnsTrueWhenFirstInserted() {
+        // 模拟查重结果：0 表示该对局不存在，走首次插入路径
+        when(matchMapper.selectCount(any())).thenReturn(0L);
+
+        // 执行被测方法：幂等保存，返回是否首插
+        boolean created = matchService.saveMatch(buildRequest(1000000020L));
+
+        // 首插语义：返回 true，且照常触发 MVP 评选
+        assertThat(created).isTrue();
+        verify(matchMvpService).evaluateAndSave(any(), any());
+    }
+
+    /**
+     * 用例：game_id 已存在（幂等跳过）时 saveMatch 返回 false，不触发任何下游
+     */
+    @Test
+    void saveMatch_returnsFalseWhenAlreadyExists() {
+        // 模拟查重结果：1 表示该对局已入库
+        when(matchMapper.selectCount(any())).thenReturn(1L);
+
+        // 执行被测方法：幂等保存
+        boolean created = matchService.saveMatch(buildRequest(1000000021L));
+
+        // 幂等语义：返回 false，不产生写入
+        assertThat(created).isFalse();
+        verify(matchMapper, never()).insert(any(Match.class));
+    }
+
+    /**
+     * 用例：并发穿透撞唯一键（DuplicateKeyException 被吞掉）时 saveMatch 返回 false，
+     * 与幂等语义一致——该局并非本请求首插，不应触发局后播报
+     */
+    @Test
+    void saveMatch_returnsFalseWhenConcurrentDuplicate() {
+        // 模拟查重结果：0 通过幂等检查，但 insert 撞 game_id 唯一键（并发另一请求已插入）
+        when(matchMapper.selectCount(any())).thenReturn(0L);
+        doThrow(new DuplicateKeyException("duplicate game_id")).when(matchMapper).insert(any(Match.class));
+
+        // 执行被测方法：幂等保存，异常被吞掉按幂等成功返回
+        boolean created = matchService.saveMatch(buildRequest(1000000022L));
+
+        // 并发兜底语义：返回 false（非本请求首插），且不再写参与者/触发评选
+        assertThat(created).isFalse();
+        verify(matchParticipantMapper, never()).insert(any(MatchParticipant.class));
+        verify(matchMvpService, never()).evaluateAndSave(any(), any());
     }
 
     /**
