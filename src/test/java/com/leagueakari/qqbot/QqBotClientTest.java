@@ -172,12 +172,12 @@ class QqBotClientTest {
         // 六步响应依次就位（先构造再打桩，避免嵌套 stubbing）
         CloseableHttpResponse tokenResp = tokenResponse("tok-img");
         CloseableHttpResponse prepareResp = jsonResponse(200,
-                "{\"upload_id\":\"up-1\",\"block_size\":1048576,"
-                        + "\"upload_urls\":[\"https://presigned.example.com/part-1\"]}");
+                "{\"data\":{\"upload_id\":\"up-1\",\"block_size\":1048576,"
+                        + "\"parts\":[{\"index\":0,\"presigned_url\":\"https://presigned.example.com/part-1\"}]}}");
         CloseableHttpResponse putResp = statusOnlyResponse(200);
         CloseableHttpResponse finishResp = okResponse();
         CloseableHttpResponse filesResp = jsonResponse(200,
-                "{\"file_info\":\"fi-1\",\"ttl\":300}");
+                "{\"data\":{\"file_info\":\"fi-1\",\"file_uuid\":\"fu-1\",\"ttl\":300}}");
         CloseableHttpResponse msgResp = okResponse();
         when(httpClient.execute(any(org.apache.hc.client5.http.classic.methods.HttpUriRequestBase.class)))
                 .thenReturn(tokenResp, prepareResp, putResp, finishResp, filesResp, msgResp);
@@ -201,10 +201,18 @@ class QqBotClientTest {
         assertThat(urls.get(3)).isEqualTo("https://api.bot.qq.com/v2/groups/GROUP-1/upload_part_finish");
         assertThat(urls.get(4)).isEqualTo("https://api.bot.qq.com/v2/groups/GROUP-1/files");
         assertThat(urls.get(5)).isEqualTo("https://api.bot.qq.com/v2/groups/GROUP-1/messages");
-        // 预上传体含大小与摘要；最终消息体为 msg_type=7 + file_info
+        // 预上传体含类型/大小（字符串）与摘要；单片确认含 part_index；
+        // 合并体含 srv_send_msg；最终消息体为 msg_type=7 + file_info
         String prepareBody = EntityUtils.toString(captor.getAllValues().get(1).getEntity(),
                 StandardCharsets.UTF_8);
-        assertThat(prepareBody).contains("\"file_size\":3").contains("\"file_name\":\"report.png\"");
+        assertThat(prepareBody).contains("\"file_type\":1").contains("\"file_size\":\"3\"")
+                .contains("\"file_name\":\"report.png\"");
+        String finishBody = EntityUtils.toString(captor.getAllValues().get(3).getEntity(),
+                StandardCharsets.UTF_8);
+        assertThat(finishBody).contains("\"part_index\":0").contains("\"upload_id\":\"up-1\"");
+        String filesBody = EntityUtils.toString(captor.getAllValues().get(4).getEntity(),
+                StandardCharsets.UTF_8);
+        assertThat(filesBody).contains("\"srv_send_msg\":false").contains("\"file_type\":1");
         String msgBody = EntityUtils.toString(captor.getAllValues().get(5).getEntity(),
                 StandardCharsets.UTF_8);
         assertThat(msgBody).contains("\"msg_type\":7").contains("\"file_info\":\"fi-1\"");

@@ -87,34 +87,52 @@ public class QqBotClient {
      * @param pngBytes    战报图 PNG 字节
      * @throws QqPushException 任一步非 200 / 响应结构异常
      */
+    /**
+     * 向车队群发送图片消息（msg_type=7 富媒体）：
+     * 服务端本地 PNG 按官方分片上传协议换取 file_info，再以媒体消息引用发送。
+     * <p>协议（与生产级实现 AstrBot 对齐）：
+     * upload_prepare（file_type/file_size/file_name/md5/sha1/md5_10m）
+     * → 逐片 PUT 预签名 URL（COS）→ 每片 POST upload_part_finish 确认
+     * → POST files 合并取 {file_uuid, file_info} → messages msg_type=7。
+     * 战报图单张远小于分片上限，实际走单分片路径。</p>
+     *
+     * @param groupOpenId 目标群 openid
+     * @param pngBytes    战报图 PNG 字节
+     * @throws QqPushException 任一步非 200 / 响应结构异常
+     */
     public void sendGroupImageMessage(String groupOpenId, byte[] pngBytes) {
         if (groupOpenId == null || groupOpenId.isBlank()) {
             throw new QqPushException("QQ 群 openid 未配置，无法推送");
         }
         String token = obtainAccessToken();
         UploadSession session = prepareUpload(token, groupOpenId, pngBytes);
-        uploadParts(token, session, pngBytes);
-        finishUpload(token, groupOpenId, session.uploadId());
-        String fileInfo = registerFile(token, groupOpenId, session.uploadId());
+        uploadParts(token, groupOpenId, session, pngBytes);
+        String fileInfo = mergeFile(token, groupOpenId, session);
         sendMediaMessage(token, groupOpenId, fileInfo);
     }
 
-    /** 上传会话：prepare 响应的一次性状态（upload_id + 预签名 URL 列表 + 分片大小） */
-    private record UploadSession(String uploadId, List<String> urls, int blockSize) {}
+    /** 单个待传分片：服务端下发的序号与预签名 URL */
+    private record UploadPart(int index, String presignedUrl) {}
+
+    /** 上传会话：prepare 响应的一次性状态 */
+    private record UploadSession(String uploadId, int blockSize, List<UploadPart> parts) {}
+
+    /** md5_10m 口径：前 10_002_432 字节的 MD5（官方分片规则，非整 10MB；与 AstrBot 对齐） */
+    private static final int MD5_10M_BYTES = 10_002_432;
 
     /**
-     * 第 1 步：预上传申请（file_size/file_name/md5/sha1/md5_10m）。
-     * 响应含 upload_id、block_size 与各分片预签名 URL（字段名官方各版本有差异，
-     * upload_urls/urls 双路径宽松兼容），联调异常时错误信息携带响应体便于核对
+     * 第 1 步：预上传申请。请求体含 file_type（1=图片）与 file_size（字符串），
+     * 响应可能带 data 包装，分片数组字段为 parts（每项 presigned_url + index）
      */
     private UploadSession prepareUpload(String token, String groupOpenId, byte[] bytes) {
         String md5 = digest("MD5", bytes);
         String sha1 = digest("SHA-1", bytes);
-        // md5_10m：前 10MB 的 MD5（分片规则；战报图小于 10MB 时即整文件）
-        String md5_10m = bytes.length <= 10 * 1024 * 1024 ? md5 : digest("MD5", head(bytes, 10 * 1024 * 1024));
+        // md5_10m：前 10_002_432 字节的 MD5（文件更小时即整文件 md5）
+        String md5_10m = bytes.length <= MD5_10M_BYTES ? md5 : digest("MD5", head(bytes, MD5_10M_BYTES));
 
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("file_size", bytes.length);
+        payload.put("file_type", 1); // 1=图片
+        payload.put("file_size", String.valueOf(bytes.length)); // 官方要求字符串
         payload.put("file_name", "report.png");
         payload.put("md5", md5);
         payload.put("sha1", sha1);
@@ -122,49 +140,53 @@ public class QqBotClient {
 
         JsonNode resp = postJson(API_BASE + "/v2/groups/" + groupOpenId + "/upload_prepare",
                 token, payload, "图片预上传");
-        String uploadId = resp.path("upload_id").asText("");
-        if (uploadId.isBlank()) {
-            throw new QqPushException("QQ 图片预上传响应缺少 upload_id: " + resp);
+        JsonNode body = resp.has("data") && resp.get("data").isObject() ? resp.get("data") : resp;
+        String uploadId = body.path("upload_id").asText("");
+        int blockSize = body.path("block_size").asInt(1024 * 1024);
+        JsonNode partsNode = body.get("parts");
+        List<UploadPart> parts = new ArrayList<>();
+        if (partsNode != null && partsNode.isArray()) {
+            for (JsonNode part : partsNode) {
+                String url = part.path("presigned_url").asText("");
+                if (!url.isBlank() && part.hasNonNull("index")) {
+                    parts.add(new UploadPart(part.path("index").asInt(), url));
+                }
+            }
         }
-        // 预签名 URL：双路径兼容（upload_urls 为主，urls 兜底），缺失时后续 PUT 步骤会报错
-        JsonNode urlsNode = resp.has("upload_urls") ? resp.get("upload_urls")
-                : resp.get("urls");
-        List<String> urls = new ArrayList<>();
-        if (urlsNode != null && urlsNode.isArray()) {
-            urlsNode.forEach(n -> urls.add(n.asText()));
+        if (uploadId.isBlank() || parts.isEmpty()) {
+            throw new QqPushException("QQ 图片预上传响应不完整（缺 upload_id 或 parts）: " + resp);
         }
-        int blockSize = resp.path("block_size").asInt(1024 * 1024);
-        log.info("QQ upload prepared: size={}, uploadId={}, parts={}", bytes.length, uploadId, urls.size());
-        return new UploadSession(uploadId, urls, blockSize);
+        log.info("QQ upload prepared: size={}, uploadId={}, parts={}, blockSize={}",
+                bytes.length, uploadId, parts.size(), blockSize);
+        return new UploadSession(uploadId, blockSize, parts);
     }
 
     /**
-     * 第 2 步：分片 PUT 到预签名 URL。单分片（战报图实际场景）直接全量 PUT；
-     * 多分片按 block_size 切分逐片 PUT（防御实现）
+     * 第 2 步：逐片上传——PUT 预签名 URL 后每片单独 POST upload_part_finish 确认。
+     * 分片序号可能从 0 或 1 起（服务端下发为准），偏移按最小序号归一
      */
-    private void uploadParts(String token, UploadSession session, byte[] bytes) {
-        if (session.urls().isEmpty()) {
-            throw new QqPushException("QQ 图片预上传响应缺少预签名 URL，无法上传分片");
-        }
-        if (bytes.length <= session.blockSize()) {
-            putBytes(session.urls().get(0), bytes);
-            return;
-        }
-        for (int i = 0; i < session.urls().size(); i++) {
-            int from = i * session.blockSize();
-            int to = Math.min(bytes.length, from + session.blockSize());
-            putBytes(session.urls().get(i), java.util.Arrays.copyOfRange(bytes, from, to));
+    private void uploadParts(String token, String groupOpenId, UploadSession session, byte[] bytes) {
+        int minIndex = session.parts().stream().mapToInt(UploadPart::index).min().orElse(0);
+        for (UploadPart part : session.parts()) {
+            int offset = (part.index() - minIndex) * session.blockSize();
+            int length = Math.min(session.blockSize(), bytes.length - offset);
+            if (length <= 0) {
+                throw new QqPushException("QQ 上传分片越界: index=" + part.index());
+            }
+            byte[] partBytes = java.util.Arrays.copyOfRange(bytes, offset, offset + length);
+            putBytes(part.presignedUrl(), partBytes);
+            finishPart(token, groupOpenId, session.uploadId(), part.index(), length, partBytes);
         }
     }
 
-    /** PUT 字节到预签名 URL（分片上传；状态码非 200 抛错） */
+    /** PUT 分片字节到预签名 URL（COS 直传；状态码非 2xx 抛错） */
     private void putBytes(String url, byte[] data) {
         HttpPut put = new HttpPut(url);
         put.setHeader("Content-Type", ContentType.APPLICATION_OCTET_STREAM.toString());
         put.setEntity(new ByteArrayEntity(data, ContentType.APPLICATION_OCTET_STREAM));
         try (CloseableHttpResponse response = httpClient.execute(put)) {
             int status = response.getCode();
-            if (status != 200) {
+            if (status < 200 || status >= 300) {
                 String body = response.getEntity() != null
                         ? EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8) : "";
                 log.error("QQ upload part failed: status={}, body={}", status, body);
@@ -176,26 +198,37 @@ public class QqBotClient {
         }
     }
 
-    /** 第 3 步：分片确认（单分片场景直接确认 upload_id） */
-    private void finishUpload(String token, String groupOpenId, String uploadId) {
+    /** 单片确认：upload_part_finish（body 含 upload_id/part_index/block_size/md5） */
+    private void finishPart(String token, String groupOpenId, String uploadId,
+                            int partIndex, int partSize, byte[] partBytes) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("upload_id", uploadId);
+        payload.put("part_index", partIndex);
+        payload.put("block_size", String.valueOf(partSize));
+        payload.put("md5", digest("MD5", partBytes));
         postJson(API_BASE + "/v2/groups/" + groupOpenId + "/upload_part_finish",
                 token, payload, "图片分片确认");
     }
 
-    /** 第 4 步：files 合并注册，返回 file_info（ttl 300s） */
-    private String registerFile(String token, String groupOpenId, String uploadId) {
+    /**
+     * 第 3 步：files 合并注册，返回 file_info（ttl 300s 现传现用）。
+     * 请求体需带 file_type/srv_send_msg/file_name/upload_id
+     */
+    private String mergeFile(String token, String groupOpenId, UploadSession session) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("file_type", 1); // 1=图片
-        payload.put("upload_id", uploadId);
+        payload.put("srv_send_msg", false); // 仅注册不直接发送（消息由 msg_type=7 单独发）
+        payload.put("file_name", "report.png");
+        payload.put("upload_id", session.uploadId());
         JsonNode resp = postJson(API_BASE + "/v2/groups/" + groupOpenId + "/files",
-                token, payload, "图片注册");
-        String fileInfo = resp.path("file_info").asText("");
+                token, payload, "图片合并注册");
+        JsonNode body = resp.has("data") && resp.get("data").isObject() ? resp.get("data") : resp;
+        String fileInfo = body.path("file_info").asText("");
         if (fileInfo.isBlank()) {
-            throw new QqPushException("QQ 图片注册响应缺少 file_info: " + resp);
+            throw new QqPushException("QQ 图片合并响应缺少 file_info: " + resp);
         }
-        log.info("QQ file registered: ttl={}", resp.path("ttl").asText(""));
+        log.info("QQ file merged: file_uuid={}, ttl={}",
+                body.path("file_uuid").asText(""), body.path("ttl").asText(""));
         return fileInfo;
     }
 
