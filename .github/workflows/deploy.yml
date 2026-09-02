@@ -78,21 +78,26 @@ jobs:
     name: 通过 SSH 部署到云服务器
     needs: build-and-push
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
       - name: 检出本次提交
         uses: actions/checkout@v4
 
-      - name: 上传代码到云服务器
-        uses: appleboy/scp-action@v0.1.7
+      # 只传部署必需文件（docker-compose.yml + deploy.sh）：镜像已推送阿里云，
+      # 服务器只需 compose 编排与部署脚本。传整个仓库会把 .git 与内置字体（~65MB）
+      # 也拉上服务器，慢带宽下 scp 长时间无进度（曾卡 10 分钟+）。
+      - name: 上传部署文件到云服务器
+        uses: appleboy/scp-action@v0.1.9
         with:
           host: ${{ secrets.SERVER_HOST }}
           port: ${{ secrets.SERVER_PORT }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          source: "."
+          source: "docker-compose.yml,deploy.sh"
           target: "/tmp/league-akari-deploy"
+          strip_components: 0
 
       - name: 在云服务器执行部署
         uses: appleboy/ssh-action@v1
