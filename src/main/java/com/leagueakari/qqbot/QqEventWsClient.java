@@ -44,6 +44,8 @@ public class QqEventWsClient {
 
     private final PushProperties pushProperties;
     private final QqEventDispatcher dispatcher;
+    /** OpenAPI 客户端：identify 鉴权 token 需要它换取 access_token（"QQBot " + token） */
+    private final QqBotClient qqBotClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** WS 事件通道开关（默认关闭，联调核对协议后开启） */
@@ -70,10 +72,12 @@ public class QqEventWsClient {
     private volatile WebSocket currentSocket;
 
     public QqEventWsClient(PushProperties pushProperties, QqEventDispatcher dispatcher,
+                           QqBotClient qqBotClient,
                            @Value("${push.ws-enabled:false}") boolean wsEnabled,
                            @Value("${push.ws-url:wss://api.bot.qq.com/websocket}") String wsUrl) {
         this.pushProperties = pushProperties;
         this.dispatcher = dispatcher;
+        this.qqBotClient = qqBotClient;
         this.wsEnabled = wsEnabled;
         this.wsUrl = wsUrl;
     }
@@ -236,10 +240,21 @@ public class QqEventWsClient {
         log.info("QQ WS heartbeat scheduled: interval={}ms", intervalMs);
     }
 
-    /** 握手：identify（op2），token 由 appId 与 clientSecret 拼接（官方格式联调核对） */
+    /**
+     * 握手：identify（op2）。鉴权 token 按官方 SDK（botpy）格式：
+     * 先用 appId+clientSecret 换 access_token，d.token = "QQBot " + access_token
+     * （曾误用 appId.clientSecret 拼接导致 4004 Authentication fail）
+     */
     private void sendIdentify(WebSocket socket) {
+        String accessToken;
+        try {
+            accessToken = qqBotClient.obtainAccessToken();
+        } catch (QqPushException e) {
+            log.warn("QQ WS identify skipped: 换取 access_token 失败: {}", e.getMessage());
+            return;
+        }
         Map<String, Object> d = Map.of(
-                "token", pushProperties.getAppId() + "." + pushProperties.getClientSecret(),
+                "token", "QQBot " + accessToken,
                 "intents", INTENTS_GROUP,
                 "shard", List.of(0, 1));
         try {

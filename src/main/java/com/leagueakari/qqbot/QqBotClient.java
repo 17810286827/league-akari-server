@@ -271,11 +271,13 @@ public class QqBotClient {
 
     /**
      * 换取并缓存 access_token：凭证接口返回 expires_in（秒），
-     * 缓存至过期前 60 秒；并发下重复换取无害（幂等），由最后一次写覆盖
+     * 缓存至过期前 60 秒；并发下重复换取无害（幂等），由最后一次写覆盖。
+     * 供两类场景共用：OpenAPI 请求的 Bearer 头，以及 WS 事件网关
+     * identify 鉴权（"QQBot " + access_token，官方 SDK botpy 同款）
      *
      * @throws QqPushException 凭证未配置或换取失败
      */
-    private String obtainAccessToken() {
+    public String obtainAccessToken() {
         if (!pushProperties.isConfigured()) {
             throw new QqPushException("QQ 机器人凭证未配置（push.app-id / push.client-secret）");
         }

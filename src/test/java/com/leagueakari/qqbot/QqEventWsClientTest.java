@@ -17,7 +17,8 @@ class QqEventWsClientTest {
         props.setAppId(appId);
         props.setClientSecret(secret);
         props.setGroupOpenId("");
-        return new QqEventWsClient(props, new QqEventDispatcher(), enabled,
+        // canConnect 不涉及 OpenAPI 客户端，传 null 即可
+        return new QqEventWsClient(props, new QqEventDispatcher(), null, enabled,
                 "wss://api.bot.qq.com/websocket");
     }
 
