@@ -353,6 +353,9 @@ public class BroadcastCoordinator {
                 awardByParticipant, Map.of(), totalDamage, totalTaken);
         d.mainTeam = mainRows;
         d.otherTeam = otherRows;
+        // 比分 = 双方击杀合计（顶栏右上角展示；漏填会导致图上恒显 0 : 0）
+        d.mainScore = teamKills(participants, mainTeamId);
+        d.otherScore = teamKills(participants, otherTeamId);
 
         // 焦点卡：车队内 MVP → 尽力（ACE）→ 默认队内击杀最高（后两者 titleTag 为空则卡上无徽章）
         ReportImageData.Player hero = mainRows.stream()
@@ -427,6 +430,14 @@ public class BroadcastCoordinator {
             rows.add(row);
         }
         return rows;
+    }
+
+    /** 一队击杀合计（战报图比分口径，与锐评摘要一致） */
+    private int teamKills(List<MatchParticipant> participants, int teamId) {
+        return participants.stream()
+                .filter(p -> p.getTeamId() != null && p.getTeamId() == teamId)
+                .mapToInt(p -> p.getKills() == null ? 0 : p.getKills())
+                .sum();
     }
 
     /** 资源与一血：解析 teams_json（[{teamId, towerKills, dragonKills, baronKills, firstBlood}]） */

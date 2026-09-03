@@ -14,6 +14,7 @@ import com.leagueakari.mapper.MatchMvpMapper;
 import com.leagueakari.mapper.MatchParticipantMapper;
 import com.leagueakari.qqbot.QqBotClient;
 import com.leagueakari.qqbot.QqPushException;
+import com.leagueakari.reportimage.ReportImageData;
 import com.leagueakari.reportimage.ReportImageRenderer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,7 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -194,6 +196,30 @@ class BroadcastCoordinatorTest {
         verify(qqBotClient).sendGroupTextMessage(eq("GROUP-1"), eq("这把养鱼人把对面野区当自己家"));
         // 状态机：CAS(PUSHING) + SENT + comment 送达共三次更新
         verify(matchMapper, org.mockito.Mockito.times(3)).update(isNull(), any(Wrapper.class));
+    }
+
+    /**
+     * 用例：战报图比分 = 双方击杀合计（蓝队 12+8+4+7+1=32，红队 5+2=7）。
+     * 回归：此前 buildImageData 漏填 mainScore/otherScore，图上恒显 "0 : 0"
+     */
+    @Test
+    void maybeBroadcast_setsScoreFromTeamKills() {
+        stubCommon();
+        stubNoAwards();
+        when(gameDataService.championName(anyInt())).thenReturn("英雄");
+        when(postGameCommentService.generateComment(any())).thenReturn("锐评");
+        ReportImageRenderer mockRenderer = mock(ReportImageRenderer.class);
+        when(mockRenderer.renderPng(any())).thenReturn(new byte[]{1});
+        BroadcastCoordinator c = new BroadcastCoordinator(matchMapper, participantMapper, mvpMapper,
+                pushProperties, teamProperties, rosterService, gameDataService, qqBotClient,
+                mockRenderer, postGameCommentService, postGameSummaryBuilder, FIXED_CLOCK, new ObjectMapper());
+
+        c.maybeBroadcast(2000000001L);
+
+        ArgumentCaptor<ReportImageData> data = ArgumentCaptor.forClass(ReportImageData.class);
+        verify(mockRenderer).renderPng(data.capture());
+        assertThat(data.getValue().mainScore).isEqualTo(32);
+        assertThat(data.getValue().otherScore).isEqualTo(7);
     }
 
     /**

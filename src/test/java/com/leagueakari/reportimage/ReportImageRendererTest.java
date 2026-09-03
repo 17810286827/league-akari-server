@@ -184,6 +184,28 @@ class ReportImageRendererTest {
         assertThat(hasBrightPixel).as("图像应包含文字等高亮像素").isTrue();
     }
 
+    /** 用例：顶栏右上角绘制比分文字（回归：比分数据漏填曾导致显示 0 : 0） */
+    @Test
+    void renderHeader_showsScoreTextAtTopRight() throws Exception {
+        ReportImageData d = winData();
+        d.mainScore = 32;
+        d.otherScore = 18;
+        BufferedImage img = ImageIO.read(new ByteArrayInputStream(renderer.renderPng(d)));
+
+        // 比分 36px 粗体右对齐到 WIDTH-PAD，baseline≈y+98：扫描右上比分区找亮色文字像素
+        boolean hasScorePixel = false;
+        for (int x = 620; x < 870 && !hasScorePixel; x += 5) {
+            for (int y = 62; y <= 108; y += 3) {
+                int rgb = img.getRGB(x, y);
+                if (((rgb >> 16) & 0xff) > 200 && ((rgb >> 8) & 0xff) > 200 && (rgb & 0xff) > 200) {
+                    hasScorePixel = true;
+                    break;
+                }
+            }
+        }
+        assertThat(hasScorePixel).as("顶栏右上角应绘制比分").isTrue();
+    }
+
     /** 用例：数据为空（无焦点/空阵容）时也能渲染不崩（防御性） */
     @Test
     void renderEmptyData_doesNotThrow() throws Exception {
