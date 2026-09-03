@@ -193,7 +193,7 @@ class BroadcastCoordinatorTest {
                 .startsWith((byte) 0x89, (byte) 0x50, (byte) 0x4e, (byte) 0x47)
                 .isNotEmpty();
         // 第二条：锐评文本补发
-        verify(qqBotClient).sendGroupTextMessage(eq("GROUP-1"), eq("这把养鱼人把对面野区当自己家"));
+        verify(qqBotClient).sendGroupMarkdownMessage(eq("GROUP-1"), eq("这把养鱼人把对面野区当自己家"));
         // 状态机：CAS(PUSHING) + SENT + comment 送达共三次更新
         verify(matchMapper, org.mockito.Mockito.times(3)).update(isNull(), any(Wrapper.class));
     }
@@ -344,6 +344,7 @@ class BroadcastCoordinatorTest {
         coordinator.maybeBroadcast(2000000001L);
 
         verify(qqBotClient).sendGroupImageMessage(eq("GROUP-1"), any(byte[].class));
+        verify(qqBotClient, never()).sendGroupMarkdownMessage(any(), any());
         verify(qqBotClient, never()).sendGroupTextMessage(any(), any());
         verify(postGameCommentService, never()).generateComment(any());
         // 状态：CAS + SENT 共两次更新

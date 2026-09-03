@@ -114,8 +114,8 @@ public class PostGameCommentService {
         } catch (Exception e) {
             log.warn("Failed to load post-game prompt file {}: {}", promptFile, e.getMessage());
         }
-        return "你是车队开黑群的锐评官，根据提供的本局数据用中文写一段 150 字以内毒舌但善意的锐评，"
-                + "点名最亮眼与最拉胯的队友，不要使用 markdown 格式。";
+        return "你是车队开黑群的锐评官，根据提供的本局数据用中文写一段 200-300 字火力全开的锐评，"
+                + "点名最亮眼与最拉胯的人；重点词可用 **加粗** 标记（不超过 4 处），不要标题、列表、代码块。";
     }
 
     /**

@@ -102,6 +102,31 @@ class QqBotClientTest {
     }
 
     /**
+     * 用例：发群 Markdown 消息（msg_type=2 + markdown.content），
+     * **加粗** 等富文本语法原样透传（群聊自定义 Markdown 官方全量开放，免模板）
+     */
+    @Test
+    void sendGroupMarkdownMessage_postsMarkdownPayload() throws Exception {
+        CloseableHttpResponse tokenResp = tokenResponse("tok-md");
+        CloseableHttpResponse msgResp = okResponse();
+        when(httpClient.execute(any(HttpPost.class)))
+                .thenReturn(tokenResp)
+                .thenReturn(msgResp);
+
+        qqBotClient.sendGroupMarkdownMessage("GROUP-1", "本局 **战神** 是养鱼人，**战犯** 是夜雨听澜");
+
+        var captor = org.mockito.ArgumentCaptor.forClass(HttpPost.class);
+        verify(httpClient, times(2)).execute(captor.capture());
+        HttpPost msgPost = captor.getAllValues().get(1);
+        assertThat(msgPost.getUri().toString())
+                .isEqualTo("https://api.bot.qq.com/v2/groups/GROUP-1/messages");
+        assertThat(msgPost.getFirstHeader("Authorization").getValue()).isEqualTo("QQBot tok-md");
+        String msgBody = EntityUtils.toString(msgPost.getEntity(), StandardCharsets.UTF_8);
+        assertThat(msgBody).contains("\"msg_type\":2")
+                .contains("\"markdown\":{\"content\":\"本局 **战神** 是养鱼人，**战犯** 是夜雨听澜\"}");
+    }
+
+    /**
      * 用例：token 缓存契约——同进程内连续发送只换取一次凭证，
      * 第二次直接复用缓存，不重复请求凭证接口
      */

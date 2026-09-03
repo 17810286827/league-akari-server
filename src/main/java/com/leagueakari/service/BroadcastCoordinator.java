@@ -177,6 +177,8 @@ public class BroadcastCoordinator {
             log.info("Broadcast skipped: claim failed (concurrent), gameId={}", gameId);
             return;
         }
+        // 抢占成功：PENDING/FAILED → PUSHING，开始本局播报（补推重试也走此路径，可据日志数重试次数）
+        log.info("Broadcast claimed: gameId={}, status={}->PUSHING", gameId, status);
 
         // 6. 组装战报图数据 → 渲染 PNG → 图片消息发送（图只管数据，不依赖 AI）
         List<MatchMvp> awards = mvpMapper.selectList(
@@ -209,7 +211,7 @@ public class BroadcastCoordinator {
         }
     }
 
-    /** 局后锐评阶段：生成 → 发文本 → 记送达；AI/发送失败 → 缺席提示兜底 */
+    /** 局后锐评阶段：生成 → 发 Markdown（**加粗** 醒目标记）→ 记送达；AI/发送失败 → 缺席提示兜底 */
     private void broadcastComment(Long gameId, Match match, List<MatchParticipant> participants,
                                   Map<String, TeamRosterService.RosterMember> memberByPuuid,
                                   List<MatchMvp> awards) {
@@ -225,9 +227,10 @@ public class BroadcastCoordinator {
             return;
         }
         try {
-            qqBotClient.sendGroupTextMessage(pushProperties.getGroupOpenId(), comment);
+            // 锐评用 Markdown 通道（msg_type=2）：人名/称号/关键数据以 **加粗** 渲染
+            qqBotClient.sendGroupMarkdownMessage(pushProperties.getGroupOpenId(), comment);
             markCommentDelivered(gameId);
-            log.info("Post-game comment sent: gameId={}", gameId);
+            log.info("Post-game comment sent: gameId={}, length={}", gameId, comment.length());
         } catch (QqPushException e) {
             log.error("Post-game comment send failed, send absence tip: gameId={}", gameId, e);
             sendAbsenceTip(gameId);
@@ -246,12 +249,14 @@ public class BroadcastCoordinator {
         }
     }
 
-    /** 推送成功：状态 SENT + 战报消息发送时间 */
+    /** 推送成功：状态 SENT + 战报消息发送时间（终态，此后补推不再重发） */
     private void markSent(Long gameId) {
         matchMapper.update(null, new UpdateWrapper<Match>()
                 .set("push_status", STATUS_SENT)
                 .set("push_image_at", LocalDateTime.now())
                 .eq("game_id", gameId));
+        // 状态机审计：任一状态变更都留痕，便于按 gameId 还原整局推送轨迹
+        log.info("Broadcast status -> SENT: gameId={}", gameId);
     }
 
     /** 推送失败：状态 FAILED + 错误原因（截断落库），等待桌面端补推重试 */
@@ -264,6 +269,8 @@ public class BroadcastCoordinator {
                 .set("push_status", STATUS_FAILED)
                 .set("push_error", detail)
                 .eq("game_id", gameId));
+        // 状态机审计：FAILED 是补推重试的入口，日志含原因，可按 gameId 聚合重试次数
+        log.warn("Broadcast status -> FAILED: gameId={}, reason={}", gameId, detail);
     }
 
     /** 锐评文本已送达：补记发送时间（状态保持 SENT） */
@@ -271,6 +278,7 @@ public class BroadcastCoordinator {
         matchMapper.update(null, new UpdateWrapper<Match>()
                 .set("push_comment_at", LocalDateTime.now())
                 .eq("game_id", gameId));
+        log.info("Broadcast comment delivered: gameId={}", gameId);
     }
 
     /** AI 缺席：状态 AI_FAILED（图已发、缺席提示已发）+ 提示发送时间 */
@@ -279,6 +287,8 @@ public class BroadcastCoordinator {
                 .set("push_status", STATUS_AI_FAILED)
                 .set("push_comment_at", LocalDateTime.now())
                 .eq("game_id", gameId));
+        log.warn("Broadcast status -> AI_FAILED: gameId={} (image sent, AI comment absent)",
+                gameId);
     }
 
     /**

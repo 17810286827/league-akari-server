@@ -51,10 +51,10 @@ class QqRealSendSmokeTest {
         qqBotClient.sendGroupImageMessage(groupOpenId, png);
         System.out.println("[smoke] 战报图已发送，请到群里确认图片");
 
-        // ② 真实 AI 调用生成锐评并发送（约 10~30 秒）
+        // ② 真实 AI 调用生成锐评并发送（约 10~30 秒；Markdown 通道，重点词加粗渲染）
         String comment = postGameCommentService.generateComment(sampleSummary());
         assertThat(comment).isNotBlank();
-        qqBotClient.sendGroupTextMessage(groupOpenId, comment);
+        qqBotClient.sendGroupMarkdownMessage(groupOpenId, comment);
         System.out.println("[smoke] AI 锐评已发送: " + comment);
     }
 

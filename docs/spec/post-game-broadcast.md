@@ -60,8 +60,8 @@ T+0s    判定通过 → 渲染战报图 PNG（内存，~百 KB）
         → 上传官方媒体（分片上传 /v2/groups/{gid}/files, file_type=1）
         → 发送图消息（msg_type=7）           成功 → push_image_at, 状态推进
 T+0.5s  异步生成局后锐评（LLM 非流式，~25s）
-        → 成功 → 发送文本（msg_type=0）      成功 → push_comment_at, SENT
-        → 重试 2 次仍失败 → 发送 AI 缺席提示文本 → push_comment_at, AI_FAILED
+        → 成功 → 发送 Markdown（msg_type=2，重点词 **加粗**）  成功 → push_comment_at, SENT
+        → 重试 2 次仍失败 → 发送 AI 缺席提示文本（msg_type=0）→ push_comment_at, AI_FAILED
 ```
 
 - 发送顺序保证：先图后文本（消息服务内部单飞串行或按 gameId 分桶，防止多局并发时乱序刷屏）。
@@ -70,7 +70,8 @@ T+0.5s  异步生成局后锐评（LLM 非流式，~25s）
 ## 5. QQ Bot 出站客户端（`qq-bot` 模块，仿 AiAnalysisService 的 HttpClient 用法）
 
 - **凭证**：`POST https://api.bot.qq.com/app/getAppAccessToken`（`app_id` + `client_secret`）→ `access_token`，进程内缓存至过期前 60s 刷新；所有业务请求带 `Authorization: Bearer`。
-- **发送文本**：`POST /v2/groups/{group_openid}/messages`，`{"msg_type":0,"content":"..."}`。
+- **发送文本**：`POST /v2/groups/{group_openid}/messages`，`{"msg_type":0,"content":"..."}`（缺席提示等纯文本）。
+- **发送 Markdown（锐评，2026-04 起群聊自定义 Markdown 全量开放免模板）**：`{"msg_type":2,"markdown":{"content":"…**加粗**…"}}`——锐评正文走此通道，重点词加粗渲染。
 - **发送图片**：分片上传路径——`POST /v2/groups/{group_openid}/upload_prepare`（file_size/name/md5/sha1）→ 逐片 PUT 预签名 URL → `upload_part_finish` 逐片确认 → `POST /v2/groups/{group_openid}/files`（`file_type:1, upload_id`）→ 得 `file_info`（ttl 300s，现传现用）→ `POST .../messages`，`{"msg_type":7,"media":{"file_info":"..."}}`。
 - **WS 事件客户端**：官方 WS 网关（Intent `GROUP_AND_C2C_EVENT`），处理 `GROUP_ADD_ROBOT`（把群 openid 打到 warn 日志/可选自更新配置）、`GROUP_DEL_ROBOT`、心跳。断线指数退避重连；事件通道故障不影响主动发送（发送是纯 HTTP）。管理端需配置 IP 白名单（云服务器出口 IP）。
 - 错误码映射：850018 禁言、850026 下载失败、850031 超限等 → 统一包装为 `PushException(code)` 落 `push_error`。
@@ -103,7 +104,7 @@ T+0.5s  异步生成局后锐评（LLM 非流式，~25s）
 
 ## 7. 局后锐评（AI）
 
-- **Prompt**：`resources/ai/post-game-prompt.md`（火力全开版：虎扑/贴吧风格全力开团、句句带数据背书、正文约 200-300 字、可直接发群、不输出 Markdown 标题；红线仅"火力对局不对人"一条）。输入 = `PostGameSummaryBuilder` 组装的**双方 10 人全量摘要**（每行：name/champion/win/member/kda/dmg/taken/gold/title，含比分与车队成员标记），对手可见才能评对位/服对面/嘴硬。
+- **Prompt**：`resources/ai/post-game-prompt.md`（火力全开版：虎扑/贴吧风格全力开团、句句带数据背书、正文约 200-300 字、以 Markdown 消息发送——重点词 **加粗** ≤4 处 + emoji，不用标题/列表；红线仅"火力对局不对人"一条）。输入 = `PostGameSummaryBuilder` 组装的**双方 10 人全量摘要**（每行：name/champion/win/member/kda/dmg/taken/gold/title，含比分与车队成员标记），对手可见才能评对位/服对面/嘴硬。
 - **调用**：仿 `WeeklyAiCommentService`（非流式、超时、`thinking=false` 直出正文、UA 伪装、10min 缓存不适用——每局唯一）；**失败重试 2 次**（指数退避），耗尽 → 走 §4 缺席提示。
 - 与单局 AI 分析（`AiAnalysisService`，SSE）复用 HttpClient/线程池基建，不复用其 self 视角 prompt。
 

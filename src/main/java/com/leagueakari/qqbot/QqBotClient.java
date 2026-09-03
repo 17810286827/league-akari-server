@@ -76,6 +76,28 @@ public class QqBotClient {
     }
 
     /**
+     * 向车队群发送 Markdown 消息（msg_type=2）：支持 **加粗** 等富文本语法。
+     * <p>官方 2026-04-23 起群聊/单聊"自定义 Markdown"对全部机器人开放（免模板申请），
+     * 个人实名认证机器人即可使用；频控按 Bot 维度 60/qpm，锐评每局一条无压力。
+     * 纯文本（msg_type=0）无任何格式能力，醒目标记必须走本通道。</p>
+     *
+     * @param groupOpenId 目标群 openid
+     * @param content     Markdown 文本（**加粗** 等语法由 QQ 客户端渲染）
+     * @throws QqPushException 凭证未配置 / 接口非 200 / 网络失败
+     */
+    public void sendGroupMarkdownMessage(String groupOpenId, String content) {
+        if (groupOpenId == null || groupOpenId.isBlank()) {
+            throw new QqPushException("QQ 群 openid 未配置，无法推送");
+        }
+        String token = obtainAccessToken();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("msg_type", 2);
+        payload.put("markdown", Map.of("content", content == null ? "" : content));
+        postJson(API_BASE + "/v2/groups/" + groupOpenId + "/messages", token, payload,
+                "群消息发送(markdown)");
+    }
+
+    /**
      * 向车队群发送图片消息（msg_type=7 富媒体）：
      * 服务端本地 PNG 先按官方分片上传流程换取 file_info，再以媒体消息引用发送。
      * <p>流程：upload_prepare（摘要与大小）→ 逐片 PUT 预签名 URL → upload_part_finish

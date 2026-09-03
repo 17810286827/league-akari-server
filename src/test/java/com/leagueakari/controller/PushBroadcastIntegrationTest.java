@@ -149,13 +149,13 @@ class PushBroadcastIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
 
-        // 消息序列：先图（PNG magic 校验）后锐评文本
+        // 消息序列：先图（PNG magic 校验）后锐评 Markdown
         ArgumentCaptor<byte[]> png = ArgumentCaptor.forClass(byte[].class);
         verify(qqBotClient).sendGroupImageMessage(eq("GROUP-IT"), png.capture());
         assertThat(png.getValue()).isNotEmpty();
         assertThat(png.getValue())
                 .startsWith((byte) 0x89, (byte) 0x50, (byte) 0x4e, (byte) 0x47);
-        verify(qqBotClient).sendGroupTextMessage(eq("GROUP-IT"),
+        verify(qqBotClient).sendGroupMarkdownMessage(eq("GROUP-IT"),
                 eq("养鱼人今天把对面野区当自己家，建议下把换个打法。"));
 
         // 状态推进：SENT + 图/锐评时间戳均已写
@@ -211,7 +211,7 @@ class PushBroadcastIntegrationTest {
         verify(qqBotClient, org.mockito.Mockito.times(1))
                 .sendGroupImageMessage(eq("GROUP-IT"), any(byte[].class));
         verify(qqBotClient, org.mockito.Mockito.times(1))
-                .sendGroupTextMessage(eq("GROUP-IT"), any(String.class));
+                .sendGroupMarkdownMessage(eq("GROUP-IT"), any(String.class));
     }
 
     /**
