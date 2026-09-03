@@ -427,16 +427,13 @@ public class BroadcastCoordinator {
         d.mainTeam = mainRows;
         d.otherTeam = otherRows;
 
-        // 焦点卡：车队内 MVP → 尽力（ACE）→ 默认队内击杀最高
+        // 焦点卡：车队内 MVP → 尽力（ACE）→ 默认队内击杀最高（后两者 titleTag 为空则卡上无徽章）
         ReportImageData.Player hero = mainRows.stream()
                 .filter(p -> "MVP".equals(p.titleTag))
                 .findFirst()
                 .orElse(mainRows.stream().filter(p -> "尽力".equals(p.titleTag)).findFirst().orElse(null));
         if (hero == null && !mainRows.isEmpty()) {
             hero = mainRows.get(0); // mainRows 已按击杀降序
-            hero.heroSub = "本队表现最佳";
-        } else if (hero != null && hero.heroSub == null) {
-            hero.heroSub = "MVP".equals(hero.titleTag) ? "本场 MVP" : "尽力局";
         }
         d.hero = hero;
 

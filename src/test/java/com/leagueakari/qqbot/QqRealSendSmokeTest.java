@@ -77,25 +77,25 @@ class QqRealSendSmokeTest {
         d.footerLeft = "iKun · LEAGUE AKARI";
         d.footerRight = "32:18 · AI 已评阅";
         ReportImageData.Player hero = player("赌书消得泼茶香", "阿狸", 103, 12, 3, 7,
-                0.212, 0.126, 1.87, "MVP", "本场 MVP · 全队输出第一", 9.8);
+                0.212, 0.126, 1.87, "MVP", 9.8);
         d.hero = hero;
         d.mainTeam = List.of(hero,
-                player("手裂鬼子", "大师", 11, 8, 4, 10, 0.148, 0.079, 1.58, null, null, 8.7),
-                player("夜雨听澜", "墨菲特", 54, 4, 2, 14, 0.066, 0.224, 0.86, null, null, 8.2),
-                player("小羊别送", "金克丝", 222, 7, 5, 8, 0.176, 0.081, 1.36, null, null, 6.1),
-                player("盾辅阿离", "蕾欧娜", 89, 1, 4, 17, 0.028, 0.198, 0.61, null, null, 7.5));
+                player("手裂鬼子", "大师", 11, 8, 4, 10, 0.148, 0.079, 1.58, null, 8.7),
+                player("夜雨听澜", "墨菲特", 54, 4, 2, 14, 0.066, 0.224, 0.86, null, 8.2),
+                player("小羊别送", "金克丝", 222, 7, 5, 8, 0.176, 0.081, 1.36, null, 6.1),
+                player("盾辅阿离", "蕾欧娜", 89, 1, 4, 17, 0.028, 0.198, 0.61, null, 7.5));
         d.otherTeam = List.of(
-                player("青衫仗剑", "雷克顿", 58, 5, 7, 3, 0.094, 0.072, 1.02, null, null, 6.4),
-                player("别打野区", "嘉文四世", 59, 2, 8, 4, 0.048, 0.051, 0.74, null, null, 3.5),
-                player("午夜诗人", "佐伊", 142, 9, 4, 5, 0.126, 0.019, 1.76, "MVP", null, 8.9),
-                player("一杯敬月光", "韦鲁斯", 110, 4, 6, 6, 0.078, 0.034, 0.98, null, null, 5.8),
-                player("温柔辅助", "锤石", 412, 1, 7, 9, 0.024, 0.116, 0.44, null, null, 4.9));
+                player("青衫仗剑", "雷克顿", 58, 5, 7, 3, 0.094, 0.072, 1.02, null, 6.4),
+                player("别打野区", "嘉文四世", 59, 2, 8, 4, 0.048, 0.051, 0.74, null, 3.5),
+                player("午夜诗人", "佐伊", 142, 9, 4, 5, 0.126, 0.019, 1.76, "MVP", 8.9),
+                player("一杯敬月光", "韦鲁斯", 110, 4, 6, 6, 0.078, 0.034, 0.98, null, 5.8),
+                player("温柔辅助", "锤石", 412, 1, 7, 9, 0.024, 0.116, 0.44, null, 4.9));
         return d;
     }
 
     private ReportImageData.Player player(String name, String champion, int cid,
                                           int k, int d, int a, double dmg, double taken,
-                                          double dpg, String tag, String sub, double op) {
+                                          double dpg, String tag, double op) {
         ReportImageData.Player p = new ReportImageData.Player();
         p.summonerName = name;
         p.championName = champion;
@@ -107,7 +107,6 @@ class QqRealSendSmokeTest {
         p.damageTakenShare = taken;
         p.damagePerGold = dpg;
         p.titleTag = tag;
-        p.heroSub = sub;
         p.opScore = op;
         return p;
     }

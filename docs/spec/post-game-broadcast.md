@@ -2,7 +2,8 @@
 
 > 车队对局结束后，自动向车队群推送"战报图 + 局后锐评"。
 > 术语见 `CONTEXT.md`（车队群 / 局后播报 / 战报图 / 局后锐评），通道决策见 `docs/adr/0003-qq-official-bot-push.md`。
-> 视觉原型：`D:\IDE\project\LOL\qq-push-report-prototype.html`（方案 C v2）。
+> 视觉原型：`D:\IDE\project\LOL\qq-push-report-prototype.html`（四方案评审页，方案 C v2 为基线）；
+> v3 改版原型：`D:\IDE\project\LOL\qq-push-report-v2-prototype.html`（焦点大卡 + 阵容行改版，已按此落地）。
 
 ## 1. 目标与非目标
 
@@ -75,18 +76,20 @@ T+0.5s  异步生成局后锐评（LLM 非流式，~25s）
 - 错误码映射：850018 禁言、850026 下载失败、850031 超限等 → 统一包装为 `PushException(code)` 落 `push_error`。
 - 发送频控远低于配额（每局 ≤2 条），无需队列限流，但保留发送间隔 ≥1s 的保险节流。
 
-## 6. 战报图渲染规格（Java2D headless）
+## 6. 战报图渲染规格（Java2D headless，v3）
 
-- **画布**：宽 **900px**，高动态（原型 C v2 约为 1180~1250px，按行数/文案自适应）；`BufferedImage.TYPE_INT_RGB`，输出 PNG。
-- **字体**：镜像内打包 **思源黑体**（SIL OFL，可商用）：`SourceHanSansSC-Regular.otf` 与 `-Bold.otf`（Latin 数字用 Bold 对齐原型 Georgia 的效果）；Dockerfile COPY 至 `/fonts` 并在渲染前 `Font.createFont` 注册。禁止依赖系统字体（云服务器无中文字体）。
-- **布局**（自上而下，原型 C v2 的区块与坐标基线）：
+- **画布**：宽 **900px**，高动态。v3 固定 10 行阵容时为 **894px**（焦点卡 150 + 阵容行高 78）；`BufferedImage.TYPE_INT_RGB`，输出 PNG。
+- **字体**：镜像内打包**思源黑体 Regular**（`SourceHanSansSC-Regular.otf`，SIL OFL 可商用），Bold 用 `deriveFont(style, size)` 合成粗体；Dockerfile 内置至 classpath `/fonts`，渲染前 `Font.createFont` 注册。禁止依赖系统字体（云服务器无中文字体）。
+- **英雄头像（v3 新增）**：真实头像由 `ChampionIconService` 从 CommunityDragon 拉取（`champion-icons/{championId}.png`，与 web 端同源），成功进内存缓存；**失败自动降级**为色块圆盘（渐变圆底 + 盘中英雄中文名），图永远完整可发；同一头像并发未命中仅单线程下载，失败只 warn 一次（CDN 恢复自动重试）。
+- **防溢出（v3 新增）**：召唤师名/英雄名全部**定宽省略号截断**（FontMetrics 实测宽度，超宽按字符截断追加"…"），可用宽：焦点卡召唤师名 ≈ 430px（21px 粗体，预留 MVP 徽章位）、阵容行名字区到 KDA 前为止（15px 粗体 ≈ 200~300px）。文字不允许越过其区域右边界。
+- **布局**（自上而下，v3 的区块与坐标基线）：
 
 | 区块 | 内容 | 主色 |
 |---|---|---|
 | 顶栏 | 车队名+日期+时长 meta / 右 VICTORY·胜利或 DEFEAT·败北 胶囊 + 比分 | 底 `#101a2e→#0b1220` 渐变；胜蓝 `#4b7be5`/负红 `#e03e52` |
 | 资源条 | 推塔/小龙/大龙/一血 对比（胜方高亮） | 文本 `#7e92ad`，高亮 `#8ab0ff`/`#ff8a98` |
-| MVP 大卡 | 胜方/败方"英雄特写"（本队 MVP；败局给"尽力"成员）+ 输出/承伤/伤转 | 胜蓝/负红 12% 透明底 + 描边 |
-| 阵容表 | 蓝红两列：头像色块(英雄中文名) | 名 `#e9f0fb` KDA `#b9c7db` |
+| MVP 大卡（高 150） | 左 64px 真实头像（金环）→ 上召唤师名 21px 粗体 / 下英雄名 14px 灰 + 评语徽章（MVP 金/尽力 银，替代 v2 副行文案）；中三指标；右 KDA 24px + OP 圆徽 52px | 胜蓝/负红 12% 透明底 + 描边 |
+| 阵容表（行高 78） | 蓝红两列：40px 真实头像 + 主行两行文字（上召唤师名 15px 粗体 / 下英雄名 12px 灰）+ 行尾 KDA 14px 与称号标签；称号 MVP/SVP 金、尽力 银、背锅 灰 | 名 `#e9f0fb` 英雄名 `#7e92ad` KDA `#b9c7db` |
 | 行指标 | 输出占比(队色条)/承伤占比(队色条)/伤转(金 `#ffd76e` 无条) | 标签 `#6d819d` |
 | 底栏 | 车队名 · AI 已评阅 | `#5c6e8a` |
 
@@ -94,9 +97,9 @@ T+0.5s  异步生成局后锐评（LLM 非流式，~25s）
   - 比分 = 双方 `kills` 合计；资源 = teams_json（tower/dragon/baron/riftHerald/voidGrub/atakhan + firstBlood）；
   - 输出占比 = 该玩家 `totalDamageDealtToChampions` ÷ 全 10 人总和；承伤占比 = `totalDamageTaken` ÷ 全 10 人总和（各 100% 口径）；
   - 伤害转化（伤转）= `totalDamageDealtToChampions` ÷ `goldEarned` × 100%；
-  - 英雄中文名/头像底色：`GameDataService`（CommunityDragon）已有英雄中文名；底色为按英雄预置的固定色表（原型色值），新增英雄兜底取色板哈希；
+  - 英雄中文名/英雄头像：中文名 `GameDataService`（CommunityDragon champion-summary）；头像 `ChampionIconService`（champion-icons，v3 起）；两者失败均有降级（ID 字符串 / 色块圆盘）；
   - MVP/尽力/背锅：本队 `match_mvp`（MVP/ACE）+ `op_score`；称号文案映射（胜方 MVP→MVP、败方 ACE→尽力、队内最低且 <5→背锅，可配置开关）。
-- 渲染实现：独立的 `report-image` 组件 + 专用线程池（仿 `aiStreamExecutor`），纯函数式输入（`MatchReportData` DTO）→ PNG 字节，便于单测快照。
+- 渲染实现：独立的 `report-image` 组件 + 专用线程池（仿 `aiStreamExecutor`），纯函数式输入（`ReportImageData` DTO，含 hero/titleTag，不含 heroSub——v3 评语已徽章化）→ PNG 字节，便于单测快照；头像服务以构造注入（测试可传 null 走降级路径，不触网）。
 
 ## 7. 局后锐评（AI）
 

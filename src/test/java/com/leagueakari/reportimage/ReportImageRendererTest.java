@@ -1,8 +1,13 @@
 package com.leagueakari.reportimage;
 
+import com.leagueakari.service.ChampionIconService;
 import org.junit.jupiter.api.Test;
 
 import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.util.List;
@@ -10,8 +15,9 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * ReportImageRenderer 渲染冒烟测试：
- * 数据模型驱动渲染，验证 PNG 输出结构契约（900px 宽、高度合理、胜/负两态均可渲染）
+ * ReportImageRenderer 渲染契约测试：
+ * 数据模型驱动渲染，验证 PNG 输出结构（900px 宽、v3 布局高度、胜/负两态可渲染、
+ * 真实头像路径可用、文本定宽截断规则）。默认无头（头像服务为 null 时走降级色块圆盘）。
  */
 class ReportImageRendererTest {
 
@@ -37,26 +43,26 @@ class ReportImageRendererTest {
         d.footerRight = "32:18 · AI 已评阅";
 
         ReportImageData.Player mvp = player("赌书消得泼茶香", "阿狸", 103, 12, 3, 7,
-                0.212, 0.126, 1.87, "MVP", "本场 MVP · 全队输出第一", 9.8);
+                0.212, 0.126, 1.87, "MVP", 9.8);
         d.hero = mvp;
         d.mainTeam = List.of(
                 mvp,
-                player("手裂鬼子", "大师", 11, 8, 4, 10, 0.148, 0.079, 1.58, null, null, 8.7),
-                player("夜雨听澜", "墨菲特", 54, 4, 2, 14, 0.066, 0.224, 0.86, null, null, 8.2),
-                player("小羊别送", "金克丝", 222, 7, 5, 8, 0.176, 0.081, 1.36, null, null, 6.1),
-                player("盾辅阿离", "蕾欧娜", 89, 1, 4, 17, 0.028, 0.198, 0.61, null, null, 7.5));
+                player("手裂鬼子", "大师", 11, 8, 4, 10, 0.148, 0.079, 1.58, null, 8.7),
+                player("夜雨听澜", "墨菲特", 54, 4, 2, 14, 0.066, 0.224, 0.86, null, 8.2),
+                player("小羊别送", "金克丝", 222, 7, 5, 8, 0.176, 0.081, 1.36, null, 6.1),
+                player("盾辅阿离", "蕾欧娜", 89, 1, 4, 17, 0.028, 0.198, 0.61, null, 7.5));
         d.otherTeam = List.of(
-                player("青衫仗剑", "雷克顿", 58, 5, 7, 3, 0.094, 0.072, 1.02, null, null, 6.4),
-                player("别打野区", "嘉文四世", 59, 2, 8, 4, 0.048, 0.051, 0.74, null, null, 3.5),
-                player("午夜诗人", "佐伊", 142, 9, 4, 5, 0.126, 0.019, 1.76, "MVP", null, 8.9),
-                player("一杯敬月光", "韦鲁斯", 110, 4, 6, 6, 0.078, 0.034, 0.98, null, null, 5.8),
-                player("温柔辅助", "锤石", 412, 1, 7, 9, 0.024, 0.116, 0.44, null, null, 4.9));
+                player("青衫仗剑", "雷克顿", 58, 5, 7, 3, 0.094, 0.072, 1.02, null, 6.4),
+                player("别打野区", "嘉文四世", 59, 2, 8, 4, 0.048, 0.051, 0.74, null, 3.5),
+                player("午夜诗人", "佐伊", 142, 9, 4, 5, 0.126, 0.019, 1.76, "MVP", 8.9),
+                player("一杯敬月光", "韦鲁斯", 110, 4, 6, 6, 0.078, 0.034, 0.98, null, 5.8),
+                player("温柔辅助", "锤石", 412, 1, 7, 9, 0.024, 0.116, 0.44, null, 4.9));
         return d;
     }
 
     private ReportImageData.Player player(String name, String champion, int cid,
                                           int k, int d, int a, double dmg, double taken,
-                                          double dpg, String tag, String heroSub, double opScore) {
+                                          double dpg, String tag, double opScore) {
         ReportImageData.Player p = new ReportImageData.Player();
         p.summonerName = name;
         p.championName = champion;
@@ -68,7 +74,6 @@ class ReportImageRendererTest {
         p.damageTakenShare = taken;
         p.damagePerGold = dpg;
         p.titleTag = tag;
-        p.heroSub = heroSub;
         p.opScore = opScore;
         return p;
     }
@@ -83,20 +88,20 @@ class ReportImageRendererTest {
         d.mainTower = 3;
         d.otherTower = 8;
         d.mainFirstBlood = false;
-        // 败局焦点：ACE（尽力）
+        // 败局焦点：ACE（尽力，银徽）
         ReportImageData.Player ace = player("盾辅阿离", "诺提勒斯", 111, 1, 4, 12,
-                0.042, 0.236, 0.52, "尽力", "尽力局 · 全队视野与开团支柱", 6.3);
+                0.042, 0.236, 0.52, "尽力", 6.3);
         d.hero = ace;
         ReportImageData.Player feed = player("峡谷养鱼人", "佛耶戈", 234, 3, 8, 5,
-                0.084, 0.112, 0.88, "背锅", null, 3.2);
+                0.084, 0.112, 0.88, "背锅", 3.2);
         d.mainTeam = List.of(feed, d.hero,
-                player("中路杀神", "劫", 238, 6, 6, 4, 0.169, 0.078, 1.41, null, null, 5.8),
-                player("小羊别送", "泽丽", 221, 5, 4, 3, 0.143, 0.069, 1.08, null, null, 4.6),
-                player("夜雨听澜", "奥恩", 516, 2, 5, 9, 0.061, 0.195, 0.71, null, null, 5.1));
+                player("中路杀神", "劫", 238, 6, 6, 4, 0.169, 0.078, 1.41, null, 5.8),
+                player("小羊别送", "泽丽", 221, 5, 4, 3, 0.143, 0.069, 1.08, null, 4.6),
+                player("夜雨听澜", "奥恩", 516, 2, 5, 9, 0.061, 0.195, 0.71, null, 5.1));
         return d;
     }
 
-    /** 用例：胜局数据渲染输出 900px 宽 PNG，内容非空 */
+    /** 用例：胜局数据渲染输出 900px 宽 PNG，高度符合 v3 布局（焦点卡 150 + 行高 78） */
     @Test
     void renderWinData_producesPngBytes() throws Exception {
         byte[] png = renderer.renderPng(winData());
@@ -105,7 +110,8 @@ class ReportImageRendererTest {
         BufferedImage img = ImageIO.read(new ByteArrayInputStream(png));
         assertThat(img).isNotNull();
         assertThat(img.getWidth()).isEqualTo(900);
-        assertThat(img.getHeight()).isBetween(700, 1600);
+        // v3 布局公式：PAD + 顶栏84 + 资源条54 + 焦点卡(16+150+16) + 标题/列头70 + 5×行高78 + 底栏36 + PAD
+        assertThat(img.getHeight()).isEqualTo(894);
     }
 
     /** 用例：败局数据渲染不抛错（负色路径）且输出同样结构 */
@@ -116,6 +122,43 @@ class ReportImageRendererTest {
         assertThat(png).isNotEmpty();
         BufferedImage img = ImageIO.read(new ByteArrayInputStream(png));
         assertThat(img.getWidth()).isEqualTo(900);
+        assertThat(img.getHeight()).isEqualTo(894);
+    }
+
+    /** 用例：注入头像服务（真实头像路径）时渲染不抛错，布局高度不变 */
+    @Test
+    void renderWithIconService_producesPng() throws Exception {
+        ReportImageRenderer withIcons = new ReportImageRenderer(new FakeIconService());
+
+        BufferedImage img = ImageIO.read(new ByteArrayInputStream(withIcons.renderPng(winData())));
+
+        assertThat(img).isNotNull();
+        assertThat(img.getWidth()).isEqualTo(900);
+        assertThat(img.getHeight()).isEqualTo(894);
+    }
+
+    /** 用例：超长召唤师名（30 字）不抛错，且像素级验证被截断在列内（不越界） */
+    @Test
+    void renderWithLongSummonerName_clipsWithinColumn() throws Exception {
+        ReportImageData d = winData();
+        d.otherTeam.get(4).summonerName =
+                "一杯敬月光与酒与晚风与小桥流水人家灯火阑珊夜未央人未眠";
+        BufferedImage img = ImageIO.read(new ByteArrayInputStream(renderer.renderPng(d)));
+
+        assertThat(img).isNotNull();
+        assertThat(img.getWidth()).isEqualTo(900);
+        // 红方列最后一行（第5行）主行名字带：列 x=469..888，名字 y 带≈714..744（布局公式推算）。
+        // 召唤师名 #e9f0fb（蓝通道≈251）显著亮于 KDA #b9c7db（≈219）与背景——扫最亮像素最右位置。
+        int rightmost = -1;
+        for (int y = 714; y <= 744; y++) {
+            for (int x = 530; x < 895; x++) {
+                if ((img.getRGB(x, y) & 0xff) > 240) {
+                    rightmost = Math.max(rightmost, x);
+                }
+            }
+        }
+        // 若未截断，30 字 ×15px≈450px 会从 x=531 画到 ~980（越出列与卡片）
+        assertThat(rightmost).as("长召唤师名必须被省略号截断在列内").isBetween(700, 860);
     }
 
     /** 用例：图像确有绘制内容（非纯背景色）——抽样若干像素与背景不同 */
@@ -151,5 +194,67 @@ class ReportImageRendererTest {
         byte[] png = renderer.renderPng(d);
 
         assertThat(png).isNotEmpty();
+    }
+
+    // ---------- 定宽省略号截断（ellipsize）单元用例 ----------
+
+    private FontMetrics metrics(float size) {
+        BufferedImage probe = new BufferedImage(4, 4, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = probe.createGraphics();
+        return g.getFontMetrics(new Font(Font.SANS_SERIF, Font.PLAIN, Math.round(size)));
+    }
+
+    /** 用例：短文本不截断，原样返回 */
+    @Test
+    void ellipsize_shortText_unchanged() {
+        String text = "夜雨听澜";
+
+        String out = ReportImageRenderer.ellipsize(text, metrics(15), 400);
+
+        assertThat(out).isEqualTo(text);
+    }
+
+    /** 用例：超宽文本截断并追加省略号，且实测宽度不超过限定宽 */
+    @Test
+    void ellipsize_longText_fitsMaxWidth() {
+        String text = "一杯敬月光与酒与晚风与小桥流水人家灯火阑珊夜未央人未眠";
+        FontMetrics fm = metrics(15);
+
+        String out = ReportImageRenderer.ellipsize(text, fm, 200);
+
+        assertThat(out).endsWith("…");
+        assertThat(out).hasSizeLessThan(text.length());
+        assertThat(fm.stringWidth(out)).isLessThanOrEqualTo(200);
+    }
+
+    /** 用例：窄到连省略号都放不下时返回空串（宁可缺字不破框） */
+    @Test
+    void ellipsize_extremeNarrow_returnsEmptyOrSuffix() {
+        FontMetrics fm = metrics(15);
+        // 省略号本身宽于限宽 → 返回空；仅容得下省略号 → 返回省略号
+        assertThat(ReportImageRenderer.ellipsize("很长很长的名字", fm, 1)).isEqualTo("");
+    }
+
+    /** 用例：null 文本安全返回 */
+    @Test
+    void ellipsize_nullText_safe() {
+        assertThat(ReportImageRenderer.ellipsize(null, metrics(15), 100)).isNull();
+    }
+
+    /** 假头像服务：不触网，固定返回 16x16 图（覆盖真实头像绘制分支） */
+    static class FakeIconService extends ChampionIconService {
+        FakeIconService() {
+            super(null);
+        }
+
+        @Override
+        protected BufferedImage fetch(int championId) {
+            BufferedImage img = new BufferedImage(16, 16, BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = img.createGraphics();
+            g.setColor(new Color(0x4f8dff));
+            g.fillRect(0, 0, 16, 16);
+            g.dispose();
+            return img;
+        }
     }
 }

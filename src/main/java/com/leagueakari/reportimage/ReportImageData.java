@@ -76,8 +76,6 @@ public class ReportImageData {
         public double damagePerGold;
         /** 称号角标文本：MVP / SVP / 尽力 / 背锅，null 不显示 */
         public String titleTag;
-        /** 焦点卡副行文案（hero 专用） */
-        public String heroSub;
         /** OP Score（hero 卡展示，0-10） */
         public double opScore;
     }
