@@ -73,6 +73,9 @@ class BroadcastCoordinatorTest {
     @Mock
     private PostGameCommentService postGameCommentService;
 
+    @Mock
+    private PostGameSummaryBuilder postGameSummaryBuilder;
+
     private PushProperties pushProperties;
 
     private TeamProperties teamProperties;
@@ -95,7 +98,8 @@ class BroadcastCoordinatorTest {
 
         coordinator = new BroadcastCoordinator(matchMapper, participantMapper, mvpMapper,
                 pushProperties, teamProperties, rosterService, gameDataService, qqBotClient,
-                new ReportImageRenderer(), postGameCommentService, FIXED_CLOCK, new ObjectMapper());
+                new ReportImageRenderer(), postGameCommentService, postGameSummaryBuilder,
+                FIXED_CLOCK, new ObjectMapper());
     }
 
     /**

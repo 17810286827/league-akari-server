@@ -72,6 +72,8 @@ public class BroadcastCoordinator {
     private final ReportImageRenderer reportImageRenderer;
     /** 局后锐评：图发送后生成第二条文本消息；AI 不可用由本编排降级 */
     private final PostGameCommentService postGameCommentService;
+    /** 锐评输入摘要：双方 10 人全量数据（伤害/承伤/经济/称号），供 AI 火力全开地点名 */
+    private final PostGameSummaryBuilder postGameSummaryBuilder;
     private final Clock clock;
     /** JSON 解析：teams_json 资源快照与 stats_json 统计字段 */
     private final ObjectMapper objectMapper;
@@ -214,7 +216,7 @@ public class BroadcastCoordinator {
         String comment;
         try {
             comment = postGameCommentService.generateComment(
-                    buildCommentSummary(match, participants, memberByPuuid, awards));
+                    postGameSummaryBuilder.build(match, participants, memberByPuuid, awards));
         } catch (Exception e) {
             // AI 不可用（key 未配/接口失败/重试后空正文）：发缺席提示，不静默
             log.warn("Post-game comment failed, send absence tip: gameId={}, err={}",
@@ -242,81 +244,6 @@ public class BroadcastCoordinator {
             log.error("AI absence tip send failed: gameId={}", gameId, e);
             markFailed(gameId, "AI 缺席提示发送失败: " + e.getMessage());
         }
-    }
-
-    /**
-     * 组装局后锐评输入摘要（轻量 JSON，只给"点名素材"不给逐人全量）：
-     * 胜负/比分/模式/车队成员（含称号）/焦点成员。英雄用中文名
-     */
-    private Map<String, Object> buildCommentSummary(Match match, List<MatchParticipant> participants,
-                                                    Map<String, TeamRosterService.RosterMember> memberByPuuid,
-                                                    List<MatchMvp> awards) {
-        Map<String, Object> summary = new LinkedHashMap<>();
-        boolean win = match.getWinnerTeamId() != null
-                && match.getWinnerTeamId() == mainTeamIdOf(match, participants, memberByPuuid);
-        summary.put("result", win ? "胜利" : "败北");
-        summary.put("meta", queueName(match.getQueueId()) + " · " + formatDuration(match.getGameDuration()));
-        summary.put("teamName", teamProperties.getName());
-
-        // 车队成员行（含称号：MVP / 尽力）
-        Map<Long, String> titleByParticipant = new HashMap<>();
-        for (MatchMvp award : awards) {
-            if (award.getParticipantId() == null || award.getType() == null) {
-                continue;
-            }
-            if ("MVP".equals(award.getType())) {
-                titleByParticipant.put(award.getParticipantId(), "MVP");
-            } else if ("ACE".equals(award.getType()) || "SVP".equals(award.getType())) {
-                titleByParticipant.put(award.getParticipantId(), "尽力");
-            }
-        }
-        List<Map<String, Object>> fleet = new ArrayList<>();
-        MatchParticipant best = null;
-        int bestKills = -1;
-        for (MatchParticipant p : participants) {
-            if (!memberByPuuid.containsKey(p.getPuuid())) {
-                continue;
-            }
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("name", p.getSummonerName());
-            row.put("champion", safeChampionName(p.getChampionId()));
-            row.put("kda", (p.getKills() == null ? 0 : p.getKills()) + "/"
-                    + (p.getDeaths() == null ? 0 : p.getDeaths()) + "/"
-                    + (p.getAssists() == null ? 0 : p.getAssists()));
-            String title = titleByParticipant.get(p.getId());
-            if (title != null) {
-                row.put("title", title);
-            }
-            fleet.add(row);
-            int kills = p.getKills() == null ? 0 : p.getKills();
-            if (kills > bestKills) {
-                bestKills = kills;
-                best = p;
-            }
-        }
-        summary.put("fleet", fleet);
-        // 焦点：车队内带称号者优先，否则击杀最高者
-        if (best != null) {
-            summary.put("hero", Map.of("name", best.getSummonerName(),
-                    "champion", safeChampionName(best.getChampionId()),
-                    "kda", best.getKills() + "/" + best.getDeaths() + "/" + best.getAssists()));
-        }
-        return summary;
-    }
-
-    /** 车队主队判定（与 buildImageData 同口径）：车队成员多数所在队伍 */
-    private int mainTeamIdOf(Match match, List<MatchParticipant> participants,
-                             Map<String, TeamRosterService.RosterMember> memberByPuuid) {
-        Map<Integer, Long> teamCount = new LinkedHashMap<>();
-        for (MatchParticipant p : participants) {
-            if (memberByPuuid.containsKey(p.getPuuid()) && p.getTeamId() != null) {
-                teamCount.merge(p.getTeamId(), 1L, Long::sum);
-            }
-        }
-        return teamCount.entrySet().stream()
-                .max(Map.Entry.comparingByValue())
-                .map(Map.Entry::getKey)
-                .orElse(match.getWinnerTeamId() == null ? 100 : match.getWinnerTeamId());
     }
 
     /** 推送成功：状态 SENT + 战报消息发送时间 */

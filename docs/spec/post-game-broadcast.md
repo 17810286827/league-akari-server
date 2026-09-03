@@ -103,7 +103,7 @@ T+0.5s  异步生成局后锐评（LLM 非流式，~25s）
 
 ## 7. 局后锐评（AI）
 
-- **Prompt**：新增 `resources/ai/post-game-prompt.md`（车队视角群聊风格：点名颁奖 🏆战神/💀战犯/🎖️奉献，火力对局不对人，正文 150-250 字，可直接发群，不输出 Markdown 标题）。输入 = 战报图同源数据的紧凑摘要 JSON。
+- **Prompt**：`resources/ai/post-game-prompt.md`（火力全开版：虎扑/贴吧风格全力开团、句句带数据背书、正文约 200-300 字、可直接发群、不输出 Markdown 标题；红线仅"火力对局不对人"一条）。输入 = `PostGameSummaryBuilder` 组装的**双方 10 人全量摘要**（每行：name/champion/win/member/kda/dmg/taken/gold/title，含比分与车队成员标记），对手可见才能评对位/服对面/嘴硬。
 - **调用**：仿 `WeeklyAiCommentService`（非流式、超时、`thinking=false` 直出正文、UA 伪装、10min 缓存不适用——每局唯一）；**失败重试 2 次**（指数退避），耗尽 → 走 §4 缺席提示。
 - 与单局 AI 分析（`AiAnalysisService`，SSE）复用 HttpClient/线程池基建，不复用其 self 视角 prompt。
 
