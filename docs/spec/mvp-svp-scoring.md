@@ -1,3 +1,7 @@
+> **⚠️ 历史文档（v1 评分规格）**：本文描述的第一代 MvpScoringEngine 已被 OpScore 引擎取代并删除
+> （评分现行实现见 OpScoreEngine / MatchMvpService；大乱斗修正按 queueId 判定，见 CONTEXT.md）。
+> 本文仅作演进史参考，实现细节以代码与 CONTEXT.md 为准。
+
 # MVP/SVP 评选功能规格
 
 ## Problem Statement

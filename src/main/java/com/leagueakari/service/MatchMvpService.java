@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -173,13 +174,26 @@ public class MatchMvpService {
         return cached;
     }
 
+    /**
+     * 大乱斗系队列 ID（极地大乱斗 450 / 海克斯乱斗 2400、2410、2450）——大乱斗修正的判定依据。
+     * <p>必须按 queueId 判定而不能用 gameMode 字符串：LCU 的 CHERRY 实为斗魂竞技场，
+     * 旧评分引擎曾因此误判（该分支从未命中）。理由只在此处说一次，其余引用点见本注释。</p>
+     */
+    private static final Set<Integer> ARAM_QUEUE_IDS = Set.of(450, 2400, 2410, 2450);
+
     private MvpScoringInput toScoringInput(MatchParticipant p, Match match) {
         JsonNode stats = parseStats(p.getStatsJson());
+        boolean aramMode = match.getQueueId() != null && ARAM_QUEUE_IDS.contains(match.getQueueId());
+        if (aramMode) {
+            // 关键评分节点：大乱斗修正入口（详见 ARAM_QUEUE_IDS 注释）
+            log.debug("大乱斗系对局 queueId={}，评分输入启用大乱斗修正（辅助视野归零）", match.getQueueId());
+        }
         return MvpScoringInput.builder()
                 .participantId(p.getId())
                 .championId(p.getChampionId())
                 .teamId(p.getTeamId())
                 .win(p.getWin())
+                .aramMode(aramMode)
                 .totalDamageDealtToChampions(d(stats, "totalDamageDealtToChampions"))
                 .kills(p.getKills())
                 .deaths(p.getDeaths())

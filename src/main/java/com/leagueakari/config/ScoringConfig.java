@@ -37,10 +37,4 @@ public class ScoringConfig {
 
     /** 最大基线混合比（达到 thresholdMax 后固定为此值） */
     private double baselineMixMax = 0.5;
-
-    /**
-     * 按职业的冷启动基线默认值（每分钟期望值）
-     * key: 职业名, value: 维度名 → 默认每分钟值
-     */
-    private Map<String, Map<String, Double>> baselineDefaults = new HashMap<>();
 }

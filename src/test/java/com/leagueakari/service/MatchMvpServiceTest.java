@@ -22,6 +22,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DuplicateKeyException;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -173,6 +175,44 @@ class MatchMvpServiceTest {
                 .participantId(pid).championId(cid).teamId(tid).win(win)
                 .totalScore(total).opScore(opScore).grade(grade).multiKillBonus(bonus)
                 .dimensionScores(dims).build();
+    }
+
+    @Test
+    @DisplayName("大乱斗修正入口：queueId ∈ {450,2400,2410,2450} 时评分输入 aramMode=true，普通队列 false")
+    void evaluateAndSave_derivesAramModeFromQueueId() {
+        mockClassMap();
+        mockEmptyBaseline();
+        when(opScoreEngine.score(any(), any(), any())).thenReturn(makeResult(101, 103));
+
+        // 大乱斗系队列逐一验证：极地大乱斗 450 + 海克斯乱斗 2400/2410/2450
+        for (Integer aramQueue : List.of(450, 2400, 2410, 2450)) {
+            Match m = buildMatch(1L, 100);
+            m.setQueueId(aramQueue);
+            matchMvpService.evaluateAndSave(m, List.of(winnerAdc(), loserAdc()));
+            assertThat(capturedInput(101L).isAramMode())
+                    .as("queueId=%s 应推导 aramMode=true", aramQueue).isTrue();
+        }
+        // 普通队列不受影响：单双排 420 / 匹配 430 / 灵活 440 / 斗魂竞技场 1700 / 缺失（Arrays.asList 容纳 null）
+        for (Integer normalQueue : Arrays.asList(420, 430, 440, 1700, null)) {
+            Match m = buildMatch(1L, 100);
+            m.setQueueId(normalQueue);
+            matchMvpService.evaluateAndSave(m, List.of(winnerAdc(), loserAdc()));
+            assertThat(capturedInput(101L).isAramMode())
+                    .as("queueId=%s 应推导 aramMode=false", normalQueue).isFalse();
+        }
+    }
+
+    /** 从引擎 mock 调用中捕获指定参与者的评分输入（多次调用时取最近一次） */
+    @SuppressWarnings("unchecked")
+    private com.leagueakari.dto.MvpScoringInput capturedInput(long participantId) {
+        ArgumentCaptor<List<com.leagueakari.dto.MvpScoringInput>> captor =
+                ArgumentCaptor.forClass((Class) List.class);
+        verify(opScoreEngine, atLeastOnce()).score(captor.capture(), any(), any());
+        return captor.getAllValues().stream()
+                .flatMap(List::stream)
+                .filter(in -> in.getParticipantId() == participantId)
+                .reduce((first, second) -> second)
+                .orElseThrow(() -> new AssertionError("participant " + participantId + " input not captured"));
     }
 
     @Test

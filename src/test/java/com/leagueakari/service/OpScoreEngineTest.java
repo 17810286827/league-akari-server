@@ -65,6 +65,7 @@ class OpScoreEngineTest {
         d.put("quadraKills", 0);
         d.put("pentaKills", 0);
         d.put("gameDurationSeconds", 1200);
+        d.put("aramMode", false);
         d.putAll(overrides);
         return MvpScoringInput.builder()
                 .participantId(id)
@@ -87,7 +88,17 @@ class OpScoreEngineTest {
                 .quadraKills((Integer) d.get("quadraKills"))
                 .pentaKills((Integer) d.get("pentaKills"))
                 .gameDurationSeconds((Integer) d.get("gameDurationSeconds"))
+                .aramMode((Boolean) d.get("aramMode"))
                 .build();
+    }
+
+    /** 构造「辅助职业有视野权重」的权重表：生产 yml 中辅助 vision=0，本组用例需要非零权重才能验证归零逻辑 */
+    static Map<String, Map<String, Double>> supportVisionWeights() {
+        Map<String, Map<String, Double>> w = new HashMap<>();
+        w.put("SUPPORT", Map.of("kda", 0.30, "damage", 0.0, "gold", 0.10, "tank", 0.05, "vision", 0.25,
+                "healShield", 0.10, "cc", 0.15, "turret", 0.05));
+        w.put("UNKNOWN", defaultWeights().get("UNKNOWN"));
+        return w;
     }
 
     private Map<Integer, String> classMap(int... champions) {
@@ -304,6 +315,52 @@ class OpScoreEngineTest {
         assertThat(engine.grade(4.9)).isEqualTo("偏低");
         assertThat(engine.grade(3.2)).isEqualTo("较差");
         assertThat(engine.grade(2.9)).isEqualTo("糟糕");
+    }
+
+    // ===== 大乱斗修正 =====
+
+    @Test
+    @DisplayName("大乱斗修正：大乱斗对局下辅助的视野维度不计入总分（权重归零）")
+    void aramSupportVisionExcluded() {
+        // 辅助视野权重非零的自定义权重表（生产 yml 辅助 vision=0，规则处于休眠——见权重表注释）
+        config.setWeights(supportVisionWeights());
+        // 两名辅助（英雄 16），视野得分悬殊：A=100，B=0
+        MvpScoringInput a = player(1, 100, true, 16, Map.of("aramMode", true, "visionScore", 100.0));
+        MvpScoringInput b = player(2, 100, true, 16, Map.of("aramMode", true));
+        var result = engine.score(List.of(a, b), Map.of(16, "SUPPORT"), null);
+        // 视野维度权重归零 → 结果中不应出现 vision 维度，且总分差异只来自 kda/gold 等（全零 → 两人同分）
+        assertThat(byId(result, 1L).getDimensionScores()).doesNotContainKey("vision");
+        assertThat(byId(result, 1L).getTotalScore()).isEqualTo(byId(result, 2L).getTotalScore());
+    }
+
+    @Test
+    @DisplayName("大乱斗修正不误伤：普通对局辅助的视野维度正常参与评分")
+    void classicSupportVisionStillCounted() {
+        config.setWeights(supportVisionWeights());
+        // 同样两名辅助、同样悬殊视野，但 aramMode=false：视野维度必须出现且 A 得满位次分
+        MvpScoringInput a = player(1, 100, true, 16, Map.of("visionScore", 100.0));
+        MvpScoringInput b = player(2, 100, true, 16, Map.of());
+        var result = engine.score(List.of(a, b), Map.of(16, "SUPPORT"), null);
+        assertThat(byId(result, 1L).getDimensionScores()).containsKey("vision");
+        assertThat(byId(result, 1L).getDimensionScores().get("vision").getTeamRank()).isEqualTo(100.0);
+        // 视野权重 0.25：A 的总分应高于 B（视野位次 100 vs 0 的加权贡献）
+        assertThat(byId(result, 1L).getTotalScore()).isGreaterThan(byId(result, 2L).getTotalScore());
+    }
+
+    @Test
+    @DisplayName("大乱斗修正不误伤其他职业：大乱斗下非辅助职业的视野维度不受影响")
+    void aramNonSupportVisionUnaffected() {
+        // 自定义 UNKNOWN 权重表里给 vision 非零权重，验证规则只对 SUPPORT 生效
+        Map<String, Map<String, Double>> w = new HashMap<>();
+        w.put("UNKNOWN", Map.of("kda", 0.30, "damage", 0.25, "gold", 0.10, "tank", 0.05, "vision", 0.10,
+                "healShield", 0.05, "cc", 0.10, "turret", 0.05));
+        config.setWeights(w);
+        MvpScoringInput a = player(1, 100, true, 1, Map.of("aramMode", true, "visionScore", 100.0));
+        MvpScoringInput b = player(2, 100, true, 1, Map.of("aramMode", true));
+        var result = engine.score(List.of(a, b), classMap(1, 1), null);
+        // 非 SUPPORT 职业：大乱斗下视野维度照常参与
+        assertThat(byId(result, 1L).getDimensionScores()).containsKey("vision");
+        assertThat(byId(result, 1L).getDimensionScores().get("vision").getTeamRank()).isEqualTo(100.0);
     }
 
     private OpScoreResult.PlayerScore byId(OpScoreResult result, long id) {

@@ -23,6 +23,12 @@ public class MvpScoringInput {
     /** 是否获胜：胜方选 MVP，负方选 SVP */
     private Boolean win;
 
+    /**
+     * 是否大乱斗系对局（按 queueId 推导，判定依据与理由见 MatchMvpService 的 ARAM_QUEUE_IDS 常量注释）。
+     * <p>大乱斗修正入口：该模式下辅助的视野维度权重视为 0。</p>
+     */
+    private boolean aramMode;
+
     // ===== 评分维度原始值 =====
 
     /** 对英雄总伤害（totalDamageDealtToChampions） */
@@ -39,9 +45,6 @@ public class MvpScoringInput {
 
     /** 获得金币（goldEarned） */
     private Integer goldEarned;
-
-    /** 补刀（totalMinionsKilled） */
-    private Integer totalMinionsKilled;
 
     /** 承受总伤害（totalDamageTaken） */
     private Double totalDamageTaken;

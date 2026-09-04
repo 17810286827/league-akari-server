@@ -20,6 +20,8 @@ import java.util.stream.Collectors;
  * <p>胜方 op_score 最高者为 MVP，败方 op_score 最高者为 ACE。
  * 评选以 op_score（含多杀加分，与界面展示的评分一致）为准，总分相同加分反超时同样生效；
  * op_score 平局时按加权总分决胜。</p>
+ * <p>大乱斗修正：大乱斗系对局（按 queueId 判定，由评分输入 aramMode 携带）下，
+ * 辅助职业的视野维度权重视为 0——地图无草丛/无插眼，视野数据无意义。</p>
  */
 @Slf4j
 @Component
@@ -42,6 +44,9 @@ public class OpScoreEngine {
 
     /** 职业常量 */
     static final String CLASS_UNKNOWN = "UNKNOWN";
+
+    /** 辅助职业常量：大乱斗修正的目标职业 */
+    static final String CLASS_SUPPORT = "SUPPORT";
 
     private final ScoringConfig config;
 
@@ -98,9 +103,9 @@ public class OpScoreEngine {
     OpScoreResult.PlayerScore scorePlayer(MvpScoringInput in, List<MvpScoringInput> team,
                                           Map<Integer, String> championClassMap,
                                           Map<Integer, Map<String, Double>> baseline) {
-        // 1. 确定职业（未知 → 回退均衡）
+        // 1. 确定职业（未知 → 回退均衡）+ 大乱斗修正
         String classKey = resolveClass(in.getChampionId(), championClassMap);
-        Map<String, Double> weights = effectiveWeights(classKey);
+        Map<String, Double> weights = effectiveWeights(classKey, in.isAramMode(), in.getChampionId());
 
         // 2. 各维度每分钟值
         double minutes = minutes(in.getGameDurationSeconds());
@@ -183,13 +188,23 @@ public class OpScoreEngine {
         return (n - min) / (double) (max - min) * mixMax;
     }
 
-    /** 生成有效权重表：权重为 0 的维度不出现在结果中 */
-    Map<String, Double> effectiveWeights(String classKey) {
+    /**
+     * 生成有效权重表：权重为 0 的维度不出现在结果中。
+     * <p>大乱斗修正（ARAM Adjustment）的生效点：大乱斗系对局下辅助职业的视野维度
+     * 权重视为 0（地图无草丛/无插眼，视野数据无意义）。判定依据是评分输入的
+     * aramMode（由 MatchMvpService 按 queueId 推导，理由见其常量注释）。</p>
+     */
+    Map<String, Double> effectiveWeights(String classKey, boolean aramMode, Integer championId) {
         Map<String, Double> all = config.getWeights()
                 .getOrDefault(classKey, config.getWeights().getOrDefault(CLASS_UNKNOWN, Map.of()));
         Map<String, Double> out = new HashMap<>();
         for (Map.Entry<String, Double> e : all.entrySet()) {
             if (e.getValue() != null && e.getValue() > 0) {
+                // 大乱斗修正：辅助的视野维度不参与评分（当前生产权重辅助 vision=0，此为休眠保障）
+                if (aramMode && CLASS_SUPPORT.equals(classKey) && DIM_VISION.equals(e.getKey())) {
+                    log.debug("大乱斗修正生效：辅助英雄 {} 的视野维度权重归零", championId);
+                    continue;
+                }
                 out.put(e.getKey(), e.getValue());
             }
         }
