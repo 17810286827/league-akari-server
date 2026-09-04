@@ -32,7 +32,7 @@ public class HttpClientConfig {
     @Bean(destroyMethod = "close")
     public CloseableHttpClient httpClient() {
         // 连接池管理：设置每连接空闲保活与整体上限。
-        // 响应超时 300 秒：deepseek-v4-flash 为推理模型，思考阶段先输出长思维链
+        // 响应超时 300 秒：AI 推理模型思考阶段先输出长思维链
         // 再输出正文，整个流可能持续数分钟，需给足读超时
         PoolingHttpClientConnectionManager connectionManager =
                 PoolingHttpClientConnectionManagerBuilder.create()

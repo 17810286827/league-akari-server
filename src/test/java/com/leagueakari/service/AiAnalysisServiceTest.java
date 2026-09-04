@@ -5,6 +5,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.config.AiProperties;
 import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.entity.MatchParticipant;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
@@ -87,10 +88,24 @@ class AiAnalysisServiceTest {
         // promptFile 指向不存在的文件：走内置默认提示词，避免依赖 classpath 资源；
         // thinking=false + 默认采样参数：与生产配置一致
         service = new AiAnalysisService(
-                "https://ai.test", "test-key", "test-model", "ai/not-exist.md",
-                false, 0.7, 0.6, 0.3, 2048,
+                aiProps("test-key", false),
                 matchService, objectMapper, httpClient, gameDataService, Runnable::run);
         events.clear();
+    }
+
+    /** 构造 AI 配置（yaml 唯一真值的测试替身；thinking/apiKey 按用例调整） */
+    private AiProperties aiProps(String apiKey, boolean thinking) {
+        AiProperties props = new AiProperties();
+        props.setBaseUrl("https://ai.test");
+        props.setApiKey(apiKey);
+        props.setModel("test-model");
+        props.setPromptFile("ai/not-exist.md");
+        props.setThinking(thinking);
+        props.setTemperature(0.7);
+        props.setFrequencyPenalty(0.6);
+        props.setPresencePenalty(0.3);
+        props.setMaxTokens(2048);
+        return props;
     }
 
     /** 模拟 AI 接口响应：status 状态码 + 响应体（SSE 流或错误 JSON） */
@@ -295,8 +310,7 @@ class AiAnalysisServiceTest {
         // thinking=true 时请求体不得携带 chat_template_kwargs（保持模型默认推理模式，
         // 前端通过 reasoning 事件灰字展示思维链）
         AiAnalysisService thinkingService = new AiAnalysisService(
-                "https://ai.test", "test-key", "test-model", "ai/not-exist.md",
-                true, 0.7, 0.6, 0.3, 2048,
+                aiProps("test-key", true),
                 matchService, new ObjectMapper(), httpClient, gameDataService, Runnable::run);
         mockAiResponse(200, SSE_STREAM);
         when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
@@ -364,8 +378,7 @@ class AiAnalysisServiceTest {
     void validateFailsWithoutApiKey() {
         // API Key 未配置：前置校验直接抛异常（由全局处理器转 503）
         AiAnalysisService noKey = new AiAnalysisService(
-                "https://ai.test", "", "test-model", "ai/not-exist.md",
-                false, 0.7, 0.6, 0.3, 2048,
+                aiProps("", false),
                 matchService, new ObjectMapper(), httpClient, gameDataService, Runnable::run);
 
         assertThatThrownBy(() -> noKey.validateAndConfigured(123L))

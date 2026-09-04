@@ -2,6 +2,7 @@ package com.leagueakari.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.config.AiProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
@@ -9,7 +10,6 @@ import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.core5.http.ContentType;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -39,6 +39,7 @@ public class PostGameCommentService {
 
     private final String baseUrl;
     private final String apiKey;
+    /** 局后锐评独立模型（ai.post-game-model：与 ai.model 解耦，见 application.yml 注释） */
     private final String model;
     private final String promptFile;
     private final double temperature;
@@ -46,23 +47,17 @@ public class PostGameCommentService {
     private final CloseableHttpClient httpClient;
     private final ObjectMapper objectMapper;
 
+    /** 构造注入：AI 配置统一取自 AiProperties（yaml 唯一真值，见 docs/adr/0004） */
     public PostGameCommentService(
-            @Value("${ai.base-url}") String baseUrl,
-            @Value("${ai.api-key:}") String apiKey,
-            // 局后锐评独立模型：短任务用 deepseek-v4-flash（thinking=false 真正生效，
-            // 直出正文首 token ~1s；mimo-v2.5 无视该参数仍先推理 ~60s，实测差 20 倍）
-            @Value("${ai.post-game-model:${ai.model:mimo-v2.5}}") String model,
-            @Value("${ai.post-game-prompt-file:ai/post-game-prompt.md}") String promptFile,
-            @Value("${ai.temperature:1.0}") double temperature,
-            @Value("${ai.post-game-max-tokens:2048}") int maxTokens,
+            AiProperties ai,
             CloseableHttpClient httpClient,
             ObjectMapper objectMapper) {
-        this.baseUrl = baseUrl;
-        this.apiKey = apiKey;
-        this.model = model;
-        this.promptFile = promptFile;
-        this.temperature = temperature;
-        this.maxTokens = maxTokens;
+        this.baseUrl = ai.getBaseUrl();
+        this.apiKey = ai.getApiKey();
+        this.model = ai.getPostGameModel();
+        this.promptFile = ai.getPostGamePromptFile();
+        this.temperature = ai.getTemperature();
+        this.maxTokens = ai.getPostGameMaxTokens();
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
     }

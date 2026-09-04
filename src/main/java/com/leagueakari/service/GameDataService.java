@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * 游戏资源数据服务：英雄/装备的官方中文名映射（CommunityDragon 镜像的 LCU game-data，
  * 与前端 game-resource.ts 同一数据源）。
- * <p>用途：AI 分析摘要组装前把英雄 ID/装备 ID 转换为中文名——实测 deepseek-v4-flash
+ * <p>用途：AI 分析摘要组装前把英雄 ID/装备 ID 转换为中文名——实测推理模型
  * 在非思考模式下凭记忆猜 ID 会出错（103 猜成瑞兹），转换后模型不再需要猜。
  * 数据懒加载 + JVM 内存缓存（首次调用拉取，失败下次重试，中文 locale 失败降级 default 英文名）</p>
  */

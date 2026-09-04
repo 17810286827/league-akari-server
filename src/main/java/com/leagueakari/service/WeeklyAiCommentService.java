@@ -2,6 +2,7 @@ package com.leagueakari.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.config.AiProperties;
 import com.leagueakari.dto.WeeklyReportResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
@@ -11,7 +12,6 @@ import org.apache.hc.core5.http.ContentType;
 import org.apache.hc.core5.http.HttpEntity;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -51,7 +51,7 @@ public class WeeklyAiCommentService {
     /** API Key（环境变量 AI_API_KEY） */
     private final String apiKey;
 
-    /** 模型名 */
+    /** 模型名（ai.model：与单局分析共用同一键） */
     private final String model;
 
     /** 周锐评提示词文件（classpath，可直接编辑，改动即时生效） */
@@ -69,21 +69,17 @@ public class WeeklyAiCommentService {
     /** 缓存：周标签 → 锐评条目（成功才缓存，失败下次重试） */
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
+    /** 构造注入：AI 配置统一取自 AiProperties（yaml 唯一真值，见 docs/adr/0004） */
     public WeeklyAiCommentService(
-            @Value("${ai.base-url}") String baseUrl,
-            @Value("${ai.api-key:}") String apiKey,
-            @Value("${ai.model:mimo-v2.5}") String model,
-            @Value("${ai.weekly-prompt-file:ai/weekly-prompt.md}") String promptFile,
-            @Value("${ai.temperature:1.0}") double temperature,
-            @Value("${ai.weekly-max-tokens:1536}") int maxTokens,
+            AiProperties ai,
             CloseableHttpClient httpClient,
             ObjectMapper objectMapper) {
-        this.baseUrl = baseUrl;
-        this.apiKey = apiKey;
-        this.model = model;
-        this.promptFile = promptFile;
-        this.temperature = temperature;
-        this.maxTokens = maxTokens;
+        this.baseUrl = ai.getBaseUrl();
+        this.apiKey = ai.getApiKey();
+        this.model = ai.getModel();
+        this.promptFile = ai.getWeeklyPromptFile();
+        this.temperature = ai.getTemperature();
+        this.maxTokens = ai.getWeeklyMaxTokens();
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
     }

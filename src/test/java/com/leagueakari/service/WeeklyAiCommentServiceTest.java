@@ -1,6 +1,7 @@
 package com.leagueakari.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.config.AiProperties;
 import com.leagueakari.dto.WeeklyReportResponse;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
@@ -32,12 +33,16 @@ class WeeklyAiCommentServiceTest {
     private CloseableHttpClient httpClient;
     private WeeklyAiCommentService service;
 
-    /** 构造指定 Key 的被测服务（其余配置固定） */
+    /** 构造指定 Key 的被测服务（其余配置固定；测试替身属性对应 ai.* 键） */
     private WeeklyAiCommentService serviceWithKey(String apiKey) {
-        return new WeeklyAiCommentService(
-                "https://ai.example.com/v1", apiKey, "test-model",
-                "ai/weekly-prompt.md", 1.0, 512,
-                httpClient, new ObjectMapper());
+        AiProperties props = new AiProperties();
+        props.setBaseUrl("https://ai.example.com/v1");
+        props.setApiKey(apiKey);
+        props.setModel("test-model");
+        props.setWeeklyPromptFile("ai/weekly-prompt.md");
+        props.setTemperature(1.0);
+        props.setWeeklyMaxTokens(512);
+        return new WeeklyAiCommentService(props, httpClient, new ObjectMapper());
     }
 
     /** 模拟 AI 接口响应：状态码 + JSON 体（getContent 每次返回新流，支持多次读取/缓存测试） */

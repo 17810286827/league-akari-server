@@ -3,6 +3,7 @@ package com.leagueakari.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.config.AiProperties;
 import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.util.ClientDisconnectDetector;
@@ -13,7 +14,6 @@ import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.core5.http.ContentType;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -34,7 +34,7 @@ import java.util.function.Consumer;
 /**
  * AI 对局表现分析（service 层）：
  * 取指定对局详情 → 组装"系统提示词（md 文件，可编辑）+ 对局数据摘要" →
- * 流式调用 opencode go 的 chat/completions（stream=true，模型 deepseek-v4-flash，
+ * 流式调用 opencode go 的 chat/completions（stream=true，模型取配置 ai.model，
  * 经 chat_template_kwargs.thinking=false 关闭思考模式，直接输出正文）→
  * 解析 SSE 增量并逐块推送给前端（打字机效果）。
  * 结果做 JVM 缓存（按 gameId，2 分钟过期），过期前重复分析直接推送缓存全文（fromCache=true）。
@@ -84,8 +84,8 @@ public class AiAnalysisService {
 
     /**
      * 输出 token 上限（ai.max-tokens）：思维链与正文共享预算。
-     * deepseek-v4-flash 思考模式会无限展开思维链（实测最长 2046 块/90s+），
-     * 设 2048 后思维链被预算压力收敛（549 块），整流 38.9s，正文仍完整输出
+     * 实测推理模型思考模式会无限展开思维链（最长 2046 块/90s+），
+     * 设上限后思维链被预算压力收敛，正文仍完整输出
      */
     private final int maxTokens;
 
@@ -103,32 +103,25 @@ public class AiAnalysisService {
     private final Map<Long, CacheEntry> analysisCache = new ConcurrentHashMap<>();
 
     /**
-     * 构造注入配置与依赖
+     * 构造注入：AI 配置统一取自 AiProperties（yaml 唯一真值，见 docs/adr/0004），
+     * 其余为运行时依赖
      */
     public AiAnalysisService(
-            @Value("${ai.base-url}") String baseUrl,
-            @Value("${ai.api-key:}") String apiKey,
-            @Value("${ai.model:deepseek-v4-flash}") String model,
-            @Value("${ai.prompt-file:ai/system-prompt.md}") String promptFile,
-            @Value("${ai.thinking:false}") boolean thinking,
-            @Value("${ai.temperature:0.7}") double temperature,
-            @Value("${ai.frequency-penalty:0.6}") double frequencyPenalty,
-            @Value("${ai.presence-penalty:0.3}") double presencePenalty,
-            @Value("${ai.max-tokens:2048}") int maxTokens,
+            AiProperties ai,
             MatchService matchService,
             ObjectMapper objectMapper,
             CloseableHttpClient httpClient,
             GameDataService gameDataService,
             Executor aiStreamExecutor) {
-        this.baseUrl = baseUrl;
-        this.apiKey = apiKey;
-        this.model = model;
-        this.promptFile = promptFile;
-        this.thinking = thinking;
-        this.temperature = temperature;
-        this.frequencyPenalty = frequencyPenalty;
-        this.presencePenalty = presencePenalty;
-        this.maxTokens = maxTokens;
+        this.baseUrl = ai.getBaseUrl();
+        this.apiKey = ai.getApiKey();
+        this.model = ai.getModel();
+        this.promptFile = ai.getPromptFile();
+        this.thinking = ai.isThinking();
+        this.temperature = ai.getTemperature();
+        this.frequencyPenalty = ai.getFrequencyPenalty();
+        this.presencePenalty = ai.getPresencePenalty();
+        this.maxTokens = ai.getMaxTokens();
         this.matchService = matchService;
         this.objectMapper = objectMapper;
         this.httpClient = httpClient;
@@ -379,7 +372,7 @@ public class AiAnalysisService {
     /**
      * 流式调用 opencode go 的 chat/completions（OpenAI 兼容格式）：
      * 请求体 { model, messages: [system, user], stream: true }。
-     * 实测 deepseek-v4-flash 在 opencode 网关为推理模式：流中先输出大量
+     * 实测接入模型在 opencode 网关为推理模式：流中先输出大量
      * delta.reasoning_content（思维链），最后才输出 delta.content（最终回答），
      * 无法通过请求参数关闭——因此两者都解析：思维链交 reasoningConsumer（前端灰字展示，
      * 让用户看到模型"正在思考"而非无响应），正文交 chunkConsumer。
@@ -399,7 +392,7 @@ public class AiAnalysisService {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("model", model);
         payload.put("stream", true);
-        // 采样参数：抑制长文本重复输出（deepseek-v4-flash 生成超长内容时易循环重复，
+        // 采样参数：抑制长文本重复输出（推理模型生成超长内容时易循环重复，
         // temperature 降随机性、frequency_penalty 惩罚已出现词、presence_penalty 鼓励新话题；
         // 实测该组合输出无重复且字数落在提示词要求区间）
         payload.put("temperature", temperature);

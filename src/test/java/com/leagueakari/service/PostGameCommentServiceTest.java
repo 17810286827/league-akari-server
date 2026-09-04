@@ -1,6 +1,7 @@
 package com.leagueakari.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.config.AiProperties;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
@@ -39,9 +40,19 @@ class PostGameCommentServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PostGameCommentService(
-                "https://opencode.ai/zen/go/v1", "test-key", "mimo-v2.5",
-                "ai/post-game-prompt.md", 1.0, 1024, httpClient, new ObjectMapper());
+        service = serviceWith("test-key");
+    }
+
+    /** 构造指定 Key 的被测服务（其余配置固定；测试替身属性对应 ai.* 键） */
+    private PostGameCommentService serviceWith(String apiKey) {
+        AiProperties props = new AiProperties();
+        props.setBaseUrl("https://opencode.ai/zen/go/v1");
+        props.setApiKey(apiKey);
+        props.setPostGameModel("test-model");
+        props.setPostGamePromptFile("ai/post-game-prompt.md");
+        props.setTemperature(1.0);
+        props.setPostGameMaxTokens(1024);
+        return new PostGameCommentService(props, httpClient, new ObjectMapper());
     }
 
     /** 最小局后摘要：胜负、车队成员与焦点 */
@@ -134,9 +145,7 @@ class PostGameCommentServiceTest {
     /** 用例：API Key 未配置 → 快速失败，不发任何请求 */
     @Test
     void generateComment_failsFastWithoutApiKey() throws Exception {
-        PostGameCommentService noKey = new PostGameCommentService(
-                "https://opencode.ai/zen/go/v1", "", "mimo-v2.5",
-                "ai/post-game-prompt.md", 1.0, 1024, httpClient, new ObjectMapper());
+        PostGameCommentService noKey = serviceWith("");
 
         assertThatThrownBy(() -> noKey.generateComment(summary()))
                 .isInstanceOf(IllegalStateException.class)
