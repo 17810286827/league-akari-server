@@ -6,7 +6,7 @@ import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.dto.PageResponse;
 import com.leagueakari.dto.TimelineSyncRequest;
 import com.leagueakari.service.AiAnalysisService;
-import com.leagueakari.service.BroadcastCoordinator;
+import com.leagueakari.broadcast.BroadcastCoordinator;
 import com.leagueakari.service.MatchIngestService;
 import com.leagueakari.service.MatchNotFoundException;
 import com.leagueakari.service.MatchQueryService;

@@ -2,7 +2,7 @@ package com.leagueakari.qqbot;
 
 import com.leagueakari.reportimage.ReportImageData;
 import com.leagueakari.reportimage.ReportImageRenderer;
-import com.leagueakari.service.PostGameCommentService;
+import com.leagueakari.broadcast.PostGameCommentService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;

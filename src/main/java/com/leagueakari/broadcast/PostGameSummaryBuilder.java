@@ -1,6 +1,5 @@
-package com.leagueakari.service;
+package com.leagueakari.broadcast;
 
-import com.leagueakari.service.FleetGameSummary.Row;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -36,9 +35,9 @@ public class PostGameSummaryBuilder {
     }
 
     /** 摘要行 → AI JSON 行：kda 拼串、数值字段用省 token 缩写、称号语义透传 */
-    private List<Map<String, Object>> projectRows(List<Row> rows) {
+    private List<Map<String, Object>> projectRows(List<FleetGameSummary.Row> rows) {
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Row r : rows) {
+        for (FleetGameSummary.Row r : rows) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("name", r.getSummonerName());
             row.put("champion", r.getChampionName());

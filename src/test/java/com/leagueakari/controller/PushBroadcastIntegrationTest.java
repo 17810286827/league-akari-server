@@ -7,7 +7,7 @@ import com.leagueakari.dto.ParticipantSyncRequest;
 import com.leagueakari.entity.Match;
 import com.leagueakari.mapper.MatchMapper;
 import com.leagueakari.qqbot.QqBotClient;
-import com.leagueakari.service.PostGameCommentService;
+import com.leagueakari.broadcast.PostGameCommentService;
 import com.leagueakari.service.TeamRosterService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;

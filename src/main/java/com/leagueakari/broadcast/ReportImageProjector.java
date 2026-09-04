@@ -1,4 +1,4 @@
-package com.leagueakari.service;
+package com.leagueakari.broadcast;
 
 import com.leagueakari.reportimage.ReportImageData;
 import org.springframework.stereotype.Component;

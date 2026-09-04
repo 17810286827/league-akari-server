@@ -1,4 +1,4 @@
-package com.leagueakari.service;
+package com.leagueakari.broadcast;
 
 import lombok.Builder;
 import lombok.Data;

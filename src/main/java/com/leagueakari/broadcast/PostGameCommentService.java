@@ -1,4 +1,4 @@
-package com.leagueakari.service;
+package com.leagueakari.broadcast;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.ai.AiClient;
