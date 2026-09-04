@@ -1,22 +1,14 @@
 package com.leagueakari.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.ai.AiClient;
+import com.leagueakari.ai.AiCompletionRequest;
 import com.leagueakari.config.AiProperties;
 import com.leagueakari.dto.WeeklyReportResponse;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.hc.client5.http.classic.methods.HttpPost;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
-import org.apache.hc.core5.http.ContentType;
-import org.apache.hc.core5.http.HttpEntity;
-import org.apache.hc.core5.http.io.entity.EntityUtils;
-import org.apache.hc.core5.http.io.entity.StringEntity;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -25,9 +17,11 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 车队周报 AI 锐评服务（外部 I/O 接缝）：
+ * 车队周报 AI 锐评服务（业务编排层）：
  * 把周报聚合摘要组装为一次 AI 调用（非流式），输出一段可直接发群的锐评文本。
  * 独立于 TeamStatsService——聚合口径不依赖 AI，AI 失败由调用方优雅降级。
+ * <p>HTTP 调用统一走公共 {@link AiClient}（见 docs/adr/0005），本服务只负责
+ * 业务编排：摘要组装、提示词加载、缓存与空正文重试。</p>
  * <p>缓存：按周标签缓存生成结果（10 分钟 TTL）——同一周重复生成不重复计费；
  * 过期后重新生成（数据回填变化时锐评也会随之刷新）。</p>
  */
@@ -41,29 +35,16 @@ public class WeeklyAiCommentService {
     /** 缓存有效期：10 分钟（毫秒）。周报数据一周一变，10 分钟足够覆盖页内反复刷新 */
     private static final long CACHE_TTL_MS = 10 * 60 * 1000L;
 
-    /** 浏览器 UA：opencode go 经 Cloudflare 防护，无 UA 会被 403/503 拦截（与对局分析一致） */
-    private static final String BROWSER_USER_AGENT =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
-
-    /** opencode go API 基础地址（OpenAI 兼容） */
-    private final String baseUrl;
-
-    /** API Key（环境变量 AI_API_KEY） */
+    /** API Key（环境变量 AI_API_KEY；前置校验用） */
     private final String apiKey;
-
-    /** 模型名（ai.model：与单局分析共用同一键） */
-    private final String model;
 
     /** 周锐评提示词文件（classpath，可直接编辑，改动即时生效） */
     private final String promptFile;
 
-    /** 采样温度 */
-    private final double temperature;
+    /** 采样参数（组装后经 AiCompletionRequest 显式传给 AiClient，见 docs/adr/0005） */
+    private final AiCompletionRequest completionRequest;
 
-    /** 输出 token 上限 */
-    private final int maxTokens;
-
-    private final CloseableHttpClient httpClient;
+    private final AiClient aiClient;
     private final ObjectMapper objectMapper;
 
     /** 缓存：周标签 → 锐评条目（成功才缓存，失败下次重试） */
@@ -72,15 +53,15 @@ public class WeeklyAiCommentService {
     /** 构造注入：AI 配置统一取自 AiProperties（yaml 唯一真值，见 docs/adr/0004） */
     public WeeklyAiCommentService(
             AiProperties ai,
-            CloseableHttpClient httpClient,
+            AiClient aiClient,
             ObjectMapper objectMapper) {
-        this.baseUrl = ai.getBaseUrl();
         this.apiKey = ai.getApiKey();
-        this.model = ai.getModel();
         this.promptFile = ai.getWeeklyPromptFile();
-        this.temperature = ai.getTemperature();
-        this.maxTokens = ai.getWeeklyMaxTokens();
-        this.httpClient = httpClient;
+        // 周锐评场景采样参数：无 penalty（保持既有采样行为），关闭思考直出正文
+        this.completionRequest = new AiCompletionRequest(
+                ai.getModel(), ai.getTemperature(),
+                null, null, ai.getWeeklyMaxTokens(), false);
+        this.aiClient = aiClient;
         this.objectMapper = objectMapper;
     }
 
@@ -110,7 +91,8 @@ public class WeeklyAiCommentService {
         // 重试一次通常能拿到正文；两次都为空才判定失败
         String comment = null;
         for (int attempt = 1; attempt <= 2 && comment == null; attempt++) {
-            comment = callAi(systemPrompt, summary);
+            comment = aiClient.call(completionRequest, systemPrompt, summary,
+                    "weekly:" + report.getWeekLabel());
             if (comment == null) {
                 log.warn("Weekly AI comment empty, retrying: attempt={}/2, week={}", attempt, report.getWeekLabel());
             }
@@ -195,61 +177,5 @@ public class WeeklyAiCommentService {
         }
         return "你是车队战绩群的锐评官，根据提供的周报摘要，用中文写一段 100 字以内的毒舌但善意的锐评，"
                 + "直接点名 MVP 与战犯，语气幽默，不要使用 markdown 格式。";
-    }
-
-    /**
-     * 非流式调用 chat/completions：{ model, messages, temperature, max_tokens, stream:false }。
-     * 非 200 抛状态异常；正文为空返回 null（由调用方重试），其余情况返回正文
-     */
-    private String callAi(String systemPrompt, String userContent) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("model", model);
-        payload.put("stream", false);
-        payload.put("temperature", temperature);
-        payload.put("max_tokens", maxTokens);
-        // 与对局分析一致：关闭思考模式直接出正文（周锐评不需要思维链）
-        payload.put("chat_template_kwargs", Map.of("thinking", false));
-        payload.put("messages", List.of(
-                Map.of("role", "system", "content", systemPrompt),
-                Map.of("role", "user", "content", userContent)));
-
-        HttpPost post = new HttpPost(baseUrl + "/chat/completions");
-        post.setHeader("Content-Type", "application/json");
-        post.setHeader("Authorization", "Bearer " + apiKey);
-        post.setHeader("User-Agent", BROWSER_USER_AGENT);
-        try {
-            post.setEntity(new StringEntity(objectMapper.writeValueAsString(payload),
-                    ContentType.APPLICATION_JSON));
-        } catch (Exception e) {
-            log.error("Failed to serialize weekly AI payload: {}", e.getMessage());
-            throw new IllegalStateException("周锐评请求组装失败");
-        }
-        try (CloseableHttpResponse response = httpClient.execute(post)) {
-            int status = response.getCode();
-            String body = response.getEntity() != null
-                    ? EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8) : "";
-            if (status != HttpStatus.OK.value()) {
-                log.error("Weekly AI API error: status={}, body={}", status, body);
-                throw new IllegalStateException("AI 接口调用失败（HTTP " + status + "），请稍后重试");
-            }
-            JsonNode choice = objectMapper.readTree(body).path("choices").path(0);
-            String finishReason = choice.path("finish_reason").asText("");
-            String content = choice.path("message").path("content").asText("");
-            if (content.isBlank()) {
-                // 正文为空：多为推理模型把输出预算耗在思维链（finish_reason=length），
-                // 返回 null 由调用方重试；finish_reason 落日志便于确认根因
-                log.warn("Weekly AI returned empty content, finishReason={}", finishReason);
-                return null;
-            }
-            return content;
-        } catch (IOException e) {
-            log.error("Weekly AI API request failed: {}", e.getMessage());
-            throw new IllegalStateException("AI 接口调用失败，请检查网络与 API Key");
-        } catch (IllegalStateException e) {
-            throw e;
-        } catch (Exception e) {
-            log.error("Weekly AI response parse failed: {}", e.getMessage());
-            throw new IllegalStateException("AI 返回数据异常，请稍后重试");
-        }
     }
 }

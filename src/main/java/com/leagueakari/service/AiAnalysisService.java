@@ -1,27 +1,19 @@
 package com.leagueakari.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.ai.AiClient;
+import com.leagueakari.ai.AiCompletionRequest;
+import com.leagueakari.ai.AiStreamHandler;
 import com.leagueakari.config.AiProperties;
 import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.util.ClientDisconnectDetector;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.hc.client5.http.classic.methods.HttpPost;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
-import org.apache.hc.core5.http.ContentType;
-import org.apache.hc.core5.http.io.entity.EntityUtils;
-import org.apache.hc.core5.http.io.entity.StringEntity;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -29,16 +21,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
-import java.util.function.Consumer;
 
 /**
  * AI 对局表现分析（service 层）：
  * 取指定对局详情 → 组装"系统提示词（md 文件，可编辑）+ 对局数据摘要" →
- * 流式调用 opencode go 的 chat/completions（stream=true，模型取配置 ai.model，
- * 经 chat_template_kwargs.thinking=false 关闭思考模式，直接输出正文）→
+ * 流式调用 opencode go 的 chat/completions（模型取配置 ai.model，经
+ * chat_template_kwargs.thinking=false 关闭思考模式，直接输出正文）→
  * 解析 SSE 增量并逐块推送给前端（打字机效果）。
  * 结果做 JVM 缓存（按 gameId，2 分钟过期），过期前重复分析直接推送缓存全文（fromCache=true）。
- * HTTP 调用走 Apache HttpClient 5（全局连接池实例），替换原 RestTemplate 方案
+ * <p>AI HTTP 调用统一走公共 {@link AiClient}（见 docs/adr/0005），本服务只负责
+ * 业务编排：摘要组装、提示词加载、缓存与 SSE 事件协议。</p>
  */
 @Slf4j
 @Service
@@ -50,48 +42,18 @@ public class AiAnalysisService {
     /** 缓存有效期：2 分钟（毫秒） */
     private static final long CACHE_TTL_MS = 2 * 60 * 1000L;
 
-    /** 浏览器 UA：opencode go 经 Cloudflare 防护，无 UA/程序化请求会被 403/503 拦截 */
-    private static final String BROWSER_USER_AGENT =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
-
-    /** opencode go API 基础地址 */
-    private final String baseUrl;
-
-    /** API Key（application.yml ai.api-key，环境变量 AI_API_KEY 可覆盖） */
+    /** API Key（application.yml ai.api-key，环境变量 AI_API_KEY 可覆盖；前置校验用） */
     private final String apiKey;
-
-    /** 分析模型 */
-    private final String model;
 
     /** 系统提示词文件路径（classpath，md 格式，可直接编辑） */
     private final String promptFile;
 
-    /**
-     * 是否开启模型思考模式（application.yml ai.thinking，默认 false）：
-     * 开启 → 模型先输出长思维链再出正文，整流慢（约 90s）但分析更细致、英雄识别更准；
-     * 关闭 → 直接输出正文，整流快（约 25s），配合提示词中的英雄 ID 映射保证识别准确
-     */
-    private final boolean thinking;
-
-    /** 采样温度（ai.temperature）：降低随机性，抑制长文本重复 */
-    private final double temperature;
-
-    /** 频率惩罚（ai.frequency-penalty）：惩罚已出现过的词，抑制循环重复 */
-    private final double frequencyPenalty;
-
-    /** 存在惩罚（ai.presence-penalty）：鼓励引入新话题，减少车轱辘话 */
-    private final double presencePenalty;
-
-    /**
-     * 输出 token 上限（ai.max-tokens）：思维链与正文共享预算。
-     * 实测推理模型思考模式会无限展开思维链（最长 2046 块/90s+），
-     * 设上限后思维链被预算压力收敛，正文仍完整输出
-     */
-    private final int maxTokens;
+    /** 采样参数（组装后经 AiCompletionRequest 显式传给 AiClient，见 docs/adr/0005） */
+    private final AiCompletionRequest completionRequest;
 
     private final MatchService matchService;
     private final ObjectMapper objectMapper;
-    private final CloseableHttpClient httpClient;
+    private final AiClient aiClient;
 
     /** 游戏资源数据服务：英雄/装备 ID → 中文名（模型调用前转换，避免模型瞎猜 ID） */
     private final GameDataService gameDataService;
@@ -104,27 +66,25 @@ public class AiAnalysisService {
 
     /**
      * 构造注入：AI 配置统一取自 AiProperties（yaml 唯一真值，见 docs/adr/0004），
-     * 其余为运行时依赖
+     * 在构造阶段组装本场景的采样参数对象；HTTP 调用下沉到公共 AiClient
      */
     public AiAnalysisService(
             AiProperties ai,
             MatchService matchService,
             ObjectMapper objectMapper,
-            CloseableHttpClient httpClient,
+            AiClient aiClient,
             GameDataService gameDataService,
             Executor aiStreamExecutor) {
-        this.baseUrl = ai.getBaseUrl();
         this.apiKey = ai.getApiKey();
-        this.model = ai.getModel();
         this.promptFile = ai.getPromptFile();
-        this.thinking = ai.isThinking();
-        this.temperature = ai.getTemperature();
-        this.frequencyPenalty = ai.getFrequencyPenalty();
-        this.presencePenalty = ai.getPresencePenalty();
-        this.maxTokens = ai.getMaxTokens();
+        // 单局分析场景采样参数：penalty 抑制长文本重复，thinking 可经配置开启（前端灰字展示思维链）
+        this.completionRequest = new AiCompletionRequest(
+                ai.getModel(), ai.getTemperature(),
+                ai.getFrequencyPenalty(), ai.getPresencePenalty(),
+                ai.getMaxTokens(), ai.isThinking());
         this.matchService = matchService;
         this.objectMapper = objectMapper;
-        this.httpClient = httpClient;
+        this.aiClient = aiClient;
         this.gameDataService = gameDataService;
         this.executor = aiStreamExecutor;
     }
@@ -157,7 +117,8 @@ public class AiAnalysisService {
      * <ul>
      *   <li>{@code {"type":"start","fromCache":bool}} —— 开始，携带是否命中缓存</li>
      *   <li>{@code {"type":"chunk","content":"..."}} —— 分析文本增量片段（逐块到达）</li>
-     *   <li>{@code {"type":"done"}} —— 正常结束</li>
+     *   <li>{@code {"type":"reasoning","content":"..."}} —— 思维链增量片段（前端灰字展示）</li>
+     *   <li>{@code {"type":"done"}} —— 正常结束（被截断时携带 truncated=true）</li>
      *   <li>{@code {"type":"error","message":"..."}} —— 中途失败（随后关闭连接）</li>
      * </ul>
      *
@@ -210,13 +171,22 @@ public class AiAnalysisService {
                     gameId, System.currentTimeMillis() - startTime);
             // 最终分析正文（content 拼接，写入缓存）；思考过程（reasoning）单独透传不进缓存
             StringBuilder full = new StringBuilder();
+            // 流式调用公共 AiClient：SSE 解析与增量分发在回调中完成，
+            // 回调内抛出的断开信号原样穿透、立即停止上游消费；日志上下文带 gameId 便于排障关联
+            String finishReason = aiClient.callStream(completionRequest, systemPrompt, matchSummary,
+                    new AiStreamHandler() {
+                        @Override
+                        public void onContent(String chunk) {
+                            full.append(chunk);
+                            send(emitter, "chunk", Map.of("content", chunk));
+                        }
+
+                        @Override
+                        public void onReasoning(String chunk) {
+                            send(emitter, "reasoning", Map.of("content", chunk));
+                        }
+                    }, "gameId=" + gameId);
             // finishReason：stop=自然完成；length=输出预算耗尽被截断（正文可能不完整）
-            String finishReason = callAiStream(systemPrompt, matchSummary, gameId, startTime,
-                    chunk -> {
-                        full.append(chunk);
-                        send(emitter, "chunk", Map.of("content", chunk));
-                    },
-                    reasoning -> send(emitter, "reasoning", Map.of("content", reasoning)));
             boolean truncated = "length".equals(finishReason);
             if (full.isEmpty()) {
                 throw new IllegalStateException("AI 返回内容为空，请稍后重试");
@@ -370,149 +340,12 @@ public class AiAnalysisService {
     }
 
     /**
-     * 流式调用 opencode go 的 chat/completions（OpenAI 兼容格式）：
-     * 请求体 { model, messages: [system, user], stream: true }。
-     * 实测接入模型在 opencode 网关为推理模式：流中先输出大量
-     * delta.reasoning_content（思维链），最后才输出 delta.content（最终回答），
-     * 无法通过请求参数关闭——因此两者都解析：思维链交 reasoningConsumer（前端灰字展示，
-     * 让用户看到模型"正在思考"而非无响应），正文交 chunkConsumer。
-     * 关键节点打日志：请求发出、响应状态、首块耗时（TTFT）、块数/字数统计
-     *
-     * @param systemPrompt       系统提示词
-     * @param userContent        对局数据摘要
-     * @param gameId             对局 ID（仅日志）
-     * @param startTime          流开始时间戳（毫秒，计算各节点耗时）
-     * @param chunkConsumer      正文增量消费者（delta.content，每收到一个调用一次）
-     * @param reasoningConsumer  思维链增量消费者（delta.reasoning_content，每收到一个调用一次）
-     * @return 流结束原因（finish_reason）：stop=自然完成，length=预算截断，未返回时 null
-     * @throws IllegalStateException AI 接口错误（非 200 / 网络异常 / 数据异常）
-     */
-    private String callAiStream(String systemPrompt, String userContent, Long gameId, long startTime,
-            Consumer<String> chunkConsumer, Consumer<String> reasoningConsumer) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("model", model);
-        payload.put("stream", true);
-        // 采样参数：抑制长文本重复输出（推理模型生成超长内容时易循环重复，
-        // temperature 降随机性、frequency_penalty 惩罚已出现词、presence_penalty 鼓励新话题；
-        // 实测该组合输出无重复且字数落在提示词要求区间）
-        payload.put("temperature", temperature);
-        payload.put("frequency_penalty", frequencyPenalty);
-        payload.put("presence_penalty", presencePenalty);
-        // 输出上限：思维链与正文共享预算，限制推理模型的无限思考（实测 2048 时整流 90s→39s，
-        // 思维链重复基本消除；若正文被截断（finish_reason=length）可调大该值）
-        payload.put("max_tokens", maxTokens);
-        // 思考模式开关（ai.thinking）：关闭时用 DeepSeek 原生参数 chat_template_kwargs.thinking=false
-        // 直接输出正文（整流 90s → 25s）；开启时输出思维链（前端灰字展示，兼容 reasoning 事件）。
-        // 网关不识别 reasoning_effort/thinking.type 等 OpenAI 风格参数，只认该 DeepSeek 原生参数
-        if (!thinking) {
-            payload.put("chat_template_kwargs", Map.of("thinking", false));
-        }
-        payload.put("messages", List.of(
-                Map.of("role", "system", "content", systemPrompt),
-                Map.of("role", "user", "content", userContent)
-        ));
-
-        HttpPost post = new HttpPost(baseUrl + "/chat/completions");
-        post.setHeader("Content-Type", "application/json");
-        post.setHeader("Authorization", "Bearer " + apiKey);
-        post.setHeader("User-Agent", BROWSER_USER_AGENT);
-        try {
-            post.setEntity(new StringEntity(objectMapper.writeValueAsString(payload), ContentType.APPLICATION_JSON));
-        } catch (JsonProcessingException e) {
-            // 请求体序列化失败：配置/数据异常，不可能发生（payload 结构固定）
-            log.error("Failed to serialize AI request payload: {}", e.getMessage());
-            throw new IllegalStateException("AI 请求组装失败");
-        }
-        // 请求发出前打日志：若此处之后长时间无日志，说明卡在连接建立/TLS 握手
-        log.info("AI API request starting: gameId={}, url={}, model={}, elapsed={}ms",
-                gameId, baseUrl + "/chat/completions", model, System.currentTimeMillis() - startTime);
-        try (CloseableHttpResponse response = httpClient.execute(post)) {
-            // 非 200：读取错误体（OpenAI 兼容接口返回 JSON 错误）后抛出
-            int status = response.getCode();
-            log.info("AI API response received: gameId={}, status={}, elapsed={}ms",
-                    gameId, status, System.currentTimeMillis() - startTime);
-            if (status != HttpStatus.OK.value()) {
-                String errBody = response.getEntity() != null
-                        ? EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8) : "";
-                log.error("AI API error: gameId={}, status={}, body={}", gameId, status, errBody);
-                throw new IllegalStateException("AI 接口调用失败（HTTP " + status + "），请稍后重试");
-            }
-            // 逐行解析 SSE 流：空行分隔事件，data: 前缀承载 JSON；[DONE] 表示结束。
-            // 记录首块耗时（TTFT）与块数/字数——思维链或正文任一到达都算有数据，
-            // 避免"模型在思考但看似无响应"的误判
-            int chunkCount = 0;
-            int reasoningCount = 0;
-            int totalChars = 0;
-            long firstChunkAt = -1L;
-            String finishReason = null;
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                    response.getEntity().getContent(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (line.isBlank() || !line.startsWith("data:")) {
-                        continue;
-                    }
-                    String data = line.substring("data:".length()).trim();
-                    if ("[DONE]".equals(data)) {
-                        log.info("AI API stream done marker: gameId={}, chunks={}, reasoning={}, chars={}, elapsed={}ms",
-                                gameId, chunkCount, reasoningCount, totalChars,
-                                System.currentTimeMillis() - startTime);
-                        break;
-                    }
-                    // 推理模式增量在 delta.reasoning_content，正文在 delta.content
-                    JsonNode choice = objectMapper.readTree(data).path("choices").path(0);
-                    // finish_reason 在流的最后一个 chunk 携带：stop=自然完成 / length=预算截断
-                    if (choice.hasNonNull("finish_reason")) {
-                        finishReason = choice.get("finish_reason").asText();
-                    }
-                    JsonNode delta = choice.path("delta");
-                    String content = delta.path("content").asText("");
-                    String reasoning = delta.path("reasoning_content").asText("");
-                    if (firstChunkAt < 0 && (!content.isEmpty() || !reasoning.isEmpty())) {
-                        // 首块到达时间：连接建立后到第一个数据块的延迟（模型响应速度指标）
-                        firstChunkAt = System.currentTimeMillis();
-                        log.info("AI API first data received: gameId={}, elapsed={}ms",
-                                gameId, firstChunkAt - startTime);
-                    }
-                    if (!content.isEmpty()) {
-                        chunkCount++;
-                        totalChars += content.length();
-                        chunkConsumer.accept(content);
-                    }
-                    if (!reasoning.isEmpty()) {
-                        reasoningCount++;
-                        reasoningConsumer.accept(reasoning);
-                    }
-                }
-            }
-            // 正常退出循环但没看到 [DONE]（如流被服务器提前断开）也能走到这里，靠 done 事件兜底
-            log.info("AI API stream read finished: gameId={}, chunks={}, reasoning={}, chars={}, "
-                    + "finishReason={}, elapsed={}ms",
-                    gameId, chunkCount, reasoningCount, totalChars, finishReason,
-                    System.currentTimeMillis() - startTime);
-            return finishReason;
-        } catch (IllegalStateException e) {
-            // 业务错误（非 200 等）：原样上抛，由流式主流程转 error 事件
-            throw e;
-        } catch (JsonProcessingException | org.apache.hc.core5.http.ParseException e) {
-            // SSE 数据解析失败：模型返回非预期格式
-            log.error("Failed to parse AI stream data: gameId={}", gameId, e);
-            throw new IllegalStateException("AI 返回数据异常，请稍后重试");
-        } catch (IOException e) {
-            // 网络/超时等客户端异常：完整堆栈（区分连接超时/读超时/SSL 异常）
-            log.error("AI API request failed: gameId={}, elapsed={}ms", gameId,
-                    System.currentTimeMillis() - startTime, e);
-            throw new IllegalStateException("AI 接口调用失败，请检查网络与 API Key");
-        }
-    }
-
-    /**
      * 推送一条 SSE 事件：data 为 JSON 字符串（type 字段 + 业务字段）；
      * 推送失败（连接已断开/未初始化）转为运行时异常，终止流式流程由外层统一收尾。
      * 失败时打印完整堆栈——SseEmitter 未初始化竞态（send 早于 controller 返回）只能靠堆栈识别
      *
      * @param emitter SSE 连接
-     * @param type    事件类型（start/chunk/done/error）
+     * @param type    事件类型（start/chunk/reasoning/done/error）
      * @param payload 业务字段（写入 data JSON）
      */
     private void send(SseEmitter emitter, String type, Map<String, Object> payload) {

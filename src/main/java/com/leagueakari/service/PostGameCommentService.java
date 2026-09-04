@@ -1,28 +1,21 @@
 package com.leagueakari.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.ai.AiClient;
+import com.leagueakari.ai.AiCompletionRequest;
 import com.leagueakari.config.AiProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.hc.client5.http.classic.methods.HttpPost;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
-import org.apache.hc.core5.http.ContentType;
-import org.apache.hc.core5.http.io.entity.EntityUtils;
-import org.apache.hc.core5.http.io.entity.StringEntity;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
- * 局后锐评服务（外部 I/O 接缝）：战报图发送后，按车队视角对本局做一次非流式 AI 点评，
+ * 局后锐评服务（业务编排层）：战报图发送后，按车队视角对本局做一次非流式 AI 点评，
  * 输出可直接发群的正文。区别于单局 AI 分析（self 视角、SSE 流式）与周报锐评（按周聚合）。
+ * <p>HTTP 调用统一走公共 {@link AiClient}（见 docs/adr/0005），本服务只负责
+ * 业务编排：提示词加载与空正文重试。</p>
  * <p>失败语义：空正文自动重试 1 次（共最多 2 次调用），仍失败抛 IllegalStateException，
  * 由 BroadcastCoordinator 降级为"AI 缺席提示"发送。</p>
  */
@@ -30,35 +23,33 @@ import java.util.Map;
 @Service
 public class PostGameCommentService {
 
-    /** 浏览器 UA：opencode go 经 Cloudflare 防护，无 UA 会被 403/503 拦截（与既有 AI 调用一致） */
-    private static final String BROWSER_USER_AGENT =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
-
     /** 最大调用次数：1 次正常 + 1 次空正文重试 */
     private static final int MAX_ATTEMPTS = 2;
 
-    private final String baseUrl;
+    /** API Key（环境变量 AI_API_KEY；前置校验用） */
     private final String apiKey;
-    /** 局后锐评独立模型（ai.post-game-model：与 ai.model 解耦，见 application.yml 注释） */
-    private final String model;
+
+    /** 局后锐评提示词文件（classpath；缺失时回退内置默认，保证接口可用） */
     private final String promptFile;
-    private final double temperature;
-    private final int maxTokens;
-    private final CloseableHttpClient httpClient;
+
+    /** 采样参数（组装后经 AiCompletionRequest 显式传给 AiClient，见 docs/adr/0005） */
+    private final AiCompletionRequest completionRequest;
+
+    private final AiClient aiClient;
     private final ObjectMapper objectMapper;
 
     /** 构造注入：AI 配置统一取自 AiProperties（yaml 唯一真值，见 docs/adr/0004） */
     public PostGameCommentService(
             AiProperties ai,
-            CloseableHttpClient httpClient,
+            AiClient aiClient,
             ObjectMapper objectMapper) {
-        this.baseUrl = ai.getBaseUrl();
         this.apiKey = ai.getApiKey();
-        this.model = ai.getPostGameModel();
         this.promptFile = ai.getPostGamePromptFile();
-        this.temperature = ai.getTemperature();
-        this.maxTokens = ai.getPostGameMaxTokens();
-        this.httpClient = httpClient;
+        // 局后锐评场景采样参数：独立模型键（ai.post-game-model）、无 penalty（保持既有采样行为）
+        this.completionRequest = new AiCompletionRequest(
+                ai.getPostGameModel(), ai.getTemperature(),
+                null, null, ai.getPostGameMaxTokens(), false);
+        this.aiClient = aiClient;
         this.objectMapper = objectMapper;
     }
 
@@ -87,7 +78,7 @@ public class PostGameCommentService {
         // 重试一次通常能拿到正文；仍为空才判定失败交给编排层降级
         String comment = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS && comment == null; attempt++) {
-            comment = callAi(systemPrompt, userContent);
+            comment = aiClient.call(completionRequest, systemPrompt, userContent, "post-game");
             if (comment == null) {
                 log.warn("Post-game AI empty content, retrying: attempt={}/{}", attempt, MAX_ATTEMPTS);
             }
@@ -111,59 +102,5 @@ public class PostGameCommentService {
         }
         return "你是车队开黑群的锐评官，根据提供的本局数据用中文写一段 200-300 字火力全开的锐评，"
                 + "点名最亮眼与最拉胯的人；重点词可用 **加粗** 标记（不超过 4 处），不要标题、列表、代码块。";
-    }
-
-    /**
-     * 非流式调用 chat/completions（与周报锐评同款参数）：
-     * 非 200 抛状态异常；正文为空返回 null（由调用方重试）
-     */
-    private String callAi(String systemPrompt, String userContent) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("model", model);
-        payload.put("stream", false);
-        payload.put("temperature", temperature);
-        payload.put("max_tokens", maxTokens);
-        // 与既有 AI 调用一致：关闭思考模式直接出正文（局后锐评不需要思维链）
-        payload.put("chat_template_kwargs", Map.of("thinking", false));
-        payload.put("messages", List.of(
-                Map.of("role", "system", "content", systemPrompt),
-                Map.of("role", "user", "content", userContent)));
-
-        HttpPost post = new HttpPost(baseUrl + "/chat/completions");
-        post.setHeader("Content-Type", "application/json");
-        post.setHeader("Authorization", "Bearer " + apiKey);
-        post.setHeader("User-Agent", BROWSER_USER_AGENT);
-        try {
-            post.setEntity(new StringEntity(objectMapper.writeValueAsString(payload),
-                    ContentType.APPLICATION_JSON));
-        } catch (Exception e) {
-            log.error("Failed to serialize post-game AI payload: {}", e.getMessage());
-            throw new IllegalStateException("局后锐评请求组装失败", e);
-        }
-        try (CloseableHttpResponse response = httpClient.execute(post)) {
-            int status = response.getCode();
-            String body = response.getEntity() != null
-                    ? EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8) : "";
-            if (status != HttpStatus.OK.value()) {
-                log.error("Post-game AI API error: status={}, body={}", status, body);
-                throw new IllegalStateException("AI 接口调用失败（HTTP " + status + "），请稍后重试");
-            }
-            JsonNode choice = objectMapper.readTree(body).path("choices").path(0);
-            String finishReason = choice.path("finish_reason").asText("");
-            String content = choice.path("message").path("content").asText("");
-            if (content.isBlank()) {
-                log.warn("Post-game AI returned empty content, finishReason={}", finishReason);
-                return null;
-            }
-            return content;
-        } catch (IOException e) {
-            log.error("Post-game AI API request failed: {}", e.getMessage());
-            throw new IllegalStateException("AI 接口调用失败，请检查网络与 API Key", e);
-        } catch (IllegalStateException e) {
-            throw e;
-        } catch (Exception e) {
-            log.error("Post-game AI response parse failed: {}", e.getMessage());
-            throw new IllegalStateException("AI 返回数据异常，请稍后重试", e);
-        }
     }
 }

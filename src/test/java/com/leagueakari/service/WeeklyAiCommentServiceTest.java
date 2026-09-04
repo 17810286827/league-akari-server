@@ -1,36 +1,32 @@
 package com.leagueakari.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.ai.AiClient;
 import com.leagueakari.config.AiProperties;
 import com.leagueakari.dto.WeeklyReportResponse;
-import org.apache.hc.client5.http.classic.methods.HttpPost;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
-import org.apache.hc.core5.http.HttpEntity;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * WeeklyAiCommentService 单元测试（外部 I/O 接缝）：
- * API Key 校验、AI 返回内容透出、请求载荷携带周报摘要、非 200 转状态异常、
- * 同一周结果缓存（重复生成不重复计费）。
+ * WeeklyAiCommentService 单元测试（业务编排层；HTTP 细节由 AiClientTest 覆盖）：
+ * API Key 校验、AI 返回内容透出、调用摘要携带周报素材、同一周结果缓存
+ * （重复生成不重复计费）、空正文自动重试一次。
  */
 class WeeklyAiCommentServiceTest {
 
-    private CloseableHttpClient httpClient;
+    private AiClient aiClient;
     private WeeklyAiCommentService service;
 
     /** 构造指定 Key 的被测服务（其余配置固定；测试替身属性对应 ai.* 键） */
@@ -42,18 +38,7 @@ class WeeklyAiCommentServiceTest {
         props.setWeeklyPromptFile("ai/weekly-prompt.md");
         props.setTemperature(1.0);
         props.setWeeklyMaxTokens(512);
-        return new WeeklyAiCommentService(props, httpClient, new ObjectMapper());
-    }
-
-    /** 模拟 AI 接口响应：状态码 + JSON 体（getContent 每次返回新流，支持多次读取/缓存测试） */
-    private CloseableHttpResponse mockResponse(int status, String body) throws Exception {
-        CloseableHttpResponse response = mock(CloseableHttpResponse.class);
-        when(response.getCode()).thenReturn(status);
-        HttpEntity entity = mock(HttpEntity.class);
-        when(entity.getContent()).thenAnswer(inv ->
-                new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
-        when(response.getEntity()).thenReturn(entity);
-        return response;
+        return new WeeklyAiCommentService(props, aiClient, new ObjectMapper());
     }
 
     /** 构造最小周报：仅含 AI 摘要会用到的字段 */
@@ -74,7 +59,7 @@ class WeeklyAiCommentServiceTest {
 
     @BeforeEach
     void setUp() {
-        httpClient = mock(CloseableHttpClient.class);
+        aiClient = mock(AiClient.class);
         service = serviceWithKey("test-key");
     }
 
@@ -88,82 +73,68 @@ class WeeklyAiCommentServiceTest {
                 .hasMessageContaining("API Key 未配置");
     }
 
-    /** 用例：AI 200 响应 → 透出 message.content；请求体携带周报摘要 */
+    /** 用例：AI 返回正文 → 透出给调用方；调用摘要里带上周报素材（周标签/榜单/名场面） */
     @Test
-    void generateComment_returnsAiContent() throws Exception {
-        CloseableHttpResponse ok = mockResponse(200,
-                "{\"choices\":[{\"message\":{\"content\":\"本周赌书封神，鬼子战犯实锤\"}}]}");
-        when(httpClient.execute(any(HttpPost.class))).thenReturn(ok);
+    void generateComment_returnsAiContentAndSendsWeeklySummary() throws Exception {
+        when(aiClient.call(any(), anyString(), anyString(), anyString())).thenReturn("本周赌书封神，鬼子战犯实锤");
 
         String comment = service.generateComment(report("2026-08-24 ~ 2026-08-30"));
 
         assertThat(comment).isEqualTo("本周赌书封神，鬼子战犯实锤");
-        // 请求载荷校验：打到 chat/completions，user 消息里带上周报摘要与榜单
-        ArgumentCaptor<HttpPost> captor = ArgumentCaptor.forClass(HttpPost.class);
-        verify(httpClient).execute(captor.capture());
-        assertThat(captor.getValue().getUri().getPath()).endsWith("/chat/completions");
-        String body = new String(captor.getValue().getEntity().getContent().readAllBytes(),
-                StandardCharsets.UTF_8);
-        assertThat(body).contains("2026-08-24 ~ 2026-08-30").contains("MVP").contains("战犯");
+        // 摘要校验：user 消息里带上周标签与榜单素材（锐评点名用）
+        ArgumentCaptor<String> userContent = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).call(any(), anyString(), userContent.capture(), anyString());
+        assertThat(userContent.getValue())
+                .contains("2026-08-24 ~ 2026-08-30").contains("MVP").contains("手裂鬼子");
     }
 
-    /** 用例：AI 非 200 → 状态异常（提示重试） */
+    /** 用例：AI 调用失败（AiClient 转 IllegalStateException）→ 原样上抛（调用方降级） */
     @Test
-    void generateComment_throwsOnNon200() throws Exception {
-        CloseableHttpResponse bad = mockResponse(502, "{\"error\":\"bad gateway\"}");
-        when(httpClient.execute(any(HttpPost.class))).thenReturn(bad);
+    void generateComment_propagatesAiFailure() {
+        when(aiClient.call(any(), anyString(), anyString(), anyString()))
+                .thenThrow(new IllegalStateException("AI 接口调用失败（HTTP 502），请稍后重试"));
 
         assertThatThrownBy(() -> service.generateComment(report("2026-08-24 ~ 2026-08-30")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("502");
     }
 
-    /** 用例：同一周缓存命中——第二次生成不再发请求（避免重复计费） */
+    /** 用例：同一周缓存命中——第二次生成不再调 AI（避免重复计费） */
     @Test
-    void generateComment_cachesPerWeek() throws Exception {
-        CloseableHttpResponse ok = mockResponse(200,
-                "{\"choices\":[{\"message\":{\"content\":\"锐评\"}}]}");
-        when(httpClient.execute(any(HttpPost.class))).thenReturn(ok);
+    void generateComment_cachesPerWeek() {
+        when(aiClient.call(any(), anyString(), anyString(), anyString())).thenReturn("锐评");
 
         service.generateComment(report("2026-08-24 ~ 2026-08-30"));
         service.generateComment(report("2026-08-24 ~ 2026-08-30"));
 
-        verify(httpClient, times(1)).execute(any(HttpPost.class));
+        verify(aiClient, times(1)).call(any(), anyString(), anyString(), anyString());
         // 换一周则重新生成
         service.generateComment(report("2026-08-31 ~ 2026-09-06"));
-        verify(httpClient, times(2)).execute(any(HttpPost.class));
+        verify(aiClient, times(2)).call(any(), anyString(), anyString(), anyString());
     }
 
     /**
      * 用例：正文为空（推理模型把预算耗在思维链，finish_reason=length）自动重试一次——
-     * 第一次空、第二次有正文 → 返回正文且共发起 2 次请求
+     * 第一次空、第二次有正文 → 返回正文且共调用 2 次
      */
     @Test
-    void generateComment_retriesOnceOnEmptyContent() throws Exception {
-        CloseableHttpResponse empty = mockResponse(200,
-                "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\"}}]}");
-        CloseableHttpResponse ok = mockResponse(200,
-                "{\"choices\":[{\"message\":{\"content\":\"重试后的锐评\"}}]}");
-        when(httpClient.execute(any(HttpPost.class))).thenReturn(empty, ok);
+    void generateComment_retriesOnceOnEmptyContent() {
+        when(aiClient.call(any(), anyString(), anyString(), anyString())).thenReturn(null, "重试后的锐评");
 
         String comment = service.generateComment(report("2026-08-24 ~ 2026-08-30"));
 
         assertThat(comment).isEqualTo("重试后的锐评");
-        verify(httpClient, times(2)).execute(any(HttpPost.class));
+        verify(aiClient, times(2)).call(any(), anyString(), anyString(), anyString());
     }
 
     /** 用例：两次调用正文都为空 → 抛状态异常（调用方降级为 null） */
     @Test
-    void generateComment_throwsWhenBothAttemptsEmpty() throws Exception {
-        CloseableHttpResponse empty1 = mockResponse(200,
-                "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\"}}]}");
-        CloseableHttpResponse empty2 = mockResponse(200,
-                "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\"}}]}");
-        when(httpClient.execute(any(HttpPost.class))).thenReturn(empty1, empty2);
+    void generateComment_throwsWhenBothAttemptsEmpty() {
+        when(aiClient.call(any(), anyString(), anyString(), anyString())).thenReturn(null, (String) null);
 
         assertThatThrownBy(() -> service.generateComment(report("2026-08-24 ~ 2026-08-30")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("内容为空");
-        verify(httpClient, times(2)).execute(any(HttpPost.class));
+        verify(aiClient, times(2)).call(any(), anyString(), anyString(), anyString());
     }
 }

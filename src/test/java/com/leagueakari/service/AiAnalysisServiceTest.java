@@ -5,14 +5,12 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.ai.AiClient;
+import com.leagueakari.ai.AiCompletionRequest;
+import com.leagueakari.ai.AiStreamHandler;
 import com.leagueakari.config.AiProperties;
 import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.entity.MatchParticipant;
-import org.apache.hc.client5.http.classic.methods.HttpPost;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
-import org.apache.hc.core5.http.HttpEntity;
-import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -20,8 +18,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -38,39 +35,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * AiAnalysisService 单元测试：
- * 流式调用成功（逐块推送 chunk + 缓存命中二次推送全文）、AI 非 200 推送 error 事件、
- * 前置校验（API Key 缺失 / 对局不存在）。
- * 通过 mock CloseableHttpClient（返回模拟 SSE 流）与 mock SseEmitter（捕获推送事件）隔离外部依赖；
+ * AiAnalysisService 单元测试（业务编排层；HTTP 细节由 AiClientTest 覆盖）：
+ * 通过 mock AiClient（以脚本回放流式增量）与 mock SseEmitter（捕获推送事件）验证——
+ * 流式推送（chunk/reasoning 分流 + done）、缓存命中二次推送全文、AI 失败推 error 事件、
+ * 客户端断开零 ERROR 停流、摘要组装（英雄/装备 ID 转中文名）、前置校验。
  * 线程池以同步执行器（Runnable::run）注入，保证断言时序
  */
 class AiAnalysisServiceTest {
 
-    /** 模拟 opencode 网关的推理模式流：先输出思维链（reasoning_content），再输出正文（content） */
-    private static final String SSE_STREAM = """
-            data: {"choices":[{"delta":{"reasoning_content":"正在分析"}}]}
-
-            data: {"choices":[{"delta":{"content":"你好"}}]}
-
-            data: {"choices":[{"delta":{"reasoning_content":"继续推理"}}]}
-
-            data: {"choices":[{"delta":{"content":"，世界"}}]}
-
-            data: [DONE]
-
-            """;
-
-    /** 输出被预算截断的流：最后一个 chunk 携带 finish_reason=length */
-    private static final String SSE_STREAM_TRUNCATED = """
-            data: {"choices":[{"delta":{"content":"写到一半"}}]}
-
-            data: {"choices":[{"delta":{"content":"戛然而止"},"finish_reason":"length"}]}
-
-            data: [DONE]
-
-            """;
-
-    private CloseableHttpClient httpClient;
+    private AiClient aiClient;
     private MatchService matchService;
     private GameDataService gameDataService;
     private AiAnalysisService service;
@@ -81,15 +54,14 @@ class AiAnalysisServiceTest {
 
     @BeforeEach
     void setUp() {
-        httpClient = mock(CloseableHttpClient.class);
+        aiClient = mock(AiClient.class);
         matchService = mock(MatchService.class);
         gameDataService = mock(GameDataService.class);
         objectMapper = new ObjectMapper();
-        // promptFile 指向不存在的文件：走内置默认提示词，避免依赖 classpath 资源；
-        // thinking=false + 默认采样参数：与生产配置一致
+        // promptFile 指向不存在的文件：走内置默认提示词，避免依赖 classpath 资源
         service = new AiAnalysisService(
                 aiProps("test-key", false),
-                matchService, objectMapper, httpClient, gameDataService, Runnable::run);
+                matchService, objectMapper, aiClient, gameDataService, Runnable::run);
         events.clear();
     }
 
@@ -108,14 +80,20 @@ class AiAnalysisServiceTest {
         return props;
     }
 
-    /** 模拟 AI 接口响应：status 状态码 + 响应体（SSE 流或错误 JSON） */
-    private void mockAiResponse(int status, String body) throws Exception {
-        CloseableHttpResponse response = mock(CloseableHttpResponse.class);
-        when(response.getCode()).thenReturn(status);
-        HttpEntity entity = mock(HttpEntity.class);
-        when(entity.getContent()).thenReturn(new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
-        when(response.getEntity()).thenReturn(entity);
-        when(httpClient.execute(any())).thenReturn(response);
+    /**
+     * 让 mock AiClient 按脚本回放流式增量（模拟推理模式：思维链与正文交替）：
+     * 增量经真实回调链路（服务里的 handler → send → emitter）推送，事件顺序可断言。
+     * 回调内抛出的异常（客户端断开信号）也会按真实语义穿透
+     */
+    private void mockAiStream(String finishReason) {
+        doAnswer(inv -> {
+            AiStreamHandler handler = inv.getArgument(3);
+            handler.onReasoning("正在分析");
+            handler.onContent("你好");
+            handler.onReasoning("继续推理");
+            handler.onContent("，世界");
+            return finishReason;
+        }).when(aiClient).callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString());
     }
 
     /** 创建 mock SseEmitter：把每次 send 的 data（JSON 字符串）解析为 Map 存入 events */
@@ -187,8 +165,8 @@ class AiAnalysisServiceTest {
         serviceLogger.addAppender(appender);
 
         try {
-            // AI 接口返回正常推理流（start 后第一个数据块是 reasoning）
-            mockAiResponse(200, SSE_STREAM);
+            // AI 流回放：start 后第一个回调是 reasoning，会触发第二次 send（此时客户端已断开）
+            mockAiStream(null);
             when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
 
             SseEmitter emitter = mock(SseEmitter.class);
@@ -227,8 +205,8 @@ class AiAnalysisServiceTest {
 
     @Test
     void streamAnalysisPushesChunksThenDone() throws Exception {
-        // AI 接口返回推理流（思维链 + 正文）+ [DONE]，每次 execute 都返回该流
-        mockAiResponse(200, SSE_STREAM);
+        // AI 回放推理流（思维链 + 正文交替），finish_reason=null（自然结束）
+        mockAiStream(null);
         when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
 
         service.analyzeStream(123L, mockEmitter());
@@ -247,7 +225,7 @@ class AiAnalysisServiceTest {
     @Test
     void cacheHitPushesFullTextWithoutCallingAi() throws Exception {
         // 第一次：流式分析成功（写缓存；缓存只含正文，不含思维链）
-        mockAiResponse(200, SSE_STREAM);
+        mockAiStream(null);
         when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
         service.analyzeStream(123L, mockEmitter());
         assertThat(events.get(5)).containsEntry("type", "done");
@@ -259,14 +237,15 @@ class AiAnalysisServiceTest {
         assertThat(events.get(0)).containsEntry("type", "start").containsEntry("fromCache", true);
         assertThat(events.get(1)).containsEntry("type", "chunk").containsEntry("content", "你好，世界");
         assertThat(events.get(2)).containsEntry("type", "done");
-        // 第一次分析调用过 1 次 AI 接口；第二次命中缓存不再新增调用
-        verify(httpClient, times(1)).execute(any());
+        // 第一次分析调用过 1 次 AI；第二次命中缓存不再新增调用
+        verify(aiClient, times(1)).callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString());
     }
 
     @Test
     void aiErrorPushesErrorEvent() throws Exception {
-        // AI 接口返回 500：非业务异常，流中推送 error 事件（含状态码提示）
-        mockAiResponse(500, "{\"error\":\"boom\"}");
+        // AI 调用失败（AiClient 转 IllegalStateException）：流中推送 error 事件（含状态码提示）
+        when(aiClient.callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString()))
+                .thenThrow(new IllegalStateException("AI 接口调用失败（HTTP 500），请稍后重试"));
         when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
 
         service.analyzeStream(123L, mockEmitter());
@@ -291,80 +270,29 @@ class AiAnalysisServiceTest {
     }
 
     @Test
-    void requestDisablesThinking() throws Exception {
-        // 请求体必须携带 chat_template_kwargs.thinking=false（DeepSeek 原生参数，经网关透传关闭思考）：
-        // 缺失会导致模型输出长思维链、整流时间翻倍（实测 70s+ → 38s）
-        mockAiResponse(200, SSE_STREAM);
-        when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
-
-        service.analyzeStream(123L, mockEmitter());
-
-        ArgumentCaptor<HttpPost> captor = ArgumentCaptor.forClass(HttpPost.class);
-        verify(httpClient).execute(captor.capture());
-        String body = EntityUtils.toString(captor.getValue().getEntity());
-        assertThat(body).contains("\"chat_template_kwargs\"").contains("\"thinking\":false");
-    }
-
-    @Test
-    void thinkingEnabledOmitsDisableParam() throws Exception {
-        // thinking=true 时请求体不得携带 chat_template_kwargs（保持模型默认推理模式，
-        // 前端通过 reasoning 事件灰字展示思维链）
-        AiAnalysisService thinkingService = new AiAnalysisService(
-                aiProps("test-key", true),
-                matchService, new ObjectMapper(), httpClient, gameDataService, Runnable::run);
-        mockAiResponse(200, SSE_STREAM);
-        when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
-
-        thinkingService.analyzeStream(123L, mockEmitter());
-
-        ArgumentCaptor<HttpPost> captor = ArgumentCaptor.forClass(HttpPost.class);
-        verify(httpClient).execute(captor.capture());
-        String body = EntityUtils.toString(captor.getValue().getEntity());
-        assertThat(body).doesNotContain("chat_template_kwargs");
-    }
-
-    @Test
     void summaryConvertsIdsToGameDataNames() throws Exception {
         // 摘要组装：英雄/装备 ID 在模型调用前经 GameDataService 转换为中文名，
         // 模型不再按 ID 猜英雄（非思考模式下会猜错，如 103 → 瑞兹）
         when(gameDataService.championName(1)).thenReturn("黑暗之女");
         when(gameDataService.itemName(6672)).thenReturn("收集者");
         when(gameDataService.itemName(6609)).thenReturn("巨蛇之牙");
-        mockAiResponse(200, SSE_STREAM);
+        mockAiStream(null);
         when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
 
         service.analyzeStream(123L, mockEmitter());
 
-        // 请求体 user 消息应包含转换后的中文英雄名与装备名
-        ArgumentCaptor<HttpPost> captor = ArgumentCaptor.forClass(HttpPost.class);
-        verify(httpClient).execute(captor.capture());
-        String body = EntityUtils.toString(captor.getValue().getEntity());
-        assertThat(body).contains("黑暗之女").contains("收集者").contains("巨蛇之牙");
-    }
-
-    @Test
-    void requestCarriesSamplingParams() throws Exception {
-        // 采样参数随请求发送：temperature 降随机性、frequency/presence penalty 抑制长文本重复、
-        // max_tokens 限制推理模式无限思考（思维链与正文共享预算）
-        mockAiResponse(200, SSE_STREAM);
-        when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
-
-        service.analyzeStream(123L, mockEmitter());
-
-        ArgumentCaptor<HttpPost> captor = ArgumentCaptor.forClass(HttpPost.class);
-        verify(httpClient).execute(captor.capture());
-        String body = EntityUtils.toString(captor.getValue().getEntity());
-        assertThat(body).contains("\"temperature\":0.7")
-                .contains("\"frequency_penalty\":0.6")
-                .contains("\"presence_penalty\":0.3")
-                .contains("\"max_tokens\":2048");
+        // 用户消息（对局摘要）应包含转换后的中文英雄名与装备名
+        ArgumentCaptor<String> userContent = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).callStream(any(AiCompletionRequest.class), anyString(),
+                userContent.capture(), any(), anyString());
+        assertThat(userContent.getValue()).contains("黑暗之女").contains("收集者").contains("巨蛇之牙");
     }
 
     @Test
     void truncatedStreamMarksDoneEvent() throws Exception {
         // 输出被长度预算截断（finish_reason=length）：done 事件携带 truncated=true，
         // 前端据此提示"内容被截断"，避免"写一半"被误认为完整
-        mockAiResponse(200, SSE_STREAM_TRUNCATED);
+        mockAiStream("length");
         when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
 
         service.analyzeStream(123L, mockEmitter());
@@ -375,11 +303,27 @@ class AiAnalysisServiceTest {
     }
 
     @Test
+    void emptyStreamThrowsAndPushesError() throws Exception {
+        // 流无任何增量（服务端提前断开等）：正文为空 → 推 error 事件，不写缓存
+        when(aiClient.callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString()))
+                .thenReturn(null);
+        when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
+
+        service.analyzeStream(123L, mockEmitter());
+
+        assertThat(events.get(events.size() - 1)).containsEntry("type", "error");
+        assertThat((String) events.get(events.size() - 1).get("message")).contains("内容为空");
+        // 失败不缓存：再次分析会重新调用 AI
+        service.analyzeStream(123L, mockEmitter());
+        verify(aiClient, times(2)).callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString());
+    }
+
+    @Test
     void validateFailsWithoutApiKey() {
         // API Key 未配置：前置校验直接抛异常（由全局处理器转 503）
         AiAnalysisService noKey = new AiAnalysisService(
                 aiProps("", false),
-                matchService, new ObjectMapper(), httpClient, gameDataService, Runnable::run);
+                matchService, new ObjectMapper(), aiClient, gameDataService, Runnable::run);
 
         assertThatThrownBy(() -> noKey.validateAndConfigured(123L))
                 .isInstanceOf(IllegalStateException.class)
