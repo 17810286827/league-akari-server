@@ -82,7 +82,7 @@ ai:
   api-key: ${AI_API_KEY:}
   # 分析模型（单局 AI 分析与周报锐评共用，决策见 docs/adr/0004）：
   # 曾用 mimo-v2.5 做长任务实验，实测后回归 deepseek-v4-flash——thinking=false 真正生效
-  model: gemini-3.7-flash
+  model: 订阅-deepseek-v4-flash
   # 是否开启模型思考模式（开启）：
   # 开启 → 模型先输出长思维链再出正文，整流约 90s，分析更细致、英雄识别更准；
   # 关闭 → 直接输出正文，整流约 25s（实测快 3.6 倍），配合提示词英雄 ID 映射保证识别准确
@@ -108,7 +108,7 @@ ai:
   # 局后锐评独立模型：播报对延迟敏感，锐评走 thinking=false 直出正文的模型（首 token ~1s）。
   # 独立键保留：将来 ai.model 换慢推理模型时局后播报不受影响（历史教训：mimo-v2.5 无视
   # thinking=false 仍先推理 ~60s，实测差 20 倍——正是当初拆分出该键的原因）
-  post-game-model: gemini-3.7-flash
+  post-game-model: 订阅-deepseek-v4-flash
 
 push:
   # 局后播报（Post-Game Broadcast）：开黑局结束后自动向车队群推送战报
