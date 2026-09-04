@@ -18,7 +18,10 @@ import java.util.Map;
 public class PostGameSummaryBuilder {
 
     /**
-     * 投影为锐评输入摘要（Map，由调用方序列化后发给 AI）
+     * 投影为锐评输入摘要（Map，由调用方序列化后发给 AI）。
+     * <p>顶层键：result（胜利/败北）、score（"32:19"）、meta（队列 · 时长）、
+     * teamName、mainTeam/otherTeam（行数组）。行内键与省 token 缩写（dmg/taken/gold）
+     * 为 v2 既有 AI 契约——提示词按这些键引用，改名需同步提示词。</p>
      *
      * @param summary 一局摘要（车队视角全量事实，口径唯一实现见 FleetGameSummaryService）
      */
@@ -55,7 +58,7 @@ public class PostGameSummaryBuilder {
         return out;
     }
 
-    /** 常用队列中文名（缺失回退数字） */
+    /** 常用队列中文名（缺失回退数字）：战报 meta 行与 AI 摘要共用文案，两边格式一致便于对照 */
     private String queueName(Integer queueId) {
         if (queueId == null) {
             return "对局";

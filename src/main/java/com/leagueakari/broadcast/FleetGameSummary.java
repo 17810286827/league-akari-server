@@ -63,10 +63,8 @@ public class FleetGameSummary {
 
     private int otherBaronKills;
 
-    /** 主队是否拿一血；null = 无数据 */
+    /** 主队是否拿一血；null = 无数据（对方一血 = !主队一血，渲染规格无独立字段） */
     private Boolean mainFirstBlood;
-
-    private Boolean otherFirstBlood;
 
     // ===== 全局合计（战报图三指标的分母） =====
 

@@ -17,7 +17,12 @@ import java.util.List;
 @Component
 public class ReportImageProjector {
 
-    /** 三指标口径注释：输出/承伤占比为全 10 人口径，伤转 = 伤害 ÷ 经济 */
+    /**
+     * 投影入口：摘要 → 渲染规格。
+     * <p>只做格式化与字段映射：比分/胜负/阵容顺序直取摘要（漏填在此处暴露而非静默），
+     * 三指标（占比/伤转）是展示派生指标在此计算。资源槽位 -1/null 语义透传，
+     * 渲染器据此隐藏无数据格。</p>
+     */
     public ReportImageData project(FleetGameSummary s) {
         ReportImageData d = new ReportImageData();
         d.teamName = s.getTeamName();
@@ -26,7 +31,7 @@ public class ReportImageProjector {
         d.metaLine = queueName(s.getQueueId()) + " · " + formatDuration(s.getGameDurationSeconds())
                 + " · " + formatGameTime(s.getGameCreationMs());
 
-        // 比分直接取摘要（双方击杀合计），漏填会立刻在此处暴露为 0 而非静默
+        // 比分直接取摘要（双方击杀合计）——0:0 回归 bug 的防线：摘要缺比分会在此暴露
         d.mainScore = s.getMainScore();
         d.otherScore = s.getOtherScore();
 
@@ -59,7 +64,10 @@ public class ReportImageProjector {
         return d;
     }
 
-    /** 摘要行 → 渲染行：三指标（占比/伤转）在此计算，称号与 opScore 透传 */
+    /**
+     * 摘要行 → 渲染行：行顺序已在摘要定型（成员置前 + 击杀降序），投影只转格式。
+     * 称号（titleTag）与 opScore 透传；无评选记录时 opScore 写 -1（渲染器隐藏）。
+     */
     private List<ReportImageData.Player> toRenderRows(List<FleetGameSummary.Row> rows,
                                                       double totalDamage, double totalTaken) {
         List<ReportImageData.Player> out = new ArrayList<>();
@@ -83,7 +91,10 @@ public class ReportImageProjector {
         return out;
     }
 
-    /** 对局创建时间 → "08-30 21:47"（北京时间，对齐群里看图的直觉） */
+    /**
+     * 对局创建时间 → "08-30 21:47"（北京时间，对齐群里看图的直觉）。
+     * 输入为 epoch 毫秒，null 时输出 "--" 占位
+     */
     private String formatGameTime(Long gameCreationMs) {
         if (gameCreationMs == null) {
             return "--";
