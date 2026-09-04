@@ -1,8 +1,5 @@
 package com.leagueakari.broadcast;
 
-import com.leagueakari.service.TeamRosterService;
-import com.leagueakari.service.GameDataService;
-import com.leagueakari.service.ParticipantStatsReader;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -48,6 +45,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.leagueakari.gamedata.GameDataService;
+import com.leagueakari.match.ParticipantStatsReader;
+import com.leagueakari.team.TeamRosterService;
 
 /**
  * BroadcastCoordinator 单元测试：局后播报的判定矩阵与状态机

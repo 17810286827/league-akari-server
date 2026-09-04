@@ -1,8 +1,5 @@
 package com.leagueakari.broadcast;
 
-import com.leagueakari.service.GameDataService;
-import com.leagueakari.service.ParticipantStatsReader;
-import com.leagueakari.service.TeamRosterService;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.config.TeamProperties;
@@ -20,6 +17,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import com.leagueakari.gamedata.GameDataService;
+import com.leagueakari.match.ParticipantStatsReader;
+import com.leagueakari.team.TeamRosterService;
 
 /**
  * PostGameSummaryBuilder 单元测试（AI 投影层）：

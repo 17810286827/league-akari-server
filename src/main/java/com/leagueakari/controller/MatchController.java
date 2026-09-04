@@ -5,12 +5,8 @@ import com.leagueakari.dto.MatchSummaryResponse;
 import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.dto.PageResponse;
 import com.leagueakari.dto.TimelineSyncRequest;
-import com.leagueakari.service.AiAnalysisService;
+import com.leagueakari.match.AiAnalysisService;
 import com.leagueakari.broadcast.BroadcastCoordinator;
-import com.leagueakari.service.MatchIngestService;
-import com.leagueakari.service.MatchNotFoundException;
-import com.leagueakari.service.MatchQueryService;
-import com.leagueakari.service.MatchTimelineService;
 import com.leagueakari.util.ClientDisconnectDetector;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +23,10 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Map;
 import java.util.Objects;
+import com.leagueakari.match.MatchIngestService;
+import com.leagueakari.match.MatchNotFoundException;
+import com.leagueakari.match.MatchQueryService;
+import com.leagueakari.match.MatchTimelineService;
 
 /**
  * 对局 API：同步写入（幂等）与查询

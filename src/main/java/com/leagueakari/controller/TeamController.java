@@ -5,7 +5,6 @@ import com.leagueakari.dto.MemberCardResponse;
 import com.leagueakari.dto.TeamMembersResponse;
 import com.leagueakari.dto.WeeklyReportResponse;
 import com.leagueakari.riot.RiotMatchHistoryService;
-import com.leagueakari.service.TeamStatsService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -16,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
 import java.util.Map;
+import com.leagueakari.team.TeamStatsService;
 
 /**
  * 车队数据路由（路由层职责：参数校验与返回值封装，业务在 TeamStatsService）：

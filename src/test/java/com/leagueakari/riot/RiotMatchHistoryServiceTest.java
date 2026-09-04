@@ -5,8 +5,6 @@ import com.leagueakari.config.TeamProperties;
 import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.entity.RiotAccount;
 import com.leagueakari.mapper.MatchMapper;
-import com.leagueakari.service.TeamRosterService;
-import com.leagueakari.service.MatchIngestService;
 import com.leagueakari.mapper.RiotAccountMapper;
 import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
@@ -29,6 +27,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.leagueakari.match.MatchIngestService;
+import com.leagueakari.team.TeamRosterService;
 
 /**
  * RiotMatchHistoryService 单元测试（外部 I/O 接缝）：

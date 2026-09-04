@@ -1,6 +1,5 @@
 package com.leagueakari.reportimage;
 
-import com.leagueakari.service.ChampionIconService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -19,6 +18,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
+import com.leagueakari.gamedata.ChampionIconService;
 
 /**
  * 战报图渲染器（Java2D headless，无系统字体依赖）：

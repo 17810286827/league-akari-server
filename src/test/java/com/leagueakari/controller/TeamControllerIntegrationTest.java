@@ -5,8 +5,8 @@ import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.dto.ParticipantSyncRequest;
 import com.leagueakari.dto.TeamSyncRequest;
 import com.leagueakari.riot.RiotMatchHistoryService;
-import com.leagueakari.service.TeamRosterService;
-import com.leagueakari.service.WeeklyAiCommentService;
+import com.leagueakari.team.TeamRosterService;
+import com.leagueakari.team.WeeklyAiCommentService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +28,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import com.leagueakari.team.TeamStatsService;
 
 /**
  * TeamController 集成测试：真实写入虚拟机 MySQL，覆盖周报/榜单/成员/成员卡的

@@ -1,6 +1,5 @@
 package com.leagueakari.reportimage;
 
-import com.leagueakari.service.ChampionIconService;
 import org.junit.jupiter.api.Test;
 
 import javax.imageio.ImageIO;
@@ -13,6 +12,7 @@ import java.io.ByteArrayInputStream;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import com.leagueakari.gamedata.ChampionIconService;
 
 /**
  * ReportImageRenderer 渲染契约测试：

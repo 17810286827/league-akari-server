@@ -8,8 +8,6 @@ import com.leagueakari.dto.ParticipantSyncRequest;
 import com.leagueakari.dto.TeamSyncRequest;
 import com.leagueakari.entity.Match;
 import com.leagueakari.mapper.MatchMapper;
-import com.leagueakari.service.TeamRosterService;
-import com.leagueakari.service.MatchIngestService;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.core5.net.URIBuilder;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,6 +19,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
+import com.leagueakari.match.MatchIngestService;
+import com.leagueakari.team.TeamRosterService;
 
 /**
  * Riot 对局历史回填服务（外部 I/O 接缝）：

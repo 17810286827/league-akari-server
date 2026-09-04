@@ -1,8 +1,5 @@
 package com.leagueakari.broadcast;
 
-import com.leagueakari.service.GameDataService;
-import com.leagueakari.service.ParticipantStatsReader;
-import com.leagueakari.service.TeamRosterService;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.config.TeamProperties;
@@ -20,6 +17,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import com.leagueakari.gamedata.GameDataService;
+import com.leagueakari.match.ParticipantStatsReader;
+import com.leagueakari.team.TeamRosterService;
 
 /**
  * FleetGameSummaryService 单元测试（一局摘要构造层，口径断言的集中地）：

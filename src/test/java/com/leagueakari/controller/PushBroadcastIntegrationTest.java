@@ -8,7 +8,6 @@ import com.leagueakari.entity.Match;
 import com.leagueakari.mapper.MatchMapper;
 import com.leagueakari.qqbot.QqBotClient;
 import com.leagueakari.broadcast.PostGameCommentService;
-import com.leagueakari.service.TeamRosterService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +33,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import com.leagueakari.team.TeamRosterService;
 
 /**
  * 局后播报集成测试（T2 主 seam）：真实走 POST /api/matches → 落库 → 判定 → 发送 全链路。

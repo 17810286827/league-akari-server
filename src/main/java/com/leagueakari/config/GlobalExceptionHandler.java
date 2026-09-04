@@ -1,6 +1,5 @@
 package com.leagueakari.config;
 
-import com.leagueakari.service.MatchNotFoundException;
 import com.leagueakari.riot.RiotAccountNotFoundException;
 import com.leagueakari.util.ClientDisconnectDetector;
 import jakarta.servlet.http.HttpServletResponse;
@@ -17,6 +16,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.Map;
+import com.leagueakari.match.MatchNotFoundException;
 
 /**
  * 统一异常处理：返回 { code, message }
