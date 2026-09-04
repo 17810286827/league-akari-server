@@ -1,6 +1,7 @@
 package com.leagueakari.broadcast;
 
 import com.leagueakari.service.GameDataService;
+import com.leagueakari.service.ParticipantStatsReader;
 import com.leagueakari.service.TeamRosterService;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,7 +33,7 @@ class FleetGameSummaryServiceTest {
     private final GameDataService gameData = mock(GameDataService.class);
     private final TeamProperties teamProps = mock(TeamProperties.class);
     private final FleetGameSummaryService service =
-            new FleetGameSummaryService(gameData, new ObjectMapper(), teamProps);
+            new FleetGameSummaryService(gameData, new ObjectMapper(), teamProps, new ParticipantStatsReader(new ObjectMapper()));
 
     /** stats_json 片段：伤害/承伤/金币（Riot v5 键名） */
     private static String stats(int dmg, int taken, int gold) {

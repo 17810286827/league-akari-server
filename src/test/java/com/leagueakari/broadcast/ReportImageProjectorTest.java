@@ -1,6 +1,7 @@
 package com.leagueakari.broadcast;
 
 import com.leagueakari.service.GameDataService;
+import com.leagueakari.service.ParticipantStatsReader;
 import com.leagueakari.service.TeamRosterService;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,7 +33,7 @@ class ReportImageProjectorTest {
     private final TeamProperties teamProps = mock(TeamProperties.class);
     /** 真实组装器：投影测试用真实摘要构造（口径已由 FleetGameSummaryServiceTest 锁定） */
     private final FleetGameSummaryService summaryService =
-            new FleetGameSummaryService(gameData, new ObjectMapper(), teamProps);
+            new FleetGameSummaryService(gameData, new ObjectMapper(), teamProps, new ParticipantStatsReader(new ObjectMapper()));
     private final ReportImageProjector projector = new ReportImageProjector();
 
     /** stats_json 片段（与摘要测试同 fixture 风格） */

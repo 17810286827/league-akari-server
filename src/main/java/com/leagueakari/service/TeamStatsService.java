@@ -111,6 +111,8 @@ public class TeamStatsService {
     private final WeeklyAiCommentService aiCommentService;
     private final BaselineService baselineService;
     private final ObjectMapper objectMapper;
+    /** stats_json 读取门面：缺失补 0 口径的唯一实现（架构清理 T4） */
+    private final ParticipantStatsReader statsReader;
     private final Clock clock;
 
     public TeamStatsService(TeamProperties teamProperties, TeamRosterService rosterService,
@@ -118,7 +120,7 @@ public class TeamStatsService {
             MatchMvpMapper mvpMapper, MatchTimelineService timelineService,
             MatchMvpService mvpService, GameDataService gameDataService,
             WeeklyAiCommentService aiCommentService, BaselineService baselineService,
-            ObjectMapper objectMapper, Clock clock) {
+            ObjectMapper objectMapper, ParticipantStatsReader statsReader, Clock clock) {
         this.teamProperties = teamProperties;
         this.rosterService = rosterService;
         this.matchMapper = matchMapper;
@@ -130,6 +132,7 @@ public class TeamStatsService {
         this.aiCommentService = aiCommentService;
         this.baselineService = baselineService;
         this.objectMapper = objectMapper;
+        this.statsReader = statsReader;
         this.clock = clock;
     }
 
@@ -679,35 +682,26 @@ public class TeamStatsService {
         return index;
     }
 
-    /** 个人对英雄伤害（statsJson.totalDamageDealtToChampions，缺失计 0） */
+    /** 个人对英雄伤害（statsJson.totalDamageDealtToChampions，缺失/损坏计 0——门面口径） */
     private double totalDamage(MatchParticipant p) {
-        try {
-            if (p.getStatsJson() == null) {
-                return 0;
-            }
-            return objectMapper.readTree(p.getStatsJson())
-                    .path("totalDamageDealtToChampions").asDouble(0);
-        } catch (Exception e) {
-            return 0;
-        }
+        return statsReader.doubleVal(p.getStatsJson(), "totalDamageDealtToChampions");
     }
 
-    /** 分均伤害（对英雄）：statsJson.totalDamageDealtToChampions / 分钟数；数据缺失返回 -1 */
+    /** 分均伤害（对英雄）：statsJson.totalDamageDealtToChampions / 分钟数；数据缺失返回 -1（榜单绝活榜的无效样本语义） */
     private double damagePerMin(MatchParticipant p, Match match) {
-        try {
-            if (p.getStatsJson() == null || match.getGameDuration() == null || match.getGameDuration() <= 0) {
-                return -1;
-            }
-            JsonNode stats = objectMapper.readTree(p.getStatsJson());
-            double damage = stats.path("totalDamageDealtToChampions").asDouble(-1);
-            if (damage < 0) {
-                return -1;
-            }
-            return damage / (match.getGameDuration() / 60.0);
-        } catch (Exception e) {
-            log.warn("damagePerMin parse failed: gameId={}, puuid={}", match.getGameId(), p.getPuuid());
+        if (match.getGameDuration() == null || match.getGameDuration() <= 0) {
             return -1;
         }
+        // 门面口径：JSON 为 null/损坏/字段缺失时值为 0——与旧实现"字段缺失返回 -1"
+        // 的差异仅在 statsJson 整体存在的判断上，此处显式保留：null 快照视为无数据
+        if (p.getStatsJson() == null || p.getStatsJson().isBlank()) {
+            return -1;
+        }
+        double damage = statsReader.doubleVal(p.getStatsJson(), "totalDamageDealtToChampions");
+        if (damage <= 0) {
+            return -1;
+        }
+        return damage / (match.getGameDuration() / 60.0);
     }
 
     // ---------- 名场面 ----------

@@ -54,6 +54,10 @@ class MatchQueryServiceTest {
     @Mock
     private MatchMvpMapper matchMvpMapper;
 
+    /** 真实门面（spy 其内 mapper 无必要——门面是纯读逻辑，直接用真实实例） */
+    @Spy
+    private ParticipantStatsReader statsReader = new ParticipantStatsReader(new ObjectMapper());
+
     @InjectMocks
     private MatchQueryService matchQueryService;
 

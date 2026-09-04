@@ -2,6 +2,7 @@ package com.leagueakari.broadcast;
 
 import com.leagueakari.service.TeamRosterService;
 import com.leagueakari.service.GameDataService;
+import com.leagueakari.service.ParticipantStatsReader;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -106,8 +107,7 @@ class BroadcastCoordinatorTest {
         teamProperties.setMinSharedMembers(2);
 
         // 真实链路组件：摘要组装（英雄名走 mock 的 GameDataService）+ 战报图投影
-        summaryService = new FleetGameSummaryService(
-                gameDataService, new ObjectMapper(), teamProperties);
+        summaryService = new FleetGameSummaryService(gameDataService, new ObjectMapper(), teamProperties, new ParticipantStatsReader(new ObjectMapper()));
         reportImageProjector = new ReportImageProjector();
 
         // AI 投影（PostGameSummaryBuilder）为无状态纯函数，直接构造

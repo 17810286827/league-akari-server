@@ -73,7 +73,8 @@ class MatchMvpServiceTest {
         // 手动构造，不用 @InjectMocks（因为要 mock OpScoreEngine）
         matchMvpService = new MatchMvpService(
                 matchMvpMapper, championClassMapper,
-                opScoreEngine, scoringConfig, objectMapper, baselineService);
+                opScoreEngine, scoringConfig, objectMapper, baselineService,
+                new ParticipantStatsReader(objectMapper));
     }
 
     private Match buildMatch(Long id, Integer winnerTeamId) {

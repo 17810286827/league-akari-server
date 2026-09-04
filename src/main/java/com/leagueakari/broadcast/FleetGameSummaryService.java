@@ -5,6 +5,7 @@ import com.leagueakari.service.TeamRosterService;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.service.ParticipantStatsReader;
 import com.leagueakari.config.TeamProperties;
 import com.leagueakari.entity.Match;
 import com.leagueakari.entity.MatchMvp;
@@ -37,6 +38,8 @@ public class FleetGameSummaryService {
     private final GameDataService gameDataService;
     private final ObjectMapper objectMapper;
     private final TeamProperties teamProperties;
+    /** stats_json 读取门面：缺失补 0 口径的唯一实现（架构清理 T4） */
+    private final ParticipantStatsReader statsReader;
 
     /**
      * 组装一局摘要
@@ -66,8 +69,8 @@ public class FleetGameSummaryService {
         double totalDamage = 0;
         double totalTaken = 0;
         for (MatchParticipant p : participants) {
-            totalDamage += statInt(p.getStatsJson(), "totalDamageDealtToChampions");
-            totalTaken += statInt(p.getStatsJson(), "totalDamageTaken");
+            totalDamage += statsReader.intVal(p.getStatsJson(), "totalDamageDealtToChampions");
+            totalTaken += statsReader.intVal(p.getStatsJson(), "totalDamageTaken");
         }
 
         // 双列组装：主队（车队成员置前）与对方，行内按击杀降序
@@ -146,9 +149,9 @@ public class FleetGameSummaryService {
                     .kills(p.getKills() == null ? 0 : p.getKills())
                     .deaths(p.getDeaths() == null ? 0 : p.getDeaths())
                     .assists(p.getAssists() == null ? 0 : p.getAssists())
-                    .damage(statInt(p.getStatsJson(), "totalDamageDealtToChampions"))
-                    .damageTaken(statInt(p.getStatsJson(), "totalDamageTaken"))
-                    .gold(statInt(p.getStatsJson(), "goldEarned"))
+                    .damage(statsReader.intVal(p.getStatsJson(), "totalDamageDealtToChampions"))
+                    .damageTaken(statsReader.intVal(p.getStatsJson(), "totalDamageTaken"))
+                    .gold(statsReader.intVal(p.getStatsJson(), "goldEarned"))
                     .member(isMain && memberByPuuid.containsKey(p.getPuuid()))
                     .win(rowWin)
                     .title(titleOf(award, isMain))
@@ -218,22 +221,6 @@ public class FleetGameSummaryService {
         } catch (Exception e) {
             log.warn("Parse teamsJson failed, resources hidden: {}", e.getMessage());
         }
-    }
-
-    /** 读取 stats_json 数值字段：缺失/非数字返回 0 */
-    private int statInt(String statsJson, String key) {
-        if (statsJson == null || statsJson.isBlank()) {
-            return 0;
-        }
-        try {
-            JsonNode stats = objectMapper.readTree(statsJson);
-            if (stats.has(key) && !stats.get(key).isNull()) {
-                return stats.get(key).asInt(0);
-            }
-        } catch (Exception e) {
-            log.warn("Parse statsJson failed: {}", e.getMessage());
-        }
-        return 0;
     }
 
     /** 英雄中文名：数据缺失/查询失败返回占位，不让摘要出现 null */

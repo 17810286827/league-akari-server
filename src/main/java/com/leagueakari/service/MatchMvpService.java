@@ -1,7 +1,6 @@
 package com.leagueakari.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.config.ScoringConfig;
 import com.leagueakari.dto.MvpScoringInput;
@@ -46,6 +45,8 @@ public class MatchMvpService {
     private final ScoringConfig scoringConfig;
     private final ObjectMapper objectMapper;
     private final BaselineService baselineService;
+    /** stats_json 读取门面：缺失补 0 口径的唯一实现（架构清理 T4） */
+    private final ParticipantStatsReader statsReader;
 
     /**
      * 英雄职业分类缓存：该表无写入口（随版本更新手工维护），
@@ -182,33 +183,34 @@ public class MatchMvpService {
     private static final Set<Integer> ARAM_QUEUE_IDS = Set.of(450, 2400, 2410, 2450);
 
     private MvpScoringInput toScoringInput(MatchParticipant p, Match match) {
-        JsonNode stats = parseStats(p.getStatsJson());
         boolean aramMode = match.getQueueId() != null && ARAM_QUEUE_IDS.contains(match.getQueueId());
         if (aramMode) {
             // 关键评分节点：大乱斗修正入口（详见 ARAM_QUEUE_IDS 注释）
             log.debug("大乱斗系对局 queueId={}，评分输入启用大乱斗修正（辅助视野归零）", match.getQueueId());
         }
+        // 统计字段经门面读取（缺失补 0），不再经 JsonNode 中转
+        String statsJson = p.getStatsJson();
         return MvpScoringInput.builder()
                 .participantId(p.getId())
                 .championId(p.getChampionId())
                 .teamId(p.getTeamId())
                 .win(p.getWin())
                 .aramMode(aramMode)
-                .totalDamageDealtToChampions(d(stats, "totalDamageDealtToChampions"))
+                .totalDamageDealtToChampions(statsReader.doubleVal(statsJson, "totalDamageDealtToChampions"))
                 .kills(p.getKills())
                 .deaths(p.getDeaths())
                 .assists(p.getAssists())
                 .goldEarned(p.getGoldEarned())
-                .totalDamageTaken(d(stats, "totalDamageTaken"))
-                .visionScore(d(stats, "visionScore"))
-                .totalHeal(d(stats, "totalHeal"))
-                .totalDamageShieldedOnTeammates(d(stats, "totalDamageShieldedOnTeammates"))
-                .timeCCingOthers(d(stats, "timeCCingOthers"))
-                .damageDealtToTurrets(d(stats, "damageDealtToTurrets"))
-                .doubleKills(i(stats, "doubleKills"))
-                .tripleKills(i(stats, "tripleKills"))
-                .quadraKills(i(stats, "quadraKills"))
-                .pentaKills(i(stats, "pentaKills"))
+                .totalDamageTaken(statsReader.doubleVal(statsJson, "totalDamageTaken"))
+                .visionScore(statsReader.doubleVal(statsJson, "visionScore"))
+                .totalHeal(statsReader.doubleVal(statsJson, "totalHeal"))
+                .totalDamageShieldedOnTeammates(statsReader.doubleVal(statsJson, "totalDamageShieldedOnTeammates"))
+                .timeCCingOthers(statsReader.doubleVal(statsJson, "timeCCingOthers"))
+                .damageDealtToTurrets(statsReader.doubleVal(statsJson, "damageDealtToTurrets"))
+                .doubleKills(statsReader.intVal(statsJson, "doubleKills"))
+                .tripleKills(statsReader.intVal(statsJson, "tripleKills"))
+                .quadraKills(statsReader.intVal(statsJson, "quadraKills"))
+                .pentaKills(statsReader.intVal(statsJson, "pentaKills"))
                 .gameDurationSeconds(match.getGameDuration())
                 .build();
     }
@@ -236,28 +238,6 @@ public class MatchMvpService {
         } catch (DuplicateKeyException e) {
             log.info("MVP 记录已存在，跳过重复写入：matchId={} type={}", match.getId(), type);
         }
-    }
-
-    private JsonNode parseStats(String statsJson) {
-        if (statsJson == null || statsJson.isBlank()) {
-            return objectMapper.createObjectNode();
-        }
-        try {
-            return objectMapper.readTree(statsJson);
-        } catch (Exception e) {
-            log.warn("statsJson 解析失败，按 0 兜底：{}", e.getMessage());
-            return objectMapper.createObjectNode();
-        }
-    }
-
-    private Double d(JsonNode node, String field) {
-        JsonNode v = node.get(field);
-        return v == null ? 0.0 : v.asDouble();
-    }
-
-    private Integer i(JsonNode node, String field) {
-        JsonNode v = node.get(field);
-        return v == null ? 0 : v.asInt();
     }
 
     private String writeDetailJson(Map<String, OpScoreResult.DimensionScore> detail) {

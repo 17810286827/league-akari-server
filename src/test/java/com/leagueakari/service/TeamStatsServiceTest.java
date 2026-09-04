@@ -79,7 +79,7 @@ class TeamStatsServiceTest {
         when(rosterService.requireMembers()).thenReturn(List.of(memberA, memberB));
         return new TeamStatsService(props, rosterService, matchMapper, participantMapper,
                 mvpMapper, timelineService, mvpService, gameDataService, aiCommentService,
-                baselineService, new ObjectMapper(), clock);
+                baselineService, new ObjectMapper(), new ParticipantStatsReader(new ObjectMapper()), clock);
     }
 
     /** 测试周：2026-08-24（周一）~ 2026-08-30（周日） */

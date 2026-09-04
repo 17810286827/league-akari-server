@@ -45,6 +45,8 @@ public class MatchQueryService {
     private final MatchMvpService matchMvpService;
     /** MVP/SVP 评选结果查询：详情/列表接口填充 mvp/svp 字段 */
     private final MatchMvpMapper matchMvpMapper;
+    /** stats_json 读取门面：缺失补 0/false、challenges 嵌套口径的唯一实现（架构清理 T4） */
+    private final ParticipantStatsReader statsReader;
 
     /**
      * 分页查询对局列表，支持队列与时间范围筛选
@@ -307,25 +309,25 @@ public class MatchQueryService {
         s.setDeaths(self.getDeaths() == null ? 0 : self.getDeaths());
         s.setAssists(self.getAssists() == null ? 0 : self.getAssists());
         s.setWin(self.getWin());
-        // stats 快照字段：解析 stats_json，缺失写 0/false
-        JsonNode stats = parseStatsJson(self.getStatsJson());
-        s.setTotalDamage(statInt(stats, "totalDamageDealtToChampions"));
-        s.setTotalDamageTaken(statInt(stats, "totalDamageTaken"));
-        s.setGoldEarned(statInt(stats, "goldEarned"));
-        s.setCs(statInt(stats, "totalMinionsKilled"));
-        s.setLargestMultiKill(statInt(stats, "largestMultiKill"));
-        s.setTurretKills(statInt(stats, "turretKills"));
-        s.setGameEndedInSurrender(statBool(stats, "gameEndedInSurrender"));
+        // stats 快照字段：经门面读取（缺失写 0/false/空列表），不 JsonNode 中转
+        String statsJson = self.getStatsJson();
+        s.setTotalDamage(statsReader.intVal(statsJson, "totalDamageDealtToChampions"));
+        s.setTotalDamageTaken(statsReader.intVal(statsJson, "totalDamageTaken"));
+        s.setGoldEarned(statsReader.intVal(statsJson, "goldEarned"));
+        s.setCs(statsReader.intVal(statsJson, "totalMinionsKilled"));
+        s.setLargestMultiKill(statsReader.intVal(statsJson, "largestMultiKill"));
+        s.setTurretKills(statsReader.intVal(statsJson, "turretKills"));
+        s.setGameEndedInSurrender(statsReader.boolVal(statsJson, "gameEndedInSurrender"));
         // 折叠卡增强字段：出装/技能/海克斯/符文 + 多杀，全部从 stats_json 提取，缺失写空列表或 0
-        s.setItems(statList(stats, "item0", "item1", "item2", "item3", "item4", "item5", "item6"));
-        s.setSummonerSpells(statList(stats, "spell1Id", "spell2Id"));
-        s.setAugments(statList(stats, "playerAugment1", "playerAugment2", "playerAugment3",
+        s.setItems(statsReader.listVal(statsJson, "item0", "item1", "item2", "item3", "item4", "item5", "item6"));
+        s.setSummonerSpells(statsReader.listVal(statsJson, "spell1Id", "spell2Id"));
+        s.setAugments(statsReader.listVal(statsJson, "playerAugment1", "playerAugment2", "playerAugment3",
                 "playerAugment4", "playerAugment5", "playerAugment6"));
-        s.setPerks(buildPerks(stats));
-        s.setDoubleKills(statInt(stats, "doubleKills"));
-        s.setTripleKills(statInt(stats, "tripleKills"));
-        s.setQuadraKills(statInt(stats, "quadraKills"));
-        s.setPentaKills(statInt(stats, "pentaKills"));
+        s.setPerks(buildPerks(statsJson));
+        s.setDoubleKills(statsReader.intVal(statsJson, "doubleKills"));
+        s.setTripleKills(statsReader.intVal(statsJson, "tripleKills"));
+        s.setQuadraKills(statsReader.intVal(statsJson, "quadraKills"));
+        s.setPentaKills(statsReader.intVal(statsJson, "pentaKills"));
         return s;
     }
 
@@ -343,10 +345,9 @@ public class MatchQueryService {
             // 直显列缺失视为 0
             kills += p.getKills() == null ? 0 : p.getKills();
             gold += p.getGoldEarned() == null ? 0 : p.getGoldEarned();
-            // stats 伤害字段从各人 stats_json 解析，缺失视为 0
-            JsonNode stats = parseStatsJson(p.getStatsJson());
-            damage += statInt(stats, "totalDamageDealtToChampions");
-            damageTaken += statInt(stats, "totalDamageTaken");
+            // stats 伤害字段经门面读取，缺失视为 0
+            damage += statsReader.intVal(p.getStatsJson(), "totalDamageDealtToChampions");
+            damageTaken += statsReader.intVal(p.getStatsJson(), "totalDamageTaken");
         }
         t.setKills(kills);
         t.setGold(gold);
@@ -394,40 +395,40 @@ public class MatchQueryService {
             pl.setDeaths(p.getDeaths() == null ? 0 : p.getDeaths());
             pl.setAssists(p.getAssists() == null ? 0 : p.getAssists());
             // stats 快照字段：item0-6 与 spell1Id/spell2Id 在 LCU/SGP 均位于 stats 顶层，读取路径统一
-            JsonNode stats = parseStatsJson(p.getStatsJson());
-            pl.setItems(statList(stats, "item0", "item1", "item2", "item3", "item4", "item5", "item6"));
-            pl.setSummonerSpells(statList(stats, "spell1Id", "spell2Id"));
-            pl.setAugments(statList(stats, "playerAugment1", "playerAugment2", "playerAugment3",
+            String statsJson = p.getStatsJson();
+            pl.setItems(statsReader.listVal(statsJson, "item0", "item1", "item2", "item3", "item4", "item5", "item6"));
+            pl.setSummonerSpells(statsReader.listVal(statsJson, "spell1Id", "spell2Id"));
+            pl.setAugments(statsReader.listVal(statsJson, "playerAugment1", "playerAugment2", "playerAugment3",
                     "playerAugment4", "playerAugment5", "playerAugment6"));
-            pl.setPerks(buildPerks(stats));
+            pl.setPerks(buildPerks(statsJson));
             // 折叠卡统计行/雷达图字段：LCU/SGP 字段名一致，缺失写 0
-            pl.setTotalDamageDealtToChampions(statInt(stats, "totalDamageDealtToChampions"));
-            pl.setTotalDamageTaken(statInt(stats, "totalDamageTaken"));
-            pl.setTotalHeal(statInt(stats, "totalHeal"));
-            pl.setVisionScore(statInt(stats, "visionScore"));
-            pl.setGoldEarned(statInt(stats, "goldEarned"));
+            pl.setTotalDamageDealtToChampions(statsReader.intVal(statsJson, "totalDamageDealtToChampions"));
+            pl.setTotalDamageTaken(statsReader.intVal(statsJson, "totalDamageTaken"));
+            pl.setTotalHeal(statsReader.intVal(statsJson, "totalHeal"));
+            pl.setVisionScore(statsReader.intVal(statsJson, "visionScore"));
+            pl.setGoldEarned(statsReader.intVal(statsJson, "goldEarned"));
             // 补刀口径与详情接口一致（小兵 + 野怪），避免折叠卡补兵标签与展开态判定不一致
-            pl.setCs(statInt(stats, "neutralMinionsKilled") + statInt(stats, "totalMinionsKilled"));
-            pl.setTurretKills(statInt(stats, "turretKills"));
-            pl.setWardsPlaced(statInt(stats, "wardsPlaced"));
+            pl.setCs(statsReader.intVal(statsJson, "neutralMinionsKilled") + statsReader.intVal(statsJson, "totalMinionsKilled"));
+            pl.setTurretKills(statsReader.intVal(statsJson, "turretKills"));
+            pl.setWardsPlaced(statsReader.intVal(statsJson, "wardsPlaced"));
             // 折叠卡成就标签字段：多杀/拆塔/护盾/控制读 stats 顶层，
             // 单杀/塔杀/补刀压制/击飞击杀读 SGP challenges（LCU 缺失按 0）
-            pl.setTotalDamageToTowers(statInt(stats, "damageDealtToTurrets"));
-            pl.setDoubleKills(statInt(stats, "doubleKills"));
-            pl.setTripleKills(statInt(stats, "tripleKills"));
-            pl.setQuadraKills(statInt(stats, "quadraKills"));
-            pl.setPentaKills(statInt(stats, "pentaKills"));
-            pl.setTotalDamageShieldedOnTeammates(statInt(stats, "totalDamageShieldedOnTeammates"));
-            pl.setTimeCCingOthers(statInt(stats, "timeCCingOthers"));
-            pl.setSoloKills(statChallengeInt(stats, "soloKills"));
-            pl.setKillsNearEnemyTurret(statChallengeInt(stats, "killsNearEnemyTurret"));
-            pl.setKillsUnderOwnTurret(statChallengeInt(stats, "killsUnderOwnTurret"));
-            pl.setMaxCsAdvantageOnLaneOpponent(statChallengeInt(stats, "maxCsAdvantageOnLaneOpponent"));
-            pl.setKnockEnemyIntoTeamAndKill(statChallengeInt(stats, "knockEnemyIntoTeamAndKill"));
+            pl.setTotalDamageToTowers(statsReader.intVal(statsJson, "damageDealtToTurrets"));
+            pl.setDoubleKills(statsReader.intVal(statsJson, "doubleKills"));
+            pl.setTripleKills(statsReader.intVal(statsJson, "tripleKills"));
+            pl.setQuadraKills(statsReader.intVal(statsJson, "quadraKills"));
+            pl.setPentaKills(statsReader.intVal(statsJson, "pentaKills"));
+            pl.setTotalDamageShieldedOnTeammates(statsReader.intVal(statsJson, "totalDamageShieldedOnTeammates"));
+            pl.setTimeCCingOthers(statsReader.intVal(statsJson, "timeCCingOthers"));
+            pl.setSoloKills(statsReader.challengeInt(statsJson, "soloKills"));
+            pl.setKillsNearEnemyTurret(statsReader.challengeInt(statsJson, "killsNearEnemyTurret"));
+            pl.setKillsUnderOwnTurret(statsReader.challengeInt(statsJson, "killsUnderOwnTurret"));
+            pl.setMaxCsAdvantageOnLaneOpponent(statsReader.challengeInt(statsJson, "maxCsAdvantageOnLaneOpponent"));
+            pl.setKnockEnemyIntoTeamAndKill(statsReader.challengeInt(statsJson, "knockEnemyIntoTeamAndKill"));
             // 召唤师账号等级：顶部玩家信息展示（缺失按 0）
-            pl.setSummonerLevel(statInt(stats, "summonerLevel"));
+            pl.setSummonerLevel(statsReader.intVal(statsJson, "summonerLevel"));
             // 召唤师头像 ID：顶部玩家头像展示（缺失按 0）
-            pl.setProfileIcon(statInt(stats, "profileIcon"));
+            pl.setProfileIcon(statsReader.intVal(statsJson, "profileIcon"));
             return pl;
         }).toList();
     }
@@ -438,111 +439,23 @@ public class MatchQueryService {
      * 2. LCU 平铺：perk0-5 + perkPrimaryStyle + perkSubStyle 位于 stats 顶层。
      * 两条路径字段缺失时均为空列表/0，保证响应结构稳定
      */
-    private MatchSummaryResponse.ParticipantPerks buildPerks(JsonNode stats) {
+    private MatchSummaryResponse.ParticipantPerks buildPerks(String statsJson) {
         MatchSummaryResponse.ParticipantPerks perks = new MatchSummaryResponse.ParticipantPerks();
-        if (stats == null) {
-            // stats 整体缺失兜底：与"缺失写空列表/0"契约一致（placeholderSelf 同款输出），
-            // 空 perkIds + 样式 0，保证折叠卡渲染结构稳定而非输出 null
-            perks.setPerkIds(List.of());
-            perks.setPerkStyle(0);
-            perks.setPerkSubStyle(0);
-            return perks;
-        }
-        JsonNode nested = stats.get("perks");
-        if (nested != null && nested.isObject()) {
+        JsonNode nested = statsReader.nested(statsReader.node(statsJson), "perks");
+        if (nested != null) {
             // SGP 嵌套路径：符文 ID 为数组字段，样式字段为对象内标量
-            perks.setPerkIds(statIntArray(nested, "perkIds"));
-            perks.setPerkStyle(statInt(nested, "perkStyle"));
-            perks.setPerkSubStyle(statInt(nested, "perkSubStyle"));
+            perks.setPerkIds(statsReader.arrayVal(nested, "perkIds"));
+            perks.setPerkStyle(nested.path("perkStyle").asInt(0));
+            perks.setPerkSubStyle(nested.path("perkSubStyle").asInt(0));
         } else {
-            // LCU 平铺路径：6 颗符文 + 主副系样式均位于 stats 顶层
-            perks.setPerkIds(statList(stats, "perk0", "perk1", "perk2", "perk3", "perk4", "perk5"));
-            perks.setPerkStyle(statInt(stats, "perkPrimaryStyle"));
-            perks.setPerkSubStyle(statInt(stats, "perkSubStyle"));
+            // LCU 平铺路径：6 颗符文 + 主副系样式均位于 stats 顶层；
+            // stats 整体缺失（null/损坏）时 listVal 空列表、intVal 0，
+            // 与"缺失写空列表/0"契约一致（placeholderSelf 同款输出）
+            perks.setPerkIds(statsReader.listVal(statsJson, "perk0", "perk1", "perk2", "perk3", "perk4", "perk5"));
+            perks.setPerkStyle(statsReader.intVal(statsJson, "perkPrimaryStyle"));
+            perks.setPerkSubStyle(statsReader.intVal(statsJson, "perkSubStyle"));
         }
         return perks;
-    }
-
-    /**
-     * 解析 stats_json 快照为 JsonNode，供统计字段读取；
-     * 空串或解析失败返回 null，调用方按缺失字段写 0/false 处理
-     */
-    private JsonNode parseStatsJson(String statsJson) {
-        if (statsJson == null || statsJson.isBlank()) {
-            return null;
-        }
-        try {
-            return objectMapper.readTree(statsJson);
-        } catch (Exception e) {
-            // 快照损坏不阻断列表接口：仅记录日志并按缺失字段处理
-            log.warn("Failed to parse statsJson, treat as empty: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * 读取 stats 数值字段：字段缺失、为 null 或非数字时返回 0
-     */
-    private int statInt(JsonNode stats, String key) {
-        if (stats == null || !stats.has(key) || stats.get(key).isNull()) {
-            return 0;
-        }
-        return stats.get(key).asInt(0);
-    }
-
-    /**
-     * 读取 stats.challenges 数值字段（SGP 独有挑战数据，LCU 缺失时为 0）：
-     * challenges 对象或字段缺失、为 null 时返回 0，保证响应结构稳定
-     */
-    private int statChallengeInt(JsonNode stats, String key) {
-        if (stats == null || !stats.has("challenges") || !stats.get("challenges").has(key)) {
-            return 0;
-        }
-        JsonNode value = stats.get("challenges").get(key);
-        if (value.isNull()) {
-            return 0;
-        }
-        return value.asInt(0);
-    }
-
-    /**
-     * 读取 stats 布尔字段：字段缺失、为 null 或非法时返回 false
-     */
-    private boolean statBool(JsonNode stats, String key) {
-        if (stats == null || !stats.has(key) || stats.get(key).isNull()) {
-            return false;
-        }
-        return stats.get(key).asBoolean(false);
-    }
-
-    /**
-     * 按连续键名读取 stats 整数列表（如 item0-6、playerAugment1-6、perk0-5）：
-     * 按传入键顺序取值，缺失/为 null 的键跳过，stats 缺失时返回空列表
-     */
-    private List<Integer> statList(JsonNode stats, String... keys) {
-        List<Integer> values = new ArrayList<>();
-        if (stats == null) {
-            return values;
-        }
-        for (String key : keys) {
-            if (stats.has(key) && !stats.get(key).isNull()) {
-                values.add(stats.get(key).asInt(0));
-            }
-        }
-        return values;
-    }
-
-    /**
-     * 读取 stats 数组字段为整数列表（如 SGP 嵌套 perks.perkIds）：
-     * 字段缺失或非数组时返回空列表
-     */
-    private List<Integer> statIntArray(JsonNode stats, String key) {
-        List<Integer> values = new ArrayList<>();
-        if (stats == null || !stats.has(key) || !stats.get(key).isArray()) {
-            return values;
-        }
-        stats.get(key).forEach(node -> values.add(node.asInt(0)));
-        return values;
     }
 
     /**
