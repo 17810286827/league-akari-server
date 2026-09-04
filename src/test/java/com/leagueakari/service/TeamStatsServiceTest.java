@@ -529,7 +529,7 @@ class TeamStatsServiceTest {
         when(gameDataService.championName(103)).thenReturn("阿狸");
         when(gameDataService.championName(266)).thenReturn("锐雯");
         // 全库基线：阿狸样本 120 场、分均伤害合计 2400 → 基线 20.0；锐雯无样本
-        when(baselineService.getBaselineMap()).thenReturn(Map.of(103, Map.of(OpScoreEngine.DIM_DAMAGE, 20.0)));
+        when(baselineService.getBaselineMap()).thenReturn(Map.of(103, new ChampionBaseline(103, Map.of(OpScoreEngine.DIM_DAMAGE, 20.0), 120)));
 
         MemberCardResponse card = svc.memberCard("puuid-a");
 

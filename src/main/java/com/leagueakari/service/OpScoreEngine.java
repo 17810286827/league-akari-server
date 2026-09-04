@@ -3,6 +3,8 @@ package com.leagueakari.service;
 import com.leagueakari.config.ScoringConfig;
 import com.leagueakari.dto.MvpScoringInput;
 import com.leagueakari.dto.OpScoreResult;
+import com.leagueakari.entity.ChampionClass;
+import com.leagueakari.mapper.ChampionClassMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -14,7 +16,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * OpScore 评分引擎（纯函数，无数据库/HTTP 依赖）
+ * OpScore 评分引擎（评分域的表加载与计算合一：职业表/基线表由本引擎自加载）
  * <p>按英雄职业差异化权重对每个评分维度做 {@code 局内位次分×混合比 + 基线分×(1-混合比)}
  * 合成，加权平均得 0-100 总分，除以 10 映射到 0-10 OP Score，再加多杀加分。</p>
  * <p>胜方 op_score 最高者为 MVP，败方 op_score 最高者为 ACE。
@@ -49,26 +51,36 @@ public class OpScoreEngine {
     static final String CLASS_SUPPORT = "SUPPORT";
 
     private final ScoringConfig config;
+    /** 英雄职业映射数据源（champion_class 表，随版本手工维护、无写入口 → 懒加载后永久缓存） */
+    private final ChampionClassMapper championClassMapper;
+    /** 评分基线缓存（读走 BaselineService 进程内缓存，写由其置空失效——引擎只读） */
+    private final BaselineService baselineService;
 
     /**
-     * 评分入口
-     *
-     * @param inputs          全队参与者的原始表现数据
-     * @param championClassMap 英雄职业映射（championId → class_name），由调用方从数据库加载
-     * @param baseline        每个参与的英雄的可信基线（championId → {dim → 每分钟均值}，null 表示该英雄无基线样本）
+     * 英雄职业分类缓存：该表无写入口（随版本更新手工维护），
+     * 懒加载后复用，避免每场评分都全表查询（volatile 保证多线程可见性）
      */
-    public OpScoreResult score(List<MvpScoringInput> inputs, Map<Integer, String> championClassMap,
-                               Map<Integer, Map<String, Double>> baseline) {
+    private volatile Map<Integer, String> championClassCache;
+
+    /**
+     * 评分入口（单参数）：调用方只传参与者输入，职业表/基线表由引擎侧自加载。
+     *
+     * @param inputs 全队参与者的原始表现数据
+     */
+    public OpScoreResult score(List<MvpScoringInput> inputs) {
         if (inputs == null || inputs.size() < 2) {
             throw new IllegalArgumentException("评分至少需要 2 名参与者");
         }
+        // 表加载归属引擎：职业表懒加载缓存 + 基线表（BaselineService 进程内缓存）
+        Map<Integer, String> championClassMap = loadChampionClassMap();
+        Map<Integer, ChampionBaseline> baseline = baselineService.getBaselineMap();
+
         Map<Integer, List<MvpScoringInput>> byTeam = inputs.stream()
                 .collect(Collectors.groupingBy(MvpScoringInput::getTeamId));
 
         List<OpScoreResult.PlayerScore> playerScores = new ArrayList<>();
         for (MvpScoringInput in : inputs) {
-            playerScores.add(scorePlayer(in, byTeam.get(in.getTeamId()), championClassMap,
-                    baseline == null ? Map.of() : baseline));
+            playerScores.add(scorePlayer(in, byTeam.get(in.getTeamId()), championClassMap, baseline));
         }
 
         List<OpScoreResult.PlayerScore> winners = playerScores.stream()
@@ -102,7 +114,7 @@ public class OpScoreEngine {
      */
     OpScoreResult.PlayerScore scorePlayer(MvpScoringInput in, List<MvpScoringInput> team,
                                           Map<Integer, String> championClassMap,
-                                          Map<Integer, Map<String, Double>> baseline) {
+                                          Map<Integer, ChampionBaseline> baseline) {
         // 1. 确定职业（未知 → 回退均衡）+ 大乱斗修正
         String classKey = resolveClass(in.getChampionId(), championClassMap);
         Map<String, Double> weights = effectiveWeights(classKey, in.isAramMode(), in.getChampionId());
@@ -115,7 +127,8 @@ public class OpScoreEngine {
         Map<String, Double> teamRank = teamRankScores(rawPerMinute, team);
 
         // 4. 基线分（无基线样本时退化为纯局内）
-        Map<String, Double> baselineScores = baselineScores(rawPerMinute, baseline.get(in.getChampionId()), weights);
+        ChampionBaseline baselineOfChampion = baseline.get(in.getChampionId());
+        Map<String, Double> baselineScores = baselineScores(rawPerMinute, baselineOfChampion, weights);
 
         // 5. 各维度混合分 → 加权总分
         double totalWeight = 0;
@@ -127,7 +140,7 @@ public class OpScoreEngine {
                 continue;
             }
             totalWeight += w;
-            double mix = mixRatio(baseline.get(in.getChampionId()), dim);
+            double mix = mixRatio(baselineOfChampion, dim);
             double finalDim = clamp(teamRank.getOrDefault(dim, 0.0) * (1 - mix)
                     + baselineScores.getOrDefault(dim, 0.0) * mix, 0, 100);
             weightedSum += finalDim * w;
@@ -164,14 +177,13 @@ public class OpScoreEngine {
      * 某维度当前混合比：基线样本量不足 thresholdMin 时为 0（纯局内），
      * thresholdMin~thresholdMax 间线性过渡，达到 thresholdMax 后锁定 baselineMixMax
      *
-     * @param baselineOfChampion 该英雄的基线（null = 无样本）
+     * @param baselineOfChampion 该英雄的基线值对象（null = 无样本）
      */
-    double mixRatio(Map<String, Double> baselineOfChampion, String dim) {
-        if (baselineOfChampion == null || !baselineOfChampion.containsKey("sampleCount")
-                || !baselineOfChampion.containsKey(dim)) {
+    double mixRatio(ChampionBaseline baselineOfChampion, String dim) {
+        if (baselineOfChampion == null || baselineOfChampion.meanOf(dim) == null) {
             return 0.0;
         }
-        double n = baselineOfChampion.get("sampleCount");
+        double n = baselineOfChampion.sampleCount();
         int min = config.getBaselineThresholdMin();
         int max = config.getBaselineThresholdMax();
         double mixMax = config.getBaselineMixMax();
@@ -209,6 +221,21 @@ public class OpScoreEngine {
             }
         }
         return out;
+    }
+
+    /**
+     * 英雄职业映射懒加载（从 MatchMvpService 随迁，失效策略照搬）：
+     * 表无写入口，懒加载后复用进程内缓存
+     */
+    private Map<Integer, String> loadChampionClassMap() {
+        Map<Integer, String> cached = championClassCache;
+        if (cached == null) {
+            cached = championClassMapper.selectList(null).stream()
+                    .collect(Collectors.toMap(
+                            ChampionClass::getChampionId, ChampionClass::getClassName, (a, b) -> a));
+            championClassCache = cached;
+        }
+        return cached;
     }
 
     /** 解析英雄职业：未找到回退 UNKNOWN */
@@ -283,7 +310,7 @@ public class OpScoreEngine {
      * 英雄无基线样本或该维度无基线值时返回 0（此时混合比必为 0，不参与总分）。
      */
     Map<String, Double> baselineScores(Map<String, Double> selfPerMinute,
-                                       Map<String, Double> baselineOfChampion,
+                                       ChampionBaseline baselineOfChampion,
                                        Map<String, Double> weights) {
         Map<String, Double> result = new HashMap<>();
         if (baselineOfChampion == null) {
@@ -293,7 +320,7 @@ public class OpScoreEngine {
             if (weights.getOrDefault(dim, 0.0) <= 0) {
                 continue;
             }
-            Double base = baselineOfChampion.get(dim);
+            Double base = baselineOfChampion.meanOf(dim);
             if (base == null || base <= 0) {
                 result.put(dim, 0.0);
                 continue;

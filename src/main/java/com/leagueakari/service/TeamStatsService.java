@@ -913,9 +913,9 @@ public class TeamStatsService {
             TeamRosterService.RosterMember member) {
         // 全库基线：championId → 分均伤害（走 BaselineService 缓存，避免每请求全表查询）
         Map<Integer, Double> baselineDamageByChamp = new HashMap<>();
-        for (Map.Entry<Integer, Map<String, Double>> entry : baselineService.getBaselineMap().entrySet()) {
-            // 无样本的英雄只有 sampleCount 键，无分均伤害键 → 视为无基线跳过
-            Double meanDamage = entry.getValue().get(OpScoreEngine.DIM_DAMAGE);
+        for (Map.Entry<Integer, ChampionBaseline> entry : baselineService.getBaselineMap().entrySet()) {
+            // 无样本英雄的 meanOf 返回 null → 视为无基线跳过
+            Double meanDamage = entry.getValue().meanOf(OpScoreEngine.DIM_DAMAGE);
             if (meanDamage != null) {
                 baselineDamageByChamp.put(entry.getKey(), round2(meanDamage));
             }

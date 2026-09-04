@@ -3,6 +3,8 @@ package com.leagueakari.service;
 import com.leagueakari.config.ScoringConfig;
 import com.leagueakari.dto.MvpScoringInput;
 import com.leagueakari.dto.OpScoreResult;
+import com.leagueakari.entity.ChampionClass;
+import com.leagueakari.mapper.ChampionClassMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -13,14 +15,23 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
- * OpScore 评分引擎单元测试（纯函数，不依赖 Spring 上下文）
+ * OpScore 评分引擎单元测试（表加载在引擎侧，测试注入 mock 表源；不依赖 Spring 上下文）
  */
 class OpScoreEngineTest {
 
     private ScoringConfig config;
     private OpScoreEngine engine;
+    private ChampionClassMapper championClassMapper;
+    private BaselineService baselineService;
+
+    /** 用例内动态构造的基线（championId → 值对象）；未设置时为空表 */
+    private Map<Integer, ChampionBaseline> baselineFixture;
 
     @BeforeEach
     void setUp() {
@@ -31,7 +42,30 @@ class OpScoreEngineTest {
         config.setBaselineThresholdMin(10);
         config.setBaselineThresholdMax(30);
         config.setBaselineMixMax(0.5);
-        engine = new OpScoreEngine(config);
+        // mock 表源：职业表默认返回 UNKNOWN 映射，基线默认空（各用例可覆盖 stub）
+        championClassMapper = mock(ChampionClassMapper.class);
+        baselineService = mock(BaselineService.class);
+        baselineFixture = new HashMap<>();
+        lenient().when(championClassMapper.selectList(any())).thenAnswer(inv ->
+                classFixture.entrySet().stream().map(e -> {
+                    ChampionClass c = new ChampionClass();
+                    c.setChampionId(e.getKey());
+                    c.setClassName(e.getValue());
+                    return c;
+                }).toList());
+        lenient().when(baselineService.getBaselineMap()).thenAnswer(inv -> baselineFixture);
+        engine = new OpScoreEngine(config, championClassMapper, baselineService);
+    }
+
+    /** 用例内动态构造的职业映射（championId → 职业名） */
+    private final Map<Integer, String> classFixture = new HashMap<>();
+
+    /** 旧 classMap(...) 兼容：写入职业映射 fixture */
+    private Map<Integer, String> classMap(int... champions) {
+        for (int c : champions) {
+            classFixture.put(c, "UNKNOWN");
+        }
+        return classFixture;
     }
 
     static Map<String, Map<String, Double>> defaultWeights() {
@@ -101,14 +135,6 @@ class OpScoreEngineTest {
         return w;
     }
 
-    private Map<Integer, String> classMap(int... champions) {
-        Map<Integer, String> m = new HashMap<>();
-        for (int c : champions) {
-            m.put(c, "UNKNOWN");
-        }
-        return m;
-    }
-
     // ===== 维度与归一化 =====
 
     @Test
@@ -119,7 +145,8 @@ class OpScoreEngineTest {
                 "totalDamageDealtToChampions", 12000.0, "gameDurationSeconds", 1200));
         MvpScoringInput b = player(2, 100, true, 1, Map.of(
                 "totalDamageDealtToChampions", 3000.0, "gameDurationSeconds", 1200));
-        var result = engine.score(List.of(a, b), classMap(1, 1), null);
+        classMap(1, 1);
+        var result = engine.score(List.of(a, b));
         var pa = byId(result, 1L);
         var pb = byId(result, 2L);
         assertThat(pa.getDimensionScores().get("damage").getPerMinute()).isEqualTo(600.0);
@@ -137,7 +164,7 @@ class OpScoreEngineTest {
                 player(3, 100, true, 1, Map.of("totalDamageDealtToChampions", 10000.0)),
                 player(4, 100, true, 1, Map.of("totalDamageDealtToChampions", 5000.0)),
                 player(5, 100, true, 1, Map.of("totalDamageDealtToChampions", 0.0)));
-        var result = engine.score(team, classMap(1, 1, 1, 1, 1), null);
+        var result = engine.score(team);
         assertThat(byId(result, 1L).getDimensionScores().get("damage").getTeamRank()).isEqualTo(100.0);
         assertThat(byId(result, 2L).getDimensionScores().get("damage").getTeamRank()).isEqualTo(75.0);
         assertThat(byId(result, 3L).getDimensionScores().get("damage").getTeamRank()).isEqualTo(50.0);
@@ -151,7 +178,7 @@ class OpScoreEngineTest {
         List<MvpScoringInput> team = List.of(
                 player(1, 100, true, 1, Map.of("totalDamageDealtToChampions", 1000.0)),
                 player(2, 100, true, 1, Map.of("totalDamageDealtToChampions", 1000.0)));
-        var result = engine.score(team, classMap(1, 1), null);
+        var result = engine.score(team);
         assertThat(byId(result, 1L).getDimensionScores().get("damage").getTeamRank()).isEqualTo(50.0);
         assertThat(byId(result, 2L).getDimensionScores().get("damage").getTeamRank()).isEqualTo(50.0);
     }
@@ -162,7 +189,8 @@ class OpScoreEngineTest {
         // 10/0/5，死亡为 0 → KDA = 15
         MvpScoringInput a = player(1, 100, true, 1, Map.of("kills", 10, "deaths", 0, "assists", 5));
         MvpScoringInput b = player(2, 100, true, 1, Map.of());
-        var result = engine.score(List.of(a, b), classMap(1, 1), null);
+        classMap(1, 1);
+        var result = engine.score(List.of(a, b));
         assertThat(byId(result, 1L).getDimensionScores().get("kda").getPerMinute()).isEqualTo(15.0);
     }
 
@@ -173,7 +201,8 @@ class OpScoreEngineTest {
     void noBaselinePureTeamRank() {
         MvpScoringInput a = player(1, 100, true, 1, Map.of("totalDamageDealtToChampions", 20000.0));
         MvpScoringInput b = player(2, 100, true, 1, Map.of());
-        var result = engine.score(List.of(a, b), classMap(1, 1), null);
+        classMap(1, 1);
+        var result = engine.score(List.of(a, b));
         assertThat(byId(result, 1L).getDimensionScores().get("damage").getMix()).isEqualTo(0.0);
         // 纯局内：A 是唯一最高 → 100
         assertThat(byId(result, 1L).getDimensionScores().get("damage").getFinalScore()).isEqualTo(100.0);
@@ -184,22 +213,23 @@ class OpScoreEngineTest {
     void noBaselineDimBaselineScoreZero() {
         MvpScoringInput a = player(1, 100, true, 1, Map.of("totalDamageDealtToChampions", 12000.0));
         MvpScoringInput b = player(2, 100, true, 1, Map.of());
-        var result = engine.score(List.of(a, b), classMap(1, 1), null);
+        classMap(1, 1);
+        var result = engine.score(List.of(a, b));
         assertThat(byId(result, 1L).getDimensionScores().get("damage").getBaselineScore()).isEqualTo(0.0);
     }
 
     @Test
     @DisplayName("达到阈值：混合比 0.5，基线分与位次分各占一半")
     void baselineMixHalfAtThreshold() {
-        Map<Integer, Map<String, Double>> baseline = new HashMap<>();
         // 英雄 1 的基线：damage 1000/min（玩家 900/min 是 90%）
-        baseline.put(1, Map.of("sampleCount", 30.0, "damage", 1000.0, "kda", 5.0, "gold", 300.0,
-                "tank", 500.0, "healShield", 0.0, "cc", 5.0, "turret", 50.0));
+        baselineFixture.put(1, new ChampionBaseline(1, Map.of("damage", 1000.0, "kda", 5.0, "gold", 300.0,
+                "tank", 500.0, "healShield", 0.0, "cc", 5.0, "turret", 50.0), 30));
         // 玩家：900/min vs 基线 1000/min → 基线分 90
         MvpScoringInput a = player(1, 100, true, 1, Map.of("totalDamageDealtToChampions", 18000.0));
         MvpScoringInput b = player(2, 100, true, 1, Map.of("totalDamageDealtToChampions", 18000.0));
         // 全员同值 → 位次分 50
-        var result = engine.score(List.of(a, b), classMap(1, 1), baseline);
+        classMap(1, 1);
+        var result = engine.score(List.of(a, b));
         var pa = byId(result, 1L);
         assertThat(pa.getDimensionScores().get("damage").getMix()).isEqualTo(0.5);
         assertThat(pa.getDimensionScores().get("damage").getBaselineScore()).isEqualTo(90.0);
@@ -209,10 +239,9 @@ class OpScoreEngineTest {
     @Test
     @DisplayName("基线过渡期：15 局时混合比线性插值到 0.125")
     void baselineMixTransition() {
-        Map<Integer, Map<String, Double>> baseline = new HashMap<>();
-        baseline.put(1, Map.of("sampleCount", 15.0, "damage", 1000.0));
+        ChampionBaseline baseline = new ChampionBaseline(1, Map.of("damage", 1000.0), 15);
         // 有 dim 数据才进入插值
-        double mix = engine.mixRatio(baseline.get(1), "damage");
+        double mix = engine.mixRatio(baseline, "damage");
         // (15-10)/(30-10)*0.5 = 0.125
         assertThat(mix).isEqualTo(0.125);
     }
@@ -220,12 +249,12 @@ class OpScoreEngineTest {
     @Test
     @DisplayName("基线截断：偏离基线 3 倍时基线分截断到 100")
     void baselineScoreCappedAt100() {
-        Map<Integer, Map<String, Double>> baseline = new HashMap<>();
-        baseline.put(1, Map.of("sampleCount", 30.0, "damage", 1000.0));
+        baselineFixture.put(1, new ChampionBaseline(1, Map.of("damage", 1000.0), 30));
         // 玩家 3000/min 是基线 3 倍 → 300，截断 100
         MvpScoringInput a = player(1, 100, true, 1, Map.of("totalDamageDealtToChampions", 60000.0));
         MvpScoringInput b = player(2, 100, true, 1, Map.of("totalDamageDealtToChampions", 60000.0));
-        var result = engine.score(List.of(a, b), classMap(1, 1), baseline);
+        classMap(1, 1);
+        var result = engine.score(List.of(a, b));
         assertThat(byId(result, 1L).getDimensionScores().get("damage").getBaselineScore()).isEqualTo(100.0);
     }
 
@@ -237,7 +266,8 @@ class OpScoreEngineTest {
         MvpScoringInput a = player(1, 100, true, 1, Map.of(
                 "doubleKills", 4, "tripleKills", 1, "quadraKills", 1, "pentaKills", 0));
         MvpScoringInput b = player(2, 100, true, 1, Map.of());
-        var result = engine.score(List.of(a, b), classMap(1, 1), null);
+        classMap(1, 1);
+        var result = engine.score(List.of(a, b));
         assertThat(byId(result, 1L).getMultiKillBonus()).isEqualTo(2.3);
     }
 
@@ -250,7 +280,7 @@ class OpScoreEngineTest {
         List<MvpScoringInput> team = List.of(
                 player(1, 100, true, 1, Map.of()),
                 player(2, 100, true, 1, Map.of()));
-        var result = engine.score(team, classMap(1, 1), null);
+        var result = engine.score(team);
         // 全员同值 → 各位次分 50 → 加权总分 50 → opScore 5.0
         assertThat(byId(result, 1L).getOpScore()).isEqualTo(5.0);
         assertThat(byId(result, 1L).getGrade()).isEqualTo("一般");
@@ -261,7 +291,8 @@ class OpScoreEngineTest {
     void multiKillCapAt10() {
         MvpScoringInput a = player(1, 100, true, 1, Map.of("pentaKills", 5, "doubleKills", 9));
         MvpScoringInput b = player(2, 100, true, 1, Map.of());
-        var result = engine.score(List.of(a, b), classMap(1, 1), null);
+        classMap(1, 1);
+        var result = engine.score(List.of(a, b));
         assertThat(byId(result, 1L).getOpScore()).isBetween(9.0, 10.0);
         assertThat(byId(result, 1L).getOpScore()).isLessThanOrEqualTo(10.0);
     }
@@ -273,7 +304,8 @@ class OpScoreEngineTest {
         MvpScoringInput w2 = player(2, 100, true, 1, Map.of("totalDamageDealtToChampions", 10000.0));
         MvpScoringInput l1 = player(3, 200, false, 1, Map.of("totalDamageDealtToChampions", 18000.0));
         MvpScoringInput l2 = player(4, 200, false, 1, Map.of("totalDamageDealtToChampions", 5000.0));
-        var result = engine.score(List.of(w1, w2, l1, l2), classMap(1, 1, 1, 1), null);
+        classMap(1, 1, 1, 1);
+        var result = engine.score(List.of(w1, w2, l1, l2));
         assertThat(result.getMvp().getParticipantId()).isEqualTo(1L);
         assertThat(result.getAce().getParticipantId()).isEqualTo(3L);
     }
@@ -288,7 +320,8 @@ class OpScoreEngineTest {
         MvpScoringInput w2 = player(2, 100, true, 1, Map.of("totalDamageDealtToChampions", 19000.0, "pentaKills", 2));
         MvpScoringInput l1 = player(3, 200, false, 1, Map.of("totalDamageDealtToChampions", 15000.0));
         MvpScoringInput l2 = player(4, 200, false, 1, Map.of());
-        var result = engine.score(List.of(w1, w2, l1, l2), classMap(1, 1, 1, 1), null);
+        classMap(1, 1, 1, 1);
+        var result = engine.score(List.of(w1, w2, l1, l2));
         // MVP 按 op_score（含多杀加分，与界面展示的评分一致）取：w2 的 9.6 > w1 的 6.3
         assertThat(result.getMvp().getParticipantId()).isEqualTo(2L);
         // SVP 仍为败方 op_score 最高者
@@ -298,7 +331,7 @@ class OpScoreEngineTest {
     @Test
     @DisplayName("少于 2 人抛 IllegalArgumentException")
     void fewerThan2Throw() {
-        assertThatThrownBy(() -> engine.score(List.of(), classMap(), null))
+        assertThatThrownBy(() -> engine.score(List.of()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -327,7 +360,8 @@ class OpScoreEngineTest {
         // 两名辅助（英雄 16），视野得分悬殊：A=100，B=0
         MvpScoringInput a = player(1, 100, true, 16, Map.of("aramMode", true, "visionScore", 100.0));
         MvpScoringInput b = player(2, 100, true, 16, Map.of("aramMode", true));
-        var result = engine.score(List.of(a, b), Map.of(16, "SUPPORT"), null);
+        classFixture.put(16, "SUPPORT");
+        var result = engine.score(List.of(a, b));
         // 视野维度权重归零 → 结果中不应出现 vision 维度，且总分差异只来自 kda/gold 等（全零 → 两人同分）
         assertThat(byId(result, 1L).getDimensionScores()).doesNotContainKey("vision");
         assertThat(byId(result, 1L).getTotalScore()).isEqualTo(byId(result, 2L).getTotalScore());
@@ -340,7 +374,8 @@ class OpScoreEngineTest {
         // 同样两名辅助、同样悬殊视野，但 aramMode=false：视野维度必须出现且 A 得满位次分
         MvpScoringInput a = player(1, 100, true, 16, Map.of("visionScore", 100.0));
         MvpScoringInput b = player(2, 100, true, 16, Map.of());
-        var result = engine.score(List.of(a, b), Map.of(16, "SUPPORT"), null);
+        classFixture.put(16, "SUPPORT");
+        var result = engine.score(List.of(a, b));
         assertThat(byId(result, 1L).getDimensionScores()).containsKey("vision");
         assertThat(byId(result, 1L).getDimensionScores().get("vision").getTeamRank()).isEqualTo(100.0);
         // 视野权重 0.25：A 的总分应高于 B（视野位次 100 vs 0 的加权贡献）
@@ -357,7 +392,8 @@ class OpScoreEngineTest {
         config.setWeights(w);
         MvpScoringInput a = player(1, 100, true, 1, Map.of("aramMode", true, "visionScore", 100.0));
         MvpScoringInput b = player(2, 100, true, 1, Map.of("aramMode", true));
-        var result = engine.score(List.of(a, b), classMap(1, 1), null);
+        classMap(1, 1);
+        var result = engine.score(List.of(a, b));
         // 非 SUPPORT 职业：大乱斗下视野维度照常参与
         assertThat(byId(result, 1L).getDimensionScores()).containsKey("vision");
         assertThat(byId(result, 1L).getDimensionScores().get("vision").getTeamRank()).isEqualTo(100.0);

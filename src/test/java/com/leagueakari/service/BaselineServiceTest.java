@@ -109,14 +109,14 @@ class BaselineServiceTest {
         rec.setSumTurret(300.0);
         when(baselineMapper.selectById(2)).thenReturn(rec);
 
-        Map<String, Double> baseline = service.loadBaselineByChampion(2);
-        assertThat(baseline.get("sampleCount")).isEqualTo(10.0);
-        assertThat(baseline.get("damage")).isEqualTo(300.0);
-        assertThat(baseline.get("kda")).isEqualTo(5.0);
-        assertThat(baseline.get("gold")).isEqualTo(400.0);
-        assertThat(baseline.get("tank")).isEqualTo(500.0);
-        assertThat(baseline.get("cc")).isEqualTo(2.0);
-        assertThat(baseline.get("turret")).isEqualTo(30.0);
+        ChampionBaseline baseline = service.loadBaselineByChampion(2);
+        assertThat(baseline.sampleCount()).isEqualTo(10);
+        assertThat(baseline.meanOf("damage")).isEqualTo(300.0);
+        assertThat(baseline.meanOf("kda")).isEqualTo(5.0);
+        assertThat(baseline.meanOf("gold")).isEqualTo(400.0);
+        assertThat(baseline.meanOf("tank")).isEqualTo(500.0);
+        assertThat(baseline.meanOf("cc")).isEqualTo(2.0);
+        assertThat(baseline.meanOf("turret")).isEqualTo(30.0);
     }
 
     @Test
@@ -134,10 +134,10 @@ class BaselineServiceTest {
         rec.setSumTurret(150.0);
         when(baselineMapper.selectList(null)).thenReturn(List.of(rec));
 
-        Map<Integer, Map<String, Double>> all = service.loadBaseline();
+        Map<Integer, ChampionBaseline> all = service.loadBaseline();
         assertThat(all).containsKey(1);
-        assertThat(all.get(1).get("sampleCount")).isEqualTo(5.0);
-        assertThat(all.get(1).get("damage")).isEqualTo(300.0);
+        assertThat(all.get(1).sampleCount()).isEqualTo(5);
+        assertThat(all.get(1).meanOf("damage")).isEqualTo(300.0);
     }
 
     @Test
@@ -155,13 +155,13 @@ class BaselineServiceTest {
         rec.setSumTurret(150.0);
         when(baselineMapper.selectList(null)).thenReturn(List.of(rec));
 
-        Map<Integer, Map<String, Double>> first = service.getBaselineMap();
-        Map<Integer, Map<String, Double>> second = service.getBaselineMap();
+        Map<Integer, ChampionBaseline> first = service.getBaselineMap();
+        Map<Integer, ChampionBaseline> second = service.getBaselineMap();
 
         // 全量查询只发生一次，两次读取命中同一份缓存快照
         verify(baselineMapper, times(1)).selectList(null);
         assertThat(second).isSameAs(first);
-        assertThat(second.get(1).get("damage")).isEqualTo(300.0);
+        assertThat(second.get(1).meanOf("damage")).isEqualTo(300.0);
     }
 
     @Test
@@ -209,10 +209,11 @@ class BaselineServiceTest {
         broken.setChampionId(1);
         when(baselineMapper.selectList(null)).thenReturn(List.of(broken));
 
-        Map<Integer, Map<String, Double>> all = service.getBaselineMap();
+        Map<Integer, ChampionBaseline> all = service.getBaselineMap();
 
-        // 不抛 NPE，且该英雄只有 sampleCount 键（无分均伤害键 → 调用方按"无基线"处理）
+        // 不抛 NPE，且该英雄无有效样本（meanOf 返回 null → 调用方按"无基线"处理）
         assertThat(all).containsKey(1);
-        assertThat(all.get(1)).containsOnlyKeys("sampleCount");
+        assertThat(all.get(1).hasSamples()).isFalse();
+        assertThat(all.get(1).meanOf("damage")).isNull();
     }
 }

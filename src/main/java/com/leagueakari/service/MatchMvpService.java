@@ -6,11 +6,9 @@ import com.leagueakari.config.ScoringConfig;
 import com.leagueakari.dto.MvpScoringInput;
 import com.leagueakari.dto.OpScoreResult;
 import com.leagueakari.dto.PlayerScoreView;
-import com.leagueakari.entity.ChampionClass;
 import com.leagueakari.entity.Match;
 import com.leagueakari.entity.MatchMvp;
 import com.leagueakari.entity.MatchParticipant;
-import com.leagueakari.mapper.ChampionClassMapper;
 import com.leagueakari.mapper.MatchMvpMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,8 +27,8 @@ import java.util.stream.Collectors;
 
 /**
  * MVP/ACE 评选编排服务（OpScore 版本）
- * <p>职责：加载英雄职业映射与基线 → 从参与者 statsJson 提取维度原始值 →
- * 调用 OpScore 评分引擎 → 将 MVP/ACE 结果落库 match_mvp 表（带评分版本号）。</p>
+ * <p>职责：从参与者 statsJson 提取维度原始值 → 调用 OpScore 评分引擎（表加载在引擎侧）
+ * → 将 MVP/ACE 结果落库 match_mvp 表（带评分版本号）。</p>
  * <p>幂等：saveMatch 外层已按 gameId 查重，本方法仅做 DuplicateKeyException 兜底，
  * 由 uk_match_mvp(match_id, type) 唯一约束保证并发下不重复。</p>
  */
@@ -40,19 +38,12 @@ import java.util.stream.Collectors;
 public class MatchMvpService {
 
     private final MatchMvpMapper matchMvpMapper;
-    private final ChampionClassMapper championClassMapper;
     private final OpScoreEngine opScoreEngine;
     private final ScoringConfig scoringConfig;
     private final ObjectMapper objectMapper;
     private final BaselineService baselineService;
     /** stats_json 读取门面：缺失补 0 口径的唯一实现（架构清理 T4） */
     private final ParticipantStatsReader statsReader;
-
-    /**
-     * 英雄职业分类缓存：该表无写入口（随版本更新手工维护），
-     * 懒加载后复用，避免每场评分都全表查询（volatile 保证多线程可见性）
-     */
-    private volatile Map<Integer, String> championClassCache;
 
     /** 当前评分版本（从配置加载） */
     private int scoringVersion() {
@@ -70,14 +61,12 @@ public class MatchMvpService {
             log.warn("MVP 评选跳过：对局 {} 参与者数量不足", match == null ? null : match.getGameId());
             return;
         }
-        Map<Integer, String> classMap = loadChampionClassMap();
-        Map<Integer, Map<String, Double>> baseline = baselineService.getBaselineMap();
-
+        // 职业表/基线表由引擎自加载（架构清理 T5）：本服务只做取参与者 → 转输入 → 落库
         List<MvpScoringInput> inputs = participants.stream()
                 .map(p -> toScoringInput(p, match))
                 .toList();
 
-        OpScoreResult result = opScoreEngine.score(inputs, classMap, baseline);
+        OpScoreResult result = opScoreEngine.score(inputs);
 
         saveOne(match, result.getMvp(), "MVP");
         saveOne(match, result.getAce(), "ACE");
@@ -125,12 +114,10 @@ public class MatchMvpService {
         if (match == null || participants == null || participants.size() < 2) {
             return Map.of();
         }
-        Map<Integer, String> classMap = loadChampionClassMap();
-        Map<Integer, Map<String, Double>> baseline = baselineService.getBaselineMap();
         List<MvpScoringInput> inputs = participants.stream()
                 .map(p -> toScoringInput(p, match))
                 .toList();
-        OpScoreResult result = opScoreEngine.score(inputs, classMap, baseline);
+        OpScoreResult result = opScoreEngine.score(inputs);
 
         Map<Long, String> puuidById = participants.stream()
                 .collect(Collectors.toMap(MatchParticipant::getId, MatchParticipant::getPuuid, (a, b) -> a));
@@ -162,17 +149,6 @@ public class MatchMvpService {
     public boolean isCurrentVersion(MatchMvp record) {
         return record != null && record.getScoringVersion() != null
                 && record.getScoringVersion() == scoringVersion();
-    }
-
-    private Map<Integer, String> loadChampionClassMap() {
-        Map<Integer, String> cached = championClassCache;
-        if (cached == null) {
-            cached = championClassMapper.selectList(null).stream()
-                    .collect(Collectors.toMap(
-                            ChampionClass::getChampionId, ChampionClass::getClassName, (a, b) -> a));
-            championClassCache = cached;
-        }
-        return cached;
     }
 
     /**

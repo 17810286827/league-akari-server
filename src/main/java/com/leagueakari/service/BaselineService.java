@@ -26,7 +26,7 @@ public class BaselineService {
      * 全量基线缓存快照：写路径 {@link #updateBaseline} 成功后置空失效，
      * 下次读取重新加载（volatile 保证多线程可见性）
      */
-    private volatile Map<Integer, Map<String, Double>> baselineCache;
+    private volatile Map<Integer, ChampionBaseline> baselineCache;
 
     /**
      * 更新一名参与者的基线数据（INSERT OR UPDATE 累加）
@@ -77,13 +77,13 @@ public class BaselineService {
     /**
      * 加载全量基线数据
      *
-     * @return championId → { dim → 均值, "sampleCount" → 样本量 }
+     * @return championId → 基线值对象（维度均值 + 类型化样本量）
      */
-    public Map<Integer, Map<String, Double>> loadBaseline() {
+    public Map<Integer, ChampionBaseline> loadBaseline() {
         return baselineMapper.selectList(null).stream()
                 .collect(Collectors.toMap(
                         ScoringBaseline::getChampionId,
-                        this::toDimMap,
+                        this::toBaseline,
                         (a, b) -> a));
     }
 
@@ -93,10 +93,10 @@ public class BaselineService {
      * 评分/榜单/成员卡共用此入口，避免每次请求重复全表查询。
      * <p>返回的 Map 为内部缓存快照，调用方必须只读，不得修改。</p>
      *
-     * @return championId → { dim → 均值, "sampleCount" → 样本量 }
+     * @return championId → 基线值对象（维度均值 + 类型化样本量）
      */
-    public Map<Integer, Map<String, Double>> getBaselineMap() {
-        Map<Integer, Map<String, Double>> cached = baselineCache;
+    public Map<Integer, ChampionBaseline> getBaselineMap() {
+        Map<Integer, ChampionBaseline> cached = baselineCache;
         if (cached == null) {
             cached = loadBaseline();
             baselineCache = cached;
@@ -108,9 +108,9 @@ public class BaselineService {
      * 加载单个英雄的基线
      *
      * @param championId 英雄 ID
-     * @return { dim → 均值, "sampleCount" → 样本量 }，无基线时返回 null
+     * @return 基线值对象；无记录时返回 null
      */
-    public Map<String, Double> loadBaselineByChampion(Integer championId) {
+    public ChampionBaseline loadBaselineByChampion(Integer championId) {
         if (championId == null) {
             return null;
         }
@@ -118,26 +118,26 @@ public class BaselineService {
         if (record == null) {
             return null;
         }
-        return toDimMap(record);
+        return toBaseline(record);
     }
 
-    private Map<String, Double> toDimMap(ScoringBaseline b) {
-        Map<String, Double> m = new HashMap<>();
-        // 脏数据容错：样本数或累计值缺失时按"无基线"返回（只有 sampleCount 键），
+    /** 实体 → 值对象：样本量类型化，维度均值为累计值 ÷ 样本量 */
+    private ChampionBaseline toBaseline(ScoringBaseline b) {
+        // 脏数据容错：样本数或累计值缺失时按"无基线"返回（样本量 0），
         // 调用方据此跳过该英雄，避免整表读取时拆箱 NPE
         Integer sampleCount = b.getSampleCount();
         if (sampleCount == null || sampleCount <= 0 || b.getSumDamage() == null) {
-            return Map.of("sampleCount", 0.0);
+            return ChampionBaseline.empty(b.getChampionId());
         }
         int n = sampleCount;
-        m.put("sampleCount", (double) n);
-        m.put(OpScoreEngine.DIM_DAMAGE, b.getSumDamage() / n);
-        m.put(OpScoreEngine.DIM_KDA, b.getSumKda() / n);
-        m.put(OpScoreEngine.DIM_GOLD, b.getSumGold() / n);
-        m.put(OpScoreEngine.DIM_TANK, b.getSumTank() / n);
-        m.put(OpScoreEngine.DIM_HEAL, b.getSumHealShield() / n);
-        m.put(OpScoreEngine.DIM_CC, b.getSumCc() / n);
-        m.put(OpScoreEngine.DIM_TURRET, b.getSumTurret() / n);
-        return m;
+        Map<String, Double> means = new HashMap<>();
+        means.put(OpScoreEngine.DIM_DAMAGE, b.getSumDamage() / n);
+        means.put(OpScoreEngine.DIM_KDA, b.getSumKda() / n);
+        means.put(OpScoreEngine.DIM_GOLD, b.getSumGold() / n);
+        means.put(OpScoreEngine.DIM_TANK, b.getSumTank() / n);
+        means.put(OpScoreEngine.DIM_HEAL, b.getSumHealShield() / n);
+        means.put(OpScoreEngine.DIM_CC, b.getSumCc() / n);
+        means.put(OpScoreEngine.DIM_TURRET, b.getSumTurret() / n);
+        return new ChampionBaseline(b.getChampionId(), means, n);
     }
 }

@@ -3,11 +3,9 @@ package com.leagueakari.service;
 import com.leagueakari.config.ScoringConfig;
 import com.leagueakari.dto.OpScoreResult;
 import com.leagueakari.dto.PlayerScoreView;
-import com.leagueakari.entity.ChampionClass;
 import com.leagueakari.entity.Match;
 import com.leagueakari.entity.MatchMvp;
 import com.leagueakari.entity.MatchParticipant;
-import com.leagueakari.mapper.ChampionClassMapper;
 import com.leagueakari.mapper.MatchMvpMapper;
 import com.leagueakari.mapper.ScoringBaselineMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -49,9 +47,6 @@ class MatchMvpServiceTest {
     private MatchMvpMapper matchMvpMapper;
 
     @Mock
-    private ChampionClassMapper championClassMapper;
-
-    @Mock
     private ScoringBaselineMapper scoringBaselineMapper;
 
     @Mock
@@ -72,7 +67,7 @@ class MatchMvpServiceTest {
     void setUp() {
         // 手动构造，不用 @InjectMocks（因为要 mock OpScoreEngine）
         matchMvpService = new MatchMvpService(
-                matchMvpMapper, championClassMapper,
+                matchMvpMapper,
                 opScoreEngine, scoringConfig, objectMapper, baselineService,
                 new ParticipantStatsReader(objectMapper));
     }
@@ -127,21 +122,9 @@ class MatchMvpServiceTest {
         return participant(104L, 16, 200, false, 6000, 1, 6, 14, 8000, 14000, 55, 12000, 3000, 30);
     }
 
-    private void mockClassMap() {
-        when(championClassMapper.selectList(any())).thenReturn(List.of(
-                cc(22, "ADC"), cc(57, "TANK"), cc(81, "ADC"), cc(16, "SUPPORT")));
-    }
+    /** 职业表已随引擎收编（T5）：本服务不再 mock championClassMapper */
 
-    private void mockEmptyBaseline() {
-        when(baselineService.getBaselineMap()).thenReturn(Map.of());
-    }
 
-    private ChampionClass cc(int championId, String className) {
-        ChampionClass c = new ChampionClass();
-        c.setChampionId(championId);
-        c.setClassName(className);
-        return c;
-    }
 
     private void mockInsert() {
         doAnswer(inv -> {
@@ -181,9 +164,7 @@ class MatchMvpServiceTest {
     @Test
     @DisplayName("大乱斗修正入口：queueId ∈ {450,2400,2410,2450} 时评分输入 aramMode=true，普通队列 false")
     void evaluateAndSave_derivesAramModeFromQueueId() {
-        mockClassMap();
-        mockEmptyBaseline();
-        when(opScoreEngine.score(any(), any(), any())).thenReturn(makeResult(101, 103));
+        when(opScoreEngine.score(any())).thenReturn(makeResult(101, 103));
 
         // 大乱斗系队列逐一验证：极地大乱斗 450 + 海克斯乱斗 2400/2410/2450
         for (Integer aramQueue : List.of(450, 2400, 2410, 2450)) {
@@ -208,7 +189,7 @@ class MatchMvpServiceTest {
     private com.leagueakari.dto.MvpScoringInput capturedInput(long participantId) {
         ArgumentCaptor<List<com.leagueakari.dto.MvpScoringInput>> captor =
                 ArgumentCaptor.forClass((Class) List.class);
-        verify(opScoreEngine, atLeastOnce()).score(captor.capture(), any(), any());
+        verify(opScoreEngine, atLeastOnce()).score(captor.capture());
         return captor.getAllValues().stream()
                 .flatMap(List::stream)
                 .filter(in -> in.getParticipantId() == participantId)
@@ -219,12 +200,10 @@ class MatchMvpServiceTest {
     @Test
     @DisplayName("评选落库：MVP=胜方最佳 ACE=负方最佳")
     void evaluateAndSave_writesMvpAndAce() {
-        mockClassMap();
-        mockEmptyBaseline();
         mockInsert();
         when(scoringConfig.getVersion()).thenReturn(2);
         // mock 引擎返回预设结果
-        when(opScoreEngine.score(any(), any(), any())).thenReturn(makeResult(101, 103));
+        when(opScoreEngine.score(any())).thenReturn(makeResult(101, 103));
 
         matchMvpService.evaluateAndSave(
                 buildMatch(1L, 100),
@@ -247,13 +226,11 @@ class MatchMvpServiceTest {
     }
 
     @Test
-    @DisplayName("职业映射缺失回退均衡权重")
+    @DisplayName("职业映射缺失回退均衡权重（回退逻辑在引擎侧，本服务验证编排不受影响）")
     void evaluateAndSave_fallsBackWhenClassMapEmpty() {
-        when(championClassMapper.selectList(any())).thenReturn(List.of());
-        mockEmptyBaseline();
         mockInsert();
         when(scoringConfig.getVersion()).thenReturn(2);
-        when(opScoreEngine.score(any(), any(), any())).thenReturn(makeResult(101, 103));
+        when(opScoreEngine.score(any())).thenReturn(makeResult(101, 103));
 
         assertThatCode(() -> matchMvpService.evaluateAndSave(
                 buildMatch(1L, 100),
@@ -266,15 +243,13 @@ class MatchMvpServiceTest {
     @Test
     @DisplayName("一方无人时跳过对应称号")
     void evaluateAndSave_skipsWhenOneSideEmpty() {
-        mockClassMap();
-        mockEmptyBaseline();
         when(scoringConfig.getVersion()).thenReturn(2);
         // 只有胜方 2 人 -> 引擎只返回 2 个 playerScores，mvp 有值，ace=null
         OpScoreResult result = OpScoreResult.builder()
                 .playerScores(List.of(ps(101L, 22, 100, true, 75.0, 7.5, "优秀", 0.0, Map.of())))
                 .mvp(ps(101L, 22, 100, true, 75.0, 7.5, "优秀", 0.0, Map.of()))
                 .ace(null).build();
-        when(opScoreEngine.score(any(), any(), any())).thenReturn(result);
+        when(opScoreEngine.score(any())).thenReturn(result);
 
         matchMvpService.evaluateAndSave(
                 buildMatch(1L, 100),
@@ -286,10 +261,8 @@ class MatchMvpServiceTest {
     @Test
     @DisplayName("DuplicateKeyException 幂等兜底")
     void evaluateAndSave_swallowsDuplicateKey() {
-        mockClassMap();
-        mockEmptyBaseline();
         when(scoringConfig.getVersion()).thenReturn(2);
-        when(opScoreEngine.score(any(), any(), any())).thenReturn(makeResult(101, 103));
+        when(opScoreEngine.score(any())).thenReturn(makeResult(101, 103));
         doThrow(new DuplicateKeyException("uk_match_mvp"))
                 .when(matchMvpMapper).insert(any(MatchMvp.class));
 
@@ -302,11 +275,9 @@ class MatchMvpServiceTest {
     @Test
     @DisplayName("statsJson 缺失按 0 兜底")
     void evaluateAndSave_handlesNullStatsJson() {
-        mockClassMap();
-        mockEmptyBaseline();
         mockInsert();
         when(scoringConfig.getVersion()).thenReturn(2);
-        when(opScoreEngine.score(any(), any(), any())).thenReturn(makeResult(101, 103));
+        when(opScoreEngine.score(any())).thenReturn(makeResult(101, 103));
 
         MatchParticipant broken = winnerAdc();
         broken.setStatsJson(null);
@@ -322,9 +293,7 @@ class MatchMvpServiceTest {
     @Test
     @DisplayName("computeScores 全员实时评分按 puuid 键返回")
     void computeScores_returnsAllPlayerScoresByPuuid() {
-        mockClassMap();
-        mockEmptyBaseline();
-        when(opScoreEngine.score(any(), any(), any())).thenReturn(makeResult(101, 103));
+        when(opScoreEngine.score(any())).thenReturn(makeResult(101, 103));
 
         Map<String, PlayerScoreView> scores = matchMvpService.computeScores(
                 buildMatch(1L, 100),
@@ -342,9 +311,7 @@ class MatchMvpServiceTest {
     @Test
     @DisplayName("computeScores 纯计算不落库")
     void computeScores_writesNothing() {
-        mockClassMap();
-        mockEmptyBaseline();
-        when(opScoreEngine.score(any(), any(), any())).thenReturn(makeResult(101, 103));
+        when(opScoreEngine.score(any())).thenReturn(makeResult(101, 103));
 
         matchMvpService.computeScores(
                 buildMatch(1L, 100),
@@ -356,9 +323,7 @@ class MatchMvpServiceTest {
     @Test
     @DisplayName("computeScores 连续调用只查一次英雄职业分类（进程内缓存）")
     void computeScores_cachesChampionClassMap() {
-        mockClassMap();
-        mockEmptyBaseline();
-        when(opScoreEngine.score(any(), any(), any())).thenReturn(makeResult(101, 103));
+        when(opScoreEngine.score(any())).thenReturn(makeResult(101, 103));
 
         matchMvpService.computeScores(
                 buildMatch(1L, 100),
@@ -367,22 +332,21 @@ class MatchMvpServiceTest {
                 buildMatch(2L, 100),
                 List.of(winnerAdc(), winnerTank(), loserAdc(), loserSupport()));
 
-        // 职业分类表无写入口，缓存后全量查询只发生一次
-        verify(championClassMapper, times(1)).selectList(any());
+        // 职业表加载已随引擎收编（T5）：本服务已无职业表依赖（编译期保证），
+        // 引擎侧缓存行为由 OpScoreEngineInterfaceTest.score_championClassLoadedOnceAcrossCalls 锁定
     }
 
     @Test
-    @DisplayName("评分读取基线走 BaselineService 缓存（不再直查全表）")
-    void computeScores_readsBaselineFromCache() {
-        mockClassMap();
-        when(baselineService.getBaselineMap()).thenReturn(Map.of(22, Map.of(OpScoreEngine.DIM_DAMAGE, 900.0)));
-        when(opScoreEngine.score(any(), any(), any())).thenReturn(makeResult(101, 103));
+    @DisplayName("评分的基线读取已随引擎收编：编排层不再触碰基线表（只透传参与者输入）")
+    void computeScores_doesNotTouchBaselineTables() {
+        when(opScoreEngine.score(any())).thenReturn(makeResult(101, 103));
 
         matchMvpService.computeScores(
                 buildMatch(1L, 100),
                 List.of(winnerAdc(), winnerTank(), loserAdc(), loserSupport()));
 
-        verify(baselineService, times(1)).getBaselineMap();
+        // 基线/职业表加载在引擎侧（此处引擎为 mock）：编排层零触碰
+        verify(baselineService, never()).getBaselineMap();
         verify(scoringBaselineMapper, never()).selectList(any());
     }
 
