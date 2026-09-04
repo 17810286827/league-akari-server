@@ -1,3 +1,8 @@
+> **⚠️ 历史文档（播报 spec v1）**：saveMatch 的 boolean 首插返回值已在架构清理（#19）中移除——
+> 该返回值长期无调用方消费，"仅首次入库"语义现由推送状态机（push_status）唯一承载，
+> maybeBroadcast 无条件调用、内部门控。类名 MatchService 已拆为 MatchIngestService/MatchQueryService。
+> 本文仅作演进史参考，现行契约以代码与 CONTEXT.md 为准。
+
 # Post-Game Broadcast 局后播报 — 设计规格
 
 > 车队对局结束后，自动向车队群推送"战报图 + 局后锐评"。

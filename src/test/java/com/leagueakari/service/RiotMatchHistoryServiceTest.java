@@ -37,7 +37,7 @@ import static org.mockito.Mockito.when;
 class RiotMatchHistoryServiceTest {
 
     private CloseableHttpClient httpClient;
-    private MatchService matchService;
+    private MatchIngestService matchIngestService;
     private MatchMapper matchMapper;
     private TeamRosterService rosterService;
     private RiotMatchHistoryService service;
@@ -74,7 +74,7 @@ class RiotMatchHistoryServiceTest {
     @BeforeEach
     void setUp() {
         httpClient = mock(CloseableHttpClient.class);
-        matchService = mock(MatchService.class);
+        matchIngestService = mock(MatchIngestService.class);
         matchMapper = mock(MatchMapper.class);
         rosterService = mock(TeamRosterService.class);
         // 不限流（窗口内 1000 个配额）+ 假睡眠
@@ -83,7 +83,7 @@ class RiotMatchHistoryServiceTest {
         service = new RiotMatchHistoryService(
                 "test-key", "https://sea.api.riotgames.com", "TW2",
                 100, 200, httpClient, new ObjectMapper(),
-                matchService, matchMapper, rosterService, limiter,
+                matchIngestService, matchMapper, rosterService, limiter,
                 // 直通执行器：startBackfill 在当前线程同步执行，便于断言
                 Runnable::run);
     }
@@ -104,7 +104,7 @@ class RiotMatchHistoryServiceTest {
         assertThat(synced).isEqualTo(1);
         // 转换契约：MATCH-V5 字段 → MatchSyncRequest
         ArgumentCaptor<MatchSyncRequest> captor = ArgumentCaptor.forClass(MatchSyncRequest.class);
-        verify(matchService).saveMatch(captor.capture());
+        verify(matchIngestService).saveMatch(captor.capture());
         MatchSyncRequest req = captor.getValue();
         assertThat(req.getGameId()).isEqualTo(111222333L);
         assertThat(req.getSelfPuuid()).isEqualTo("puuid-a");
@@ -132,7 +132,7 @@ class RiotMatchHistoryServiceTest {
         int synced = service.backfillMember("puuid-a");
 
         assertThat(synced).isZero();
-        verify(matchService, never()).saveMatch(any());
+        verify(matchIngestService, never()).saveMatch(any());
     }
 
     /** 用例：全量回填入口——逐成员回填；单个成员失败不阻断其他成员 */
@@ -156,7 +156,7 @@ class RiotMatchHistoryServiceTest {
 
         // A 失败被跳过，B 正常回填 1 局
         assertThat(synced).isEqualTo(1);
-        verify(matchService, times(1)).saveMatch(any());
+        verify(matchIngestService, times(1)).saveMatch(any());
     }
 
     /** 用例：roster 未配置时入口直接参数异常（400 语义） */

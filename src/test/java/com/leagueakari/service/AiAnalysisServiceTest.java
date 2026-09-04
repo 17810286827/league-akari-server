@@ -44,7 +44,7 @@ import static org.mockito.Mockito.when;
 class AiAnalysisServiceTest {
 
     private AiClient aiClient;
-    private MatchService matchService;
+    private MatchQueryService matchQueryService;
     private GameDataService gameDataService;
     private AiAnalysisService service;
     private ObjectMapper objectMapper;
@@ -55,13 +55,13 @@ class AiAnalysisServiceTest {
     @BeforeEach
     void setUp() {
         aiClient = mock(AiClient.class);
-        matchService = mock(MatchService.class);
+        matchQueryService = mock(MatchQueryService.class);
         gameDataService = mock(GameDataService.class);
         objectMapper = new ObjectMapper();
         // promptFile 指向不存在的文件：走内置默认提示词，避免依赖 classpath 资源
         service = new AiAnalysisService(
                 aiProps("test-key", false),
-                matchService, objectMapper, aiClient, gameDataService, Runnable::run);
+                matchQueryService, objectMapper, aiClient, gameDataService, Runnable::run);
         events.clear();
     }
 
@@ -167,7 +167,7 @@ class AiAnalysisServiceTest {
         try {
             // AI 流回放：start 后第一个回调是 reasoning，会触发第二次 send（此时客户端已断开）
             mockAiStream(null);
-            when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
+            when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
 
             SseEmitter emitter = mock(SseEmitter.class);
             AtomicInteger sendCount = new AtomicInteger();
@@ -207,7 +207,7 @@ class AiAnalysisServiceTest {
     void streamAnalysisPushesChunksThenDone() throws Exception {
         // AI 回放推理流（思维链 + 正文交替），finish_reason=null（自然结束）
         mockAiStream(null);
-        when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
+        when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
 
         service.analyzeStream(123L, mockEmitter());
 
@@ -226,7 +226,7 @@ class AiAnalysisServiceTest {
     void cacheHitPushesFullTextWithoutCallingAi() throws Exception {
         // 第一次：流式分析成功（写缓存；缓存只含正文，不含思维链）
         mockAiStream(null);
-        when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
+        when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
         service.analyzeStream(123L, mockEmitter());
         assertThat(events.get(5)).containsEntry("type", "done");
 
@@ -246,7 +246,7 @@ class AiAnalysisServiceTest {
         // AI 调用失败（AiClient 转 IllegalStateException）：流中推送 error 事件（含状态码提示）
         when(aiClient.callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString()))
                 .thenThrow(new IllegalStateException("AI 接口调用失败（HTTP 500），请稍后重试"));
-        when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
+        when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
 
         service.analyzeStream(123L, mockEmitter());
 
@@ -260,7 +260,7 @@ class AiAnalysisServiceTest {
     @Test
     void matchNotFoundPushesErrorEvent() throws Exception {
         // 流式线程内取详情失败（校验后数据被删等）：推送 error 事件而非崩溃
-        when(matchService.getMatchDetail(123L)).thenThrow(new MatchNotFoundException(123L));
+        when(matchQueryService.getMatchDetail(123L)).thenThrow(new MatchNotFoundException(123L));
 
         service.analyzeStream(123L, mockEmitter());
 
@@ -277,7 +277,7 @@ class AiAnalysisServiceTest {
         when(gameDataService.itemName(6672)).thenReturn("收集者");
         when(gameDataService.itemName(6609)).thenReturn("巨蛇之牙");
         mockAiStream(null);
-        when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
+        when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
 
         service.analyzeStream(123L, mockEmitter());
 
@@ -293,7 +293,7 @@ class AiAnalysisServiceTest {
         // 输出被长度预算截断（finish_reason=length）：done 事件携带 truncated=true，
         // 前端据此提示"内容被截断"，避免"写一半"被误认为完整
         mockAiStream("length");
-        when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
+        when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
 
         service.analyzeStream(123L, mockEmitter());
 
@@ -307,7 +307,7 @@ class AiAnalysisServiceTest {
         // 流无任何增量（服务端提前断开等）：正文为空 → 推 error 事件，不写缓存
         when(aiClient.callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString()))
                 .thenReturn(null);
-        when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
+        when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
 
         service.analyzeStream(123L, mockEmitter());
 
@@ -323,7 +323,7 @@ class AiAnalysisServiceTest {
         // API Key 未配置：前置校验直接抛异常（由全局处理器转 503）
         AiAnalysisService noKey = new AiAnalysisService(
                 aiProps("", false),
-                matchService, new ObjectMapper(), aiClient, gameDataService, Runnable::run);
+                matchQueryService, new ObjectMapper(), aiClient, gameDataService, Runnable::run);
 
         assertThatThrownBy(() -> noKey.validateAndConfigured(123L))
                 .isInstanceOf(IllegalStateException.class)
@@ -333,7 +333,7 @@ class AiAnalysisServiceTest {
     @Test
     void validatePassesWithKeyAndExistingMatch() {
         // 配置齐全 + 对局存在：校验通过不抛异常
-        when(matchService.getMatchDetail(123L)).thenReturn(buildDetail());
+        when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
 
         service.validateAndConfigured(123L);
     }
@@ -341,7 +341,7 @@ class AiAnalysisServiceTest {
     @Test
     void validateThrowsWhenMatchMissing() {
         // 对局不存在：前置校验抛 MatchNotFoundException（由全局处理器转 404）
-        when(matchService.getMatchDetail(123L)).thenThrow(new MatchNotFoundException(123L));
+        when(matchQueryService.getMatchDetail(123L)).thenThrow(new MatchNotFoundException(123L));
 
         assertThatThrownBy(() -> service.validateAndConfigured(123L))
                 .isInstanceOf(MatchNotFoundException.class);

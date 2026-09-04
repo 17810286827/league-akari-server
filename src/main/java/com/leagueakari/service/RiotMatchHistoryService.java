@@ -54,7 +54,7 @@ public class RiotMatchHistoryService {
 
     private final CloseableHttpClient httpClient;
     private final ObjectMapper objectMapper;
-    private final MatchService matchService;
+    private final MatchIngestService matchIngestService;
     private final MatchMapper matchMapper;
     private final TeamRosterService rosterService;
     private final RiotRateLimiter rateLimiter;
@@ -68,7 +68,7 @@ public class RiotMatchHistoryService {
             @Value("${riot.backfill-max-matches:200}") int maxMatchesPerMember,
             CloseableHttpClient httpClient,
             ObjectMapper objectMapper,
-            MatchService matchService,
+            MatchIngestService matchIngestService,
             MatchMapper matchMapper,
             TeamRosterService rosterService,
             RiotRateLimiter rateLimiter,
@@ -80,7 +80,7 @@ public class RiotMatchHistoryService {
         this.maxMatchesPerMember = maxMatchesPerMember;
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
-        this.matchService = matchService;
+        this.matchIngestService = matchIngestService;
         this.matchMapper = matchMapper;
         this.rosterService = rosterService;
         this.rateLimiter = rateLimiter;
@@ -174,7 +174,7 @@ public class RiotMatchHistoryService {
                     continue;
                 }
                 MatchSyncRequest request = fetchAndConvert(matchId, puuid);
-                matchService.saveMatch(request);
+                matchIngestService.saveMatch(request);
                 synced++;
             }
             if (ids.size() < pageSize) {

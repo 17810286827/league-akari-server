@@ -6,11 +6,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.dto.MatchSummaryResponse;
-import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.dto.MvpAwardResponse;
 import com.leagueakari.dto.PageResponse;
-import com.leagueakari.dto.ParticipantSyncRequest;
-import com.leagueakari.dto.TeamSyncRequest;
 import com.leagueakari.entity.Match;
 import com.leagueakari.entity.MatchMvp;
 import com.leagueakari.entity.MatchParticipant;
@@ -19,11 +16,8 @@ import com.leagueakari.mapper.MatchMvpMapper;
 import com.leagueakari.mapper.MatchParticipantMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -33,123 +27,24 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
- * 对局数据服务：幂等保存与查询
+ * 对局查询服务：列表/详情的视图组装（对局同步子系统的读取半边）
+ * <p>职责：分页列表（筛选 + 玩家过滤 + 折叠卡聚合）与详情组装
+ * （全量快照透传 + MVP/SVP 称号 + 全员实时评分）。
+ * stats_json 解析（缺失补 0、challenges 嵌套）为私有口径，
+ * 全局收拢见架构清理 spec 的统计读取门面票据。</p>
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class MatchService {
+public class MatchQueryService {
 
     private final MatchMapper matchMapper;
     private final MatchParticipantMapper matchParticipantMapper;
     private final ObjectMapper objectMapper;
-    /** MVP/SVP 评选编排：参与者落库后触发评选落库 */
+    /** MVP/SVP 评选编排：详情接口的全员实时评分调用其纯计算路径 */
     private final MatchMvpService matchMvpService;
-    /** MVP/SVP 评选结果查询：详情接口填充 mvp/svp 字段 */
+    /** MVP/SVP 评选结果查询：详情/列表接口填充 mvp/svp 字段 */
     private final MatchMvpMapper matchMvpMapper;
-
-    /**
-     * 幂等保存对局（先查后插）：
-     * 1. 按 game_id 查重，已存在则直接跳过，避免重复入库；
-     * 2. 不存在则写入 match 主表，并逐条写入参赛者明细。
-     *
-     * @return 本请求是否完成首次插入（true=新对局落库，false=已存在或并发兜底）。
-     *         局后播报等"仅首次入库触发"的下游以此为依据，避免同一局重复触发。
-     */
-    @Transactional
-    public boolean saveMatch(MatchSyncRequest request) {
-        // 幂等检查：先查后插，以 game_id 为唯一键判断该对局是否已同步
-        Long gameId = request.getGameId();
-        Long exists = matchMapper.selectCount(
-                new QueryWrapper<Match>().eq("game_id", gameId));
-        // 对局已存在：直接返回，不产生任何写入（调用方无需感知）
-        if (exists != null && exists > 0) {
-            log.info("Match already exists, skip sync: gameId={}", gameId);
-            return false;
-        }
-
-        // 组装 match 主表记录：字段与实体一一对应，teams 整体序列化为 teams_json
-        Match match = new Match();
-        match.setGameId(gameId);
-        match.setGameCreation(request.getGameCreation());
-        match.setGameDuration(request.getGameDuration());
-        match.setGameMode(request.getGameMode());
-        match.setGameType(request.getGameType());
-        match.setQueueId(request.getQueueId());
-        match.setMapId(request.getMapId());
-        match.setGameVersion(request.getGameVersion());
-        match.setRegion(request.getRegion());
-        match.setRsoPlatformId(request.getRsoPlatformId());
-        match.setDataSource(request.getDataSource());
-        match.setWinnerTeamId(request.getWinnerTeamId());
-        match.setSelfPuuid(request.getSelfPuuid());
-        match.setTeamsJson(writeJson(request.getTeams()));
-        match.setCreatedAt(LocalDateTime.now());
-        // 主表插入后 id 自动回填（AUTO 主键），供参赛者关联 match_id
-        try {
-            matchMapper.insert(match);
-        } catch (DuplicateKeyException e) {
-            // 并发兜底：两个请求同时通过"先查后插"的幂等检查，后插入者撞 game_id 唯一键。
-            // 异常已在方法内吞掉、不向事务边界传播，事务不会标记回滚，视为幂等成功直接返回
-            log.info("Match concurrently inserted, skip sync: gameId={}", gameId);
-            return false;
-        }
-
-        // 逐条组装参赛者：直显字段缺失时写 0，stats 全量透传存入 stats_json
-        List<MatchParticipant> savedParticipants = new ArrayList<>(request.getParticipants().size());
-        for (ParticipantSyncRequest p : request.getParticipants()) {
-            // 基础字段：玩家身份、英雄与队伍归属
-            MatchParticipant participant = new MatchParticipant();
-            participant.setMatchId(match.getId());
-            participant.setPuuid(p.getPuuid());
-            participant.setSummonerName(p.getSummonerName());
-            participant.setChampionId(p.getChampionId());
-            participant.setTeamId(p.getTeamId());
-            participant.setPosition(p.getPosition());
-            // 直显统计字段：kills/deaths/assists 等缺失时写 0，保证下游渲染不出现 null
-            participant.setKills(p.getKills() == null ? 0 : p.getKills());
-            participant.setDeaths(p.getDeaths() == null ? 0 : p.getDeaths());
-            participant.setAssists(p.getAssists() == null ? 0 : p.getAssists());
-            participant.setWin(p.getWin());
-            participant.setGoldEarned(p.getGoldEarned() == null ? 0 : p.getGoldEarned());
-            participant.setCs(p.getCs() == null ? 0 : p.getCs());
-            // 出装/召唤师技能/stats 统一走 JSON 序列化，保证原始快照完整
-            participant.setItems(writeJson(p.getItems()));
-            participant.setSummonerSpells(writeJson(p.getSummonerSpells()));
-            participant.setStatsJson(writeJson(p.getStats()));
-            matchParticipantMapper.insert(participant);
-            // 收集落库实体（id 已回填），供 MVP/SVP 评选使用
-            savedParticipants.add(participant);
-        }
-
-        // 参与者全部落库后触发 MVP/SVP 评选：同事务内写 match_mvp
-        matchMvpService.evaluateAndSave(match, savedParticipants);
-        // 同一首存路径累积评分基线（scoring_baseline 随对局同步积累，重复推送因幂等查重不会二次累加）
-        matchMvpService.collectBaselines(match, savedParticipants);
-
-        log.info("Match saved: gameId={}, participants={}", gameId, request.getParticipants().size());
-        // 首次插入完成：返回 true，供 controller 编排"仅首插触发"的下游（如局后播报判定）
-        return true;
-    }
-
-    /**
-     * 对象转 JSON 字符串，用于 teams_json / items / summonerSpells / stats_json 等快照列；
-     * 序列化失败仅记录日志并返回 null，不阻断保存流程
-     */
-    private String writeJson(Object value) {
-        if (value == null) {
-            // null 或空集合直接返回 null，对应快照列落库为 NULL
-            return null;
-        }
-        try {
-            // 通过 Jackson 序列化为 JSON 字符串
-            return objectMapper.writeValueAsString(value);
-        } catch (Exception e) {
-            // 序列化失败不抛出：快照列允许为 NULL，避免单点异常中断整局保存
-            log.error("Failed to serialize value to JSON", e);
-            return null;
-        }
-    }
 
     /**
      * 分页查询对局列表，支持队列与时间范围筛选
@@ -247,6 +142,52 @@ public class MatchService {
                 new PageResponse<>(items, page, pageSize, result.getTotal());
         // 最近对手：从本页对局参与者聚合（查询视角玩家所在队之外的玩家），列表查询时即返回，无需展开详情
         resp.setRecentOpponents(buildRecentOpponents(result.getRecords(), participantsByMatch, viewPuuid));
+        return resp;
+    }
+
+    /**
+     * 查询对局详情（含参赛者列表），不存在抛 MatchNotFoundException
+     * <p>主表按 game_id 精确查询，命中后按主键关联参赛者明细；
+     * 详情包含 teams_json 与各参赛者的 stats_json 全量快照。</p>
+     */
+    public MatchDetailResponse getMatchDetail(Long gameId) {
+        // 按幂等键 game_id 查询主表记录
+        Match match = matchMapper.selectOne(new QueryWrapper<Match>().eq("game_id", gameId));
+        if (match == null) {
+            // 未命中：抛出领域异常，由全局异常处理器转为 404
+            log.warn("Match not found, gameId={}", gameId);
+            throw new MatchNotFoundException(gameId);
+        }
+
+        // 按主表主键查询参赛者明细（match_participant.match_id 外键）；
+        // 按 id 升序返回，与列表接口 batchLoadParticipants 口径一致，保证展开卡与折叠卡玩家顺序稳定
+        List<MatchParticipant> participants = matchParticipantMapper.selectList(
+                new QueryWrapper<MatchParticipant>()
+                        .eq("match_id", match.getId())
+                        .orderByAsc("id"));
+
+        // 实体字段逐一透传到详情 DTO，保证响应契约字段齐全
+        MatchDetailResponse resp = new MatchDetailResponse();
+        resp.setGameId(match.getGameId());
+        resp.setGameCreation(match.getGameCreation());
+        resp.setGameDuration(match.getGameDuration());
+        resp.setGameMode(match.getGameMode());
+        resp.setGameType(match.getGameType());
+        resp.setQueueId(match.getQueueId());
+        resp.setMapId(match.getMapId());
+        resp.setGameVersion(match.getGameVersion());
+        resp.setRegion(match.getRegion());
+        resp.setRsoPlatformId(match.getRsoPlatformId());
+        resp.setDataSource(match.getDataSource());
+        resp.setWinnerTeamId(match.getWinnerTeamId());
+        resp.setSelfPuuid(match.getSelfPuuid());
+        resp.setTeamsJson(match.getTeamsJson());
+        resp.setParticipants(participants);
+        // 填充 MVP/SVP 称号：查 match_mvp 并关联参赛者档案（老数据无记录时保持 null）
+        fillMvpAwards(resp, match.getId(), participants);
+        // 全员实时评分：查询时跑评分引擎（老对局同样可算，口径与落库评选一致）
+        resp.setPlayerScores(matchMvpService.computeScores(match, participants));
+        log.info("Query match detail: gameId={}, participants={}", gameId, participants.size());
         return resp;
     }
 
@@ -650,52 +591,6 @@ public class MatchService {
         t.setDamage(0);
         t.setDamageTaken(0);
         return t;
-    }
-
-    /**
-     * 查询对局详情（含参赛者列表），不存在抛 MatchNotFoundException
-     * <p>主表按 game_id 精确查询，命中后按主键关联参赛者明细；
-     * 详情包含 teams_json 与各参赛者的 stats_json 全量快照。</p>
-     */
-    public MatchDetailResponse getMatchDetail(Long gameId) {
-        // 按幂等键 game_id 查询主表记录
-        Match match = matchMapper.selectOne(new QueryWrapper<Match>().eq("game_id", gameId));
-        if (match == null) {
-            // 未命中：抛出领域异常，由全局异常处理器转为 404
-            log.warn("Match not found, gameId={}", gameId);
-            throw new MatchNotFoundException(gameId);
-        }
-
-        // 按主表主键查询参赛者明细（match_participant.match_id 外键）；
-        // 按 id 升序返回，与列表接口 batchLoadParticipants 口径一致，保证展开卡与折叠卡玩家顺序稳定
-        List<MatchParticipant> participants = matchParticipantMapper.selectList(
-                new QueryWrapper<MatchParticipant>()
-                        .eq("match_id", match.getId())
-                        .orderByAsc("id"));
-
-        // 实体字段逐一透传到详情 DTO，保证响应契约字段齐全
-        MatchDetailResponse resp = new MatchDetailResponse();
-        resp.setGameId(match.getGameId());
-        resp.setGameCreation(match.getGameCreation());
-        resp.setGameDuration(match.getGameDuration());
-        resp.setGameMode(match.getGameMode());
-        resp.setGameType(match.getGameType());
-        resp.setQueueId(match.getQueueId());
-        resp.setMapId(match.getMapId());
-        resp.setGameVersion(match.getGameVersion());
-        resp.setRegion(match.getRegion());
-        resp.setRsoPlatformId(match.getRsoPlatformId());
-        resp.setDataSource(match.getDataSource());
-        resp.setWinnerTeamId(match.getWinnerTeamId());
-        resp.setSelfPuuid(match.getSelfPuuid());
-        resp.setTeamsJson(match.getTeamsJson());
-        resp.setParticipants(participants);
-        // 填充 MVP/SVP 称号：查 match_mvp 并关联参赛者档案（老数据无记录时保持 null）
-        fillMvpAwards(resp, match.getId(), participants);
-        // 全员实时评分：查询时跑评分引擎（老对局同样可算，口径与落库评选一致）
-        resp.setPlayerScores(matchMvpService.computeScores(match, participants));
-        log.info("Query match detail: gameId={}, participants={}", gameId, participants.size());
-        return resp;
     }
 
     /**

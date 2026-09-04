@@ -7,8 +7,9 @@ import com.leagueakari.dto.PageResponse;
 import com.leagueakari.dto.TimelineSyncRequest;
 import com.leagueakari.service.AiAnalysisService;
 import com.leagueakari.service.BroadcastCoordinator;
+import com.leagueakari.service.MatchIngestService;
 import com.leagueakari.service.MatchNotFoundException;
-import com.leagueakari.service.MatchService;
+import com.leagueakari.service.MatchQueryService;
 import com.leagueakari.service.MatchTimelineService;
 import com.leagueakari.util.ClientDisconnectDetector;
 import jakarta.validation.Valid;
@@ -30,7 +31,8 @@ import java.util.Objects;
 /**
  * 对局 API：同步写入（幂等）与查询
  * <p>路由层职责：参数校验（@Valid / @RequestParam）与返回值封装；
- * 业务逻辑全部下沉 MatchService，异常由全局异常处理器统一转换。</p>
+ * 业务逻辑下沉 service 层（写入走 MatchIngestService，查询走 MatchQueryService），
+ * 异常由全局异常处理器统一转换。</p>
  */
 @Slf4j
 @RestController
@@ -38,7 +40,10 @@ import java.util.Objects;
 @RequiredArgsConstructor
 public class MatchController {
 
-    private final MatchService matchService;
+    /** 对局摄取：幂等保存（重复推送同一 gameId 不会产生重复数据） */
+    private final MatchIngestService matchIngestService;
+    /** 对局查询：列表/详情的视图组装 */
+    private final MatchQueryService matchQueryService;
     private final MatchTimelineService matchTimelineService;
     private final AiAnalysisService aiAnalysisService;
     /** 局后播报编排：对局落库后触发判定（内部状态门控，失败只落库不阻塞同步） */
@@ -48,7 +53,7 @@ public class MatchController {
     @PostMapping
     public Map<String, Object> syncMatch(@Valid @RequestBody MatchSyncRequest request) {
         // 幂等保存：重复推送同一 gameId 不会产生重复数据
-        matchService.saveMatch(request);
+        matchIngestService.saveMatch(request);
         // 局后播报触发点：是否播报由 coordinator 内部判定（车队局/时间窗/开关/状态），
         // 判定不通过零副作用，发送失败仅落库 push_status=FAILED 等待桌面端补推重试
         broadcastCoordinator.maybeBroadcast(request.getGameId());
@@ -70,7 +75,7 @@ public class MatchController {
             @RequestParam(required = false) Long startTime,
             @RequestParam(required = false) Long endTime) {
         // 筛选参数均为可选，page/pageSize 缺省时取默认值 1/20
-        return matchService.pageMatches(page, pageSize, queueId, puuid, summonerName, startTime, endTime);
+        return matchQueryService.pageMatches(page, pageSize, queueId, puuid, summonerName, startTime, endTime);
     }
 
     /** 查询对局详情，不存在返回 404 */
@@ -78,7 +83,7 @@ public class MatchController {
     public Map<String, MatchDetailResponse> getMatchDetail(@PathVariable Long gameId) {
         // data 包装与分页/同步响应的扁平结构区分，详情契约见规格第 4.2 节
         // 对局不存在时由 service 抛出 MatchNotFoundException，全局处理器转为 404
-        return Map.of("data", matchService.getMatchDetail(gameId));
+        return Map.of("data", matchQueryService.getMatchDetail(gameId));
     }
 
     /**

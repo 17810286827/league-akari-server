@@ -51,7 +51,7 @@ public class AiAnalysisService {
     /** 采样参数（组装后经 AiCompletionRequest 显式传给 AiClient，见 docs/adr/0005） */
     private final AiCompletionRequest completionRequest;
 
-    private final MatchService matchService;
+    private final MatchQueryService matchQueryService;
     private final ObjectMapper objectMapper;
     private final AiClient aiClient;
 
@@ -70,7 +70,7 @@ public class AiAnalysisService {
      */
     public AiAnalysisService(
             AiProperties ai,
-            MatchService matchService,
+            MatchQueryService matchQueryService,
             ObjectMapper objectMapper,
             AiClient aiClient,
             GameDataService gameDataService,
@@ -82,7 +82,7 @@ public class AiAnalysisService {
                 ai.getModel(), ai.getTemperature(),
                 ai.getFrequencyPenalty(), ai.getPresencePenalty(),
                 ai.getMaxTokens(), ai.isThinking());
-        this.matchService = matchService;
+        this.matchQueryService = matchQueryService;
         this.objectMapper = objectMapper;
         this.aiClient = aiClient;
         this.gameDataService = gameDataService;
@@ -106,7 +106,7 @@ public class AiAnalysisService {
         }
         // 对局不存在时抛 MatchNotFoundException（全局处理器转 404）；
         // 记录耗时：若此处卡住（DB 慢/连接池耗尽）会导致响应头迟迟不返回
-        matchService.getMatchDetail(gameId);
+        matchQueryService.getMatchDetail(gameId);
         log.info("AI analysis validated: gameId={}, elapsed={}ms", gameId, System.currentTimeMillis() - startTime);
     }
 
@@ -157,7 +157,7 @@ public class AiAnalysisService {
             analysisCache.remove(gameId);
 
             // 取对局详情并组装紧凑数据摘要（只提取分析所需字段，控制 prompt 体积）
-            MatchDetailResponse detail = matchService.getMatchDetail(gameId);
+            MatchDetailResponse detail = matchQueryService.getMatchDetail(gameId);
             String matchSummary = buildMatchSummary(detail);
             // 系统提示词：每次读取 md 文件（用户编辑后即时生效，无需重启）
             String systemPrompt = loadSystemPrompt();
