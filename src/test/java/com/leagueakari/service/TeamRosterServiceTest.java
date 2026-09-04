@@ -4,6 +4,8 @@ import com.leagueakari.config.TeamProperties;
 import com.leagueakari.dto.RiotAccountDto;
 import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.mapper.MatchParticipantMapper;
+import com.leagueakari.riot.RiotAccountClient;
+import com.leagueakari.riot.RiotAccountNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;

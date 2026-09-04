@@ -1,4 +1,4 @@
-package com.leagueakari.service;
+package com.leagueakari.riot;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -8,14 +8,11 @@ import com.leagueakari.dto.ParticipantSyncRequest;
 import com.leagueakari.dto.TeamSyncRequest;
 import com.leagueakari.entity.Match;
 import com.leagueakari.mapper.MatchMapper;
+import com.leagueakari.service.TeamRosterService;
+import com.leagueakari.service.MatchIngestService;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.hc.client5.http.classic.methods.HttpGet;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
-import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.net.URIBuilder;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -52,12 +49,12 @@ public class RiotMatchHistoryService {
     /** 单成员最大回填对局数（防失控；默认 200 可覆盖近 10 周历史） */
     private final int maxMatchesPerMember;
 
-    private final CloseableHttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final MatchIngestService matchIngestService;
     private final MatchMapper matchMapper;
     private final TeamRosterService rosterService;
-    private final RiotRateLimiter rateLimiter;
+    /** Riot API 统一出口：token + 限流 + 状态码语义三合一（架构清理 T6） */
+    private final RiotHttpClient riotHttpClient;
     private final Executor backfillExecutor;
 
     public RiotMatchHistoryService(
@@ -66,24 +63,22 @@ public class RiotMatchHistoryService {
             @Value("${riot.match-region:TW2}") String matchRegion,
             @Value("${riot.backfill-page-size:100}") int pageSize,
             @Value("${riot.backfill-max-matches:200}") int maxMatchesPerMember,
-            CloseableHttpClient httpClient,
             ObjectMapper objectMapper,
             MatchIngestService matchIngestService,
             MatchMapper matchMapper,
             TeamRosterService rosterService,
-            RiotRateLimiter rateLimiter,
+            RiotHttpClient riotHttpClient,
             Executor backfillExecutor) {
         this.apiKey = apiKey;
         this.matchDomain = matchDomain;
         this.matchRegion = matchRegion;
         this.pageSize = pageSize;
         this.maxMatchesPerMember = maxMatchesPerMember;
-        this.httpClient = httpClient;
         this.objectMapper = objectMapper;
         this.matchIngestService = matchIngestService;
         this.matchMapper = matchMapper;
         this.rosterService = rosterService;
-        this.rateLimiter = rateLimiter;
+        this.riotHttpClient = riotHttpClient;
         this.backfillExecutor = backfillExecutor;
     }
 
@@ -218,7 +213,7 @@ public class RiotMatchHistoryService {
                     .addParameter("start", String.valueOf(start))
                     .addParameter("count", String.valueOf(pageSize))
                     .build();
-            String body = executeGet(uri);
+            String body = riotHttpClient.get(uri);
             return objectMapper.readValue(body,
                     objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
         } catch (IllegalStateException e) {
@@ -235,7 +230,7 @@ public class RiotMatchHistoryService {
             URI uri = new URIBuilder(matchDomain)
                     .setPathSegments("match", "v5", "matches", matchId)
                     .build();
-            String body = executeGet(uri);
+            String body = riotHttpClient.get(uri);
             JsonNode info = objectMapper.readTree(body).path("info");
             MatchSyncRequest request = new MatchSyncRequest();
             request.setTeams(new ArrayList<>());
@@ -326,28 +321,4 @@ public class RiotMatchHistoryService {
         return p;
     }
 
-    /** 执行 GET 并返回响应体（限流在每次请求前生效；非 2xx 抛状态异常） */
-    private String executeGet(URI uri) {
-        rateLimiter.acquire();
-        HttpGet request = new HttpGet(uri);
-        request.setHeader("X-Riot-Token", apiKey);
-        try (CloseableHttpResponse response = httpClient.execute(request)) {
-            int status = response.getCode();
-            String body = response.getEntity() != null
-                    ? EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8) : "";
-            if (status == HttpStatus.TOO_MANY_REQUESTS.value()) {
-                throw new IllegalStateException("Riot API 限流（429），请稍后再试");
-            }
-            if (status < 200 || status >= 300) {
-                log.error("Riot Match-V5 error: status={}, uri={}", status, uri);
-                throw new IllegalStateException("Riot API 调用失败（" + status + "）");
-            }
-            return body;
-        } catch (IllegalStateException e) {
-            throw e;
-        } catch (Exception e) {
-            log.error("Riot Match-V5 request failed: uri={}, error={}", uri, e.getMessage());
-            throw new IllegalStateException("Riot API 请求失败：" + e.getMessage());
-        }
-    }
 }

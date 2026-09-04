@@ -1,10 +1,12 @@
-package com.leagueakari.service;
+package com.leagueakari.riot;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.config.TeamProperties;
 import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.entity.RiotAccount;
 import com.leagueakari.mapper.MatchMapper;
+import com.leagueakari.service.TeamRosterService;
+import com.leagueakari.service.MatchIngestService;
 import com.leagueakari.mapper.RiotAccountMapper;
 import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
@@ -77,13 +79,15 @@ class RiotMatchHistoryServiceTest {
         matchIngestService = mock(MatchIngestService.class);
         matchMapper = mock(MatchMapper.class);
         rosterService = mock(TeamRosterService.class);
-        // 不限流（窗口内 1000 个配额）+ 假睡眠
-        RiotRateLimiter limiter = new RiotRateLimiter(1000, 120_000,
-                System::currentTimeMillis, ms -> { throw new AssertionError("不应触发限流"); });
+        // 统一出口（包 mock HttpClient；限流器不干扰——窗口内 1000 配额）
+        com.leagueakari.riot.RiotHttpClient riotHttpClient = new com.leagueakari.riot.RiotHttpClient(
+                "test-key", httpClient, new ObjectMapper(),
+                new com.leagueakari.riot.RiotRateLimiter(1000, 120_000,
+                        System::currentTimeMillis, ms -> { throw new AssertionError("不应触发限流"); }));
         service = new RiotMatchHistoryService(
                 "test-key", "https://sea.api.riotgames.com", "TW2",
-                100, 200, httpClient, new ObjectMapper(),
-                matchIngestService, matchMapper, rosterService, limiter,
+                100, 200, new ObjectMapper(),
+                matchIngestService, matchMapper, rosterService, riotHttpClient,
                 // 直通执行器：startBackfill 在当前线程同步执行，便于断言
                 Runnable::run);
     }

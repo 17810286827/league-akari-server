@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.dto.ParticipantSyncRequest;
 import com.leagueakari.dto.TeamSyncRequest;
-import com.leagueakari.service.RiotMatchHistoryService;
+import com.leagueakari.riot.RiotMatchHistoryService;
 import com.leagueakari.service.TeamRosterService;
 import com.leagueakari.service.WeeklyAiCommentService;
 import org.junit.jupiter.api.BeforeEach;

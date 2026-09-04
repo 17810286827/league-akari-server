@@ -1,7 +1,7 @@
 package com.leagueakari.config;
 
 import com.leagueakari.service.MatchNotFoundException;
-import com.leagueakari.service.RiotAccountNotFoundException;
+import com.leagueakari.riot.RiotAccountNotFoundException;
 import com.leagueakari.util.ClientDisconnectDetector;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;

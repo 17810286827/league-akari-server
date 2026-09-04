@@ -1,4 +1,4 @@
-package com.leagueakari.service;
+package com.leagueakari.riot;
 
 /**
  * 召唤师不存在异常（Riot Account-V1 返回 404），由全局异常处理器转为 404

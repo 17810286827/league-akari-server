@@ -1,4 +1,4 @@
-package com.leagueakari.service;
+package com.leagueakari.riot;
 
 import org.junit.jupiter.api.Test;
 

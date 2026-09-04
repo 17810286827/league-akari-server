@@ -1,9 +1,10 @@
-package com.leagueakari.service;
+package com.leagueakari.riot;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.dto.RiotAccountDto;
 import com.leagueakari.entity.RiotAccount;
 import com.leagueakari.mapper.RiotAccountMapper;
+import com.leagueakari.riot.RiotAccountNotFoundException;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.core5.http.HttpEntity;
@@ -66,7 +67,7 @@ class RiotAccountClientTest {
                 "test-key",
                 "https://asia.api.riotgames.com",
                 "https://sea.api.riotgames.com",
-                httpClient,
+                riotHttpClient(),
                 new ObjectMapper(),
                 riotAccountMapper);
     }
@@ -164,9 +165,16 @@ class RiotAccountClientTest {
         // API Key 未配置且库未命中：无法调 Riot API，直接报错（库命中场景不受影响）
         RiotAccountClient noKey = new RiotAccountClient(
                 "", "https://asia.api.riotgames.com", "https://sea.api.riotgames.com",
-                httpClient, new ObjectMapper(), riotAccountMapper);
+                riotHttpClient(), new ObjectMapper(), riotAccountMapper);
         assertThatThrownBy(() -> noKey.searchByRiotId("玩家#tag"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("API Key");
+    }
+
+    /** 构造真实统一出口（包 mock HttpClient；限流器不干扰） */
+    private com.leagueakari.riot.RiotHttpClient riotHttpClient() {
+        return new com.leagueakari.riot.RiotHttpClient("test-key", httpClient, new ObjectMapper(),
+                new com.leagueakari.riot.RiotRateLimiter(1000, 120_000,
+                        System::currentTimeMillis, ms -> { }));
     }
 }

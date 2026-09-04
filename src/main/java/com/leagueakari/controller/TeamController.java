@@ -4,7 +4,7 @@ import com.leagueakari.dto.LeaderboardResponse;
 import com.leagueakari.dto.MemberCardResponse;
 import com.leagueakari.dto.TeamMembersResponse;
 import com.leagueakari.dto.WeeklyReportResponse;
-import com.leagueakari.service.RiotMatchHistoryService;
+import com.leagueakari.riot.RiotMatchHistoryService;
 import com.leagueakari.service.TeamStatsService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;

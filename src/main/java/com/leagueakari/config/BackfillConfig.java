@@ -1,6 +1,6 @@
 package com.leagueakari.config;
 
-import com.leagueakari.service.RiotRateLimiter;
+import com.leagueakari.riot.RiotRateLimiter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 

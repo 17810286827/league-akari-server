@@ -1,19 +1,15 @@
-package com.leagueakari.service;
+package com.leagueakari.riot;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.dto.RiotAccountDto;
+import com.leagueakari.riot.RiotAccountNotFoundException;
 import com.leagueakari.entity.RiotAccount;
 import com.leagueakari.mapper.RiotAccountMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.hc.client5.http.classic.methods.HttpGet;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
-import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.net.URIBuilder;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -39,8 +35,8 @@ public class RiotAccountClient {
     /** Riot 台服区 API 域名（召唤师等级/头像接口，Summoner-V4 按平台路由） */
     private final String summonerDomain;
 
-    /** Apache HttpClient 5（全局连接池实例，见 HttpClientConfig） */
-    private final CloseableHttpClient httpClient;
+    /** Riot API 统一出口：token + 限流 + 状态码语义三合一（架构清理 T6） */
+    private final com.leagueakari.riot.RiotHttpClient riotHttpClient;
 
     /** JSON 解析器（Riot 响应体反序列化） */
     private final ObjectMapper objectMapper;
@@ -62,13 +58,13 @@ public class RiotAccountClient {
             @Value("${riot.api-key:}") String apiKey,
             @Value("${riot.account-domain:https://asia.api.riotgames.com}") String accountDomain,
             @Value("${riot.summoner-domain:https://sea.api.riotgames.com}") String summonerDomain,
-            CloseableHttpClient httpClient,
+            com.leagueakari.riot.RiotHttpClient riotHttpClient,
             ObjectMapper objectMapper,
             RiotAccountMapper riotAccountMapper) {
         this.apiKey = apiKey;
         this.accountDomain = accountDomain;
         this.summonerDomain = summonerDomain;
-        this.httpClient = httpClient;
+        this.riotHttpClient = riotHttpClient;
         this.objectMapper = objectMapper;
         this.riotAccountMapper = riotAccountMapper;
     }
@@ -110,12 +106,9 @@ public class RiotAccountClient {
         // 不能手工预编码拼接（已编码的 % 会被二次编码为 %25 导致 Riot 侧 404）
         URI uri = buildUri(accountDomain, "riot", "account", "v1", "accounts", "by-riot-id", gameName, tagLine);
 
-        // 请求头：Riot API 通过 X-Riot-Token 传递开发者 Key
-        HttpGet request = new HttpGet(uri);
-        request.setHeader("X-Riot-Token", apiKey);
         try {
             log.info("Calling Riot Account API: {}#{}", gameName, tagLine);
-            RiotAccountDto account = executeForDto(request, uri.toString());
+            RiotAccountDto account = parseAccount(riotHttpClient.get(uri));
             if (account == null || account.getPuuid() == null) {
                 // 响应体为空或缺少 puuid：视为异常数据，不入库
                 log.warn("Riot Account API returned empty body: {}", riotName);
@@ -221,9 +214,7 @@ public class RiotAccountClient {
     private void fillSummonerProfile(RiotAccountDto account) {
         try {
             URI uri = buildUri(summonerDomain, "lol", "summoner", "v4", "summoners", "by-puuid", account.getPuuid());
-            HttpGet request = new HttpGet(uri);
-            request.setHeader("X-Riot-Token", apiKey);
-            RiotAccountDto profile = executeForDto(request, uri.toString());
+            RiotAccountDto profile = parseAccount(riotHttpClient.get(uri));
             if (profile != null) {
                 account.setSummonerLevel(profile.getSummonerLevel());
                 account.setProfileIconId(profile.getProfileIconId());
@@ -253,35 +244,17 @@ public class RiotAccountClient {
     }
 
     /**
-     * 执行 GET 请求并解析 JSON 响应体为 DTO：
-     * 404 抛 RiotAccountNotFoundException（业务异常），其余非 2xx 抛 IllegalStateException
+     * 解析 Riot 响应体为账号 DTO（状态码语义已由统一出口处理，这里只做反序列化）
      *
-     * @param request 已配置好 URL 与请求头的 GET 请求
-     * @param url     请求 URL（仅用于日志）
-     * @return 解析后的 DTO（响应体为空时返回 null）
+     * @param body 响应体字符串（UTF-8）
+     * @return 解析后的 DTO（响应体为空时返回 null，由调用方判定）
      */
-    private RiotAccountDto executeForDto(HttpGet request, String url) throws Exception {
-        try (CloseableHttpResponse response = httpClient.execute(request)) {
-            int status = response.getCode();
-            // 响应体读取：UTF-8 解码 JSON 文本
-            String body = response.getEntity() != null
-                    ? EntityUtils.toString(response.getEntity(), java.nio.charset.StandardCharsets.UTF_8)
-                    : "";
-            if (status == HttpStatus.NOT_FOUND.value()) {
-                // 404：召唤师不存在，抛业务异常由全局处理器转为 404
-                throw new RiotAccountNotFoundException(url);
-            }
-            if (status < 200 || status >= 300) {
-                // 其他 4xx（401 Key 失效 / 403 无权限 / 429 限流）与 5xx：记日志后抛出
-                log.error("Riot API error: status={}, body={}", status, body);
-                throw new IllegalStateException("Riot API 调用失败（" + status + "），请稍后重试");
-            }
-            if (body.isBlank()) {
-                // 空响应体：返回 null 由调用方判定
-                return null;
-            }
-            // 反序列化 JSON 为 DTO（Riot 字段名与 DTO 驼峰字段对应）
-            return objectMapper.readValue(body, RiotAccountDto.class);
+    private RiotAccountDto parseAccount(String body) throws Exception {
+        if (body == null || body.isBlank()) {
+            // 空响应体：返回 null 由调用方判定
+            return null;
         }
+        // 反序列化 JSON 为 DTO（Riot 字段名与 DTO 驼峰字段对应）
+        return objectMapper.readValue(body, RiotAccountDto.class);
     }
 }
