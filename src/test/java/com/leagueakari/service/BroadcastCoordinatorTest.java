@@ -16,6 +16,8 @@ import com.leagueakari.qqbot.QqBotClient;
 import com.leagueakari.qqbot.QqPushException;
 import com.leagueakari.reportimage.ReportImageData;
 import com.leagueakari.reportimage.ReportImageRenderer;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -75,8 +77,10 @@ class BroadcastCoordinatorTest {
     @Mock
     private PostGameCommentService postGameCommentService;
 
-    @Mock
-    private PostGameSummaryBuilder postGameSummaryBuilder;
+    /** 真实摘要组装器 + 真实战报图投影：口径由各自测试类锁定，本类走真实链路守集成 */
+    private FleetGameSummaryService summaryService;
+
+    private ReportImageProjector reportImageProjector;
 
     private PushProperties pushProperties;
 
@@ -98,10 +102,17 @@ class BroadcastCoordinatorTest {
         teamProperties.setName("iKun");
         teamProperties.setMinSharedMembers(2);
 
+        // 真实链路组件：摘要组装（英雄名走 mock 的 GameDataService）+ 战报图投影
+        summaryService = new FleetGameSummaryService(
+                gameDataService, new ObjectMapper(), teamProperties);
+        reportImageProjector = new ReportImageProjector();
+
+        // AI 投影（PostGameSummaryBuilder）为无状态纯函数，直接构造
+        PostGameSummaryBuilder postGameSummaryBuilder = new PostGameSummaryBuilder();
         coordinator = new BroadcastCoordinator(matchMapper, participantMapper, mvpMapper,
-                pushProperties, teamProperties, rosterService, gameDataService, qqBotClient,
-                new ReportImageRenderer(), postGameCommentService, postGameSummaryBuilder,
-                FIXED_CLOCK, new ObjectMapper());
+                pushProperties, teamProperties, rosterService, summaryService,
+                reportImageProjector, postGameSummaryBuilder, qqBotClient,
+                new ReportImageRenderer(), postGameCommentService, FIXED_CLOCK);
     }
 
     /**
@@ -211,8 +222,9 @@ class BroadcastCoordinatorTest {
         ReportImageRenderer mockRenderer = mock(ReportImageRenderer.class);
         when(mockRenderer.renderPng(any())).thenReturn(new byte[]{1});
         BroadcastCoordinator c = new BroadcastCoordinator(matchMapper, participantMapper, mvpMapper,
-                pushProperties, teamProperties, rosterService, gameDataService, qqBotClient,
-                mockRenderer, postGameCommentService, postGameSummaryBuilder, FIXED_CLOCK, new ObjectMapper());
+                pushProperties, teamProperties, rosterService, summaryService,
+                reportImageProjector, new PostGameSummaryBuilder(), qqBotClient,
+                mockRenderer, postGameCommentService, FIXED_CLOCK);
 
         c.maybeBroadcast(2000000001L);
 

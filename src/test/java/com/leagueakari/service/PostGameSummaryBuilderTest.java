@@ -18,16 +18,20 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * PostGameSummaryBuilder 单元测试：
- * 验证局后锐评输入摘要升级——双方 10 人全量可见、每人伤害/承伤/经济字段、
- * 比分、车队成员标记与称号映射（主队 MVP/尽力，对方 MVP）。不触网不触库。
+ * PostGameSummaryBuilder 单元测试（AI 投影层）：
+ * 一局摘要（FleetGameSummary）→ 锐评输入 JSON 的投影契约——
+ * 键名（result/score/meta/teamName/mainTeam/otherTeam 与行内 name/champion/win/member/kda/dmg/taken/gold/title）
+ * 与 v2 序列化格式保持一致（提示词与消费方零改动）。
+ * 组装口径已由 FleetGameSummaryServiceTest 锁定，本类经真实组装器喂数据。
  */
 class PostGameSummaryBuilderTest {
 
     private final GameDataService gameData = mock(GameDataService.class);
     private final TeamProperties teamProps = mock(TeamProperties.class);
-    private final PostGameSummaryBuilder builder =
-            new PostGameSummaryBuilder(gameData, new ObjectMapper(), teamProps);
+    /** 真实组装器：投影测试喂真实摘要（口径唯一实现） */
+    private final FleetGameSummaryService summaryService =
+            new FleetGameSummaryService(gameData, new ObjectMapper(), teamProps);
+    private final PostGameSummaryBuilder builder = new PostGameSummaryBuilder();
 
     /** stats_json 片段：伤害/承伤/金币（Riot v5 键名） */
     private static String stats(int dmg, int taken, int gold) {
@@ -36,7 +40,7 @@ class PostGameSummaryBuilderTest {
                 + ",\"goldEarned\":" + gold + "}";
     }
 
-    /** 构造参赛者；fleet 为 true 表示车队成员（进 memberByPuuid） */
+    /** 构造参赛者；puuid 命中 roster 即车队成员 */
     private MatchParticipant part(long id, String name, int champion, int team, int k, int d, int a,
                                  String statsJson) {
         MatchParticipant p = new MatchParticipant();
@@ -91,15 +95,16 @@ class PostGameSummaryBuilderTest {
         return a;
     }
 
-    /** 用例：胜局摘要含双方 10 人全量数据（伤害/承伤/金币/比分/成员标记/称号） */
+    /** 用例：胜局投影保持 v2 JSON 契约——顶层键、行内键、称号与数值缩写 */
     @Test
     @SuppressWarnings("unchecked")
-    void build_winGame_containsBothTeamsWithFullStats() {
+    void build_winGame_keepsAiJsonContract() {
         when(gameData.championName(anyInt())).thenAnswer(inv -> "英雄" + inv.getArgument(0));
         when(teamProps.getName()).thenReturn("舰队");
-
-        Map<String, Object> s = builder.build(match(), participants(), roster(),
+        FleetGameSummary summary = summaryService.build(match(), participants(), roster(),
                 List.of(award(1L, "MVP"), award(8L, "ACE")));
+
+        Map<String, Object> s = builder.build(summary);
 
         assertThat(s.get("result")).isEqualTo("胜利");
         assertThat(s.get("score")).isEqualTo("32:19");
@@ -117,7 +122,7 @@ class PostGameSummaryBuilderTest {
         assertThat(first.get("member")).isEqualTo(true);
         assertThat(first.get("title")).isEqualTo("MVP");
         assertThat((String) first.get("kda")).isEqualTo("12/3/7");
-        // 伤害/承伤/金币从 stats_json 解析；数值齐全供锐评引用
+        // 伤害/承伤/金币为省 token 缩写键（dmg/taken/gold），数值齐全供锐评引用
         assertThat(first.get("dmg")).isEqualTo(28600);
         assertThat(first.get("taken")).isEqualTo(14300);
         assertThat(first.get("gold")).isEqualTo(15400);
@@ -131,16 +136,17 @@ class PostGameSummaryBuilderTest {
         assertThat(opp.get("dmg")).isEqualTo(16500);
     }
 
-    /** 用例：败局摘要——result=败北、比分对调、主队 ACE 标"尽力"、对方 MVP 标"MVP" */
+    /** 用例：败局投影——result=败北、主队 ACE 标"尽力"、对方 MVP 标"MVP" */
     @Test
     @SuppressWarnings("unchecked")
     void build_loseGame_marksAceAsJinLiAndOpponentMvp() {
         when(gameData.championName(anyInt())).thenReturn("阿狸");
         Match m = match();
         m.setWinnerTeamId(200);
-
-        Map<String, Object> s = builder.build(m, participants(), roster(),
+        FleetGameSummary summary = summaryService.build(m, participants(), roster(),
                 List.of(award(7L, "MVP"), award(4L, "ACE")));
+
+        Map<String, Object> s = builder.build(summary);
 
         assertThat(s.get("result")).isEqualTo("败北");
         assertThat(s.get("score")).isEqualTo("32:19");
@@ -156,7 +162,7 @@ class PostGameSummaryBuilderTest {
         assertThat(oppMvp.get("title")).isEqualTo("MVP");
     }
 
-    /** 用例：stats_json 缺失/损坏时数值归 0，不抛错（老数据兜底） */
+    /** 用例：stats_json 缺失/损坏的行数值归 0（摘要层兜底已测，此处验证投影透传） */
     @Test
     @SuppressWarnings("unchecked")
     void build_brokenStatsJson_defaultsToZero() {
@@ -164,9 +170,9 @@ class PostGameSummaryBuilderTest {
         List<MatchParticipant> parts = List.of(
                 part(1, "无数据选手", 103, 100, 3, 5, 4, null),
                 part(6, "损坏选手", 59, 200, 2, 4, 3, "{not-json"));
-        Map<String, TeamRosterService.RosterMember> empty = Map.of();
+        FleetGameSummary summary = summaryService.build(match(), parts, Map.of(), List.of());
 
-        Map<String, Object> s = builder.build(match(), parts, empty, List.of());
+        Map<String, Object> s = builder.build(summary);
 
         List<Map<String, Object>> main = (List<Map<String, Object>>) s.get("mainTeam");
         assertThat(main).hasSize(1);
