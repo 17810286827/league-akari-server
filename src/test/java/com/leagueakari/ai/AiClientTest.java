@@ -99,6 +99,73 @@ class AiClientTest {
 
     // ==================== 非流式 call ====================
 
+    /** 用例（T7 重载）：空正文自动重试——首次空、第二次有正文 → 返回正文且共发 2 次请求 */
+    @Test
+    void callWithRetry_retriesOnEmptyContent() throws Exception {
+        CloseableHttpResponse empty = mockResponseCapture(200, emptyBody());
+        CloseableHttpResponse ok = mockResponseCapture(200, contentBody("重试后的正文"));
+        when(httpClient.execute(any(HttpPost.class))).thenReturn(empty).thenReturn(ok);
+
+        String result = client.call(plainRequest(), "system", "user", "ctx", 2);
+
+        org.assertj.core.api.Assertions.assertThat(result).contains("重试后的正文");
+        org.mockito.Mockito.verify(httpClient, org.mockito.Mockito.times(2)).execute(any(HttpPost.class));
+    }
+
+    /** 用例（T7 重载）：重试耗尽仍空 → 返回 null（降级语义由调用方决定） */
+    @Test
+    void callWithRetry_returnsNullWhenAlwaysEmpty() throws Exception {
+        when(httpClient.execute(any(HttpPost.class))).thenAnswer(inv -> {
+            try {
+                return mockResponseCapture(200, emptyBody());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        String result = client.call(plainRequest(), "system", "user", "ctx", 2);
+
+        org.assertj.core.api.Assertions.assertThat(result).isNull();
+        org.mockito.Mockito.verify(httpClient, org.mockito.Mockito.times(2)).execute(any(HttpPost.class));
+    }
+
+    /** 用例（T7 重载）：API Key 未配置 → 前置校验直接抛，零请求发出 */
+    @Test
+    void callWithRetry_failsFastWithoutApiKey() throws Exception {
+        AiProperties noKey = new AiProperties();
+        noKey.setBaseUrl("https://ai.test/v1");
+        noKey.setApiKey("");
+        AiClient keyless = new AiClient(noKey, httpClient, new ObjectMapper());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> keyless.call(plainRequest(), "system", "user", "ctx", 2))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("API Key");
+        org.mockito.Mockito.verify(httpClient, org.mockito.Mockito.never()).execute(any(HttpPost.class));
+    }
+
+    /** 构造独立的 mock 响应实例（链式 thenReturn 需要两个不同实例） */
+    private CloseableHttpResponse mockResponseCapture(int status, String body) throws Exception {
+        CloseableHttpResponse response = mock(CloseableHttpResponse.class);
+        when(response.getCode()).thenReturn(status);
+        HttpEntity entity = mock(HttpEntity.class);
+        when(entity.getContent()).thenAnswer(inv ->
+                new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
+        when(response.getEntity()).thenReturn(entity);
+        return response;
+    }
+
+    /** 空正文响应体（choices[0].content 为空串） */
+    private String emptyBody() {
+        return "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\"}}]}";
+    }
+
+    /** 正常正文响应体 */
+    private String contentBody(String content) {
+        return "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"" + content + "\"}}]}";
+    }
+
+
     /** 用例：请求打到 baseUrl + /chat/completions，带 Bearer 鉴权与浏览器 UA（Cloudflare 防护） */
     @Test
     void call_sendsAuthAndBrowserUaHeaders() throws Exception {

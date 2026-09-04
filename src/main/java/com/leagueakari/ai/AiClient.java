@@ -28,8 +28,10 @@ import java.util.Map;
  * 统一收口三个业务场景（单局分析/周报锐评/局后锐评）原先各自手写的 chat/completions 调用。
  * <p>职责边界：只管连接级事务——URL 拼接、Bearer 鉴权、浏览器 UA（Cloudflare 防护，
  * 无 UA 会被 403/503 拦截）、payload 组装、HTTP 错误转 IllegalStateException、
- * 响应/SSE 解析。<b>不感知业务场景</b>：采样参数由调用方经 {@link AiCompletionRequest}
- * 显式传入；空正文重试、JVM 缓存、提示词加载等业务策略留在各业务服务。</p>
+ * 响应/SSE 解析、API Key 前置校验。<b>不感知业务场景</b>：采样参数由调用方经
+ * {@link AiCompletionRequest} 显式传入；JVM 缓存、提示词加载（见 PromptLoader）等
+ * 业务策略留在各业务服务。传输层可靠性原语（空正文重试）由 {@link #call} 重载提供
+ * （架构清理 T7：与连接重试同类，住客户端）。</p>
  * <p>HTTP 走全局连接池 HttpClient（见 HttpClientConfig：读超时 300s、
  * disableAutomaticRetries 防 POST 重复计费）；流式调用由调用方在其专用线程池中执行。</p>
  */
@@ -118,6 +120,45 @@ public class AiClient {
             log.error("AI response parse failed: context={}", logContext, e);
             throw new IllegalStateException("AI 返回数据异常，请稍后重试");
         }
+    }
+
+
+    /**
+     * 带空正文重试的非流式调用（传输层可靠性原语）：正文为空（推理模型把预算耗在
+     * 思维链、finish_reason=length）时自动重试，共最多 {@code maxAttempts} 次；
+     * 全部尝试后仍为空返回 null（调用方决定失败语义，如局后锐评的缺席提示降级）。
+     * <p>API Key 前置校验：未配置直接抛 IllegalStateException（三处调用方各自的
+     * 校验收敛到此，消除三个真相来源）。</p>
+     *
+     * @param maxAttempts 最大尝试次数（含首次；如 2 = 首次 + 1 次重试）
+     */
+    public String call(AiCompletionRequest request, String systemPrompt, String userContent,
+            String logContext, int maxAttempts) {
+        requireApiKey();
+        String comment = null;
+        for (int attempt = 1; attempt <= maxAttempts && comment == null; attempt++) {
+            comment = call(request, systemPrompt, userContent, logContext);
+            if (comment == null) {
+                log.warn("AI empty content, retrying: context={}, attempt={}/{}",
+                        logContext, attempt, maxAttempts);
+            }
+        }
+        return comment;
+    }
+
+    /** API Key 前置校验：未配置抛 IllegalStateException（调用方的统一拦截点） */
+    private void requireApiKey() {
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalStateException("AI API Key 未配置，无法调用大模型");
+        }
+    }
+
+    /**
+     * API Key 是否已配置（流式场景的前置校验入口，如单局分析在 SSE 流建立前拦截）：
+     * 与 {@link #call} 重载内的校验同源，消除各服务自判 Key 状态的真相分裂
+     */
+    public boolean isConfigured() {
+        return apiKey != null && !apiKey.isBlank();
     }
 
     /**

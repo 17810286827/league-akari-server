@@ -61,7 +61,8 @@ class AiAnalysisServiceTest {
         // promptFile 指向不存在的文件：走内置默认提示词，避免依赖 classpath 资源
         service = new AiAnalysisService(
                 aiProps("test-key", false),
-                matchQueryService, objectMapper, aiClient, gameDataService, Runnable::run);
+                matchQueryService, objectMapper, aiClient, new com.leagueakari.ai.PromptLoader(),
+                gameDataService, Runnable::run);
         events.clear();
     }
 
@@ -320,19 +321,18 @@ class AiAnalysisServiceTest {
 
     @Test
     void validateFailsWithoutApiKey() {
-        // API Key 未配置：前置校验直接抛异常（由全局处理器转 503）
-        AiAnalysisService noKey = new AiAnalysisService(
-                aiProps("", false),
-                matchQueryService, new ObjectMapper(), aiClient, gameDataService, Runnable::run);
+        // API Key 未配置（Key 状态由 AiClient.isConfigured 提供，架构清理 T7）：前置校验直接抛
+        when(aiClient.isConfigured()).thenReturn(false);
 
-        assertThatThrownBy(() -> noKey.validateAndConfigured(123L))
+        assertThatThrownBy(() -> service.validateAndConfigured(123L))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("API Key");
     }
 
     @Test
     void validatePassesWithKeyAndExistingMatch() {
-        // 配置齐全 + 对局存在：校验通过不抛异常
+        // 配置齐全（Key 状态走 AiClient.isConfigured，架构清理 T7 统一真相）+ 对局存在：校验通过
+        when(aiClient.isConfigured()).thenReturn(true);
         when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
 
         service.validateAndConfigured(123L);
@@ -341,6 +341,7 @@ class AiAnalysisServiceTest {
     @Test
     void validateThrowsWhenMatchMissing() {
         // 对局不存在：前置校验抛 MatchNotFoundException（由全局处理器转 404）
+        when(aiClient.isConfigured()).thenReturn(true);
         when(matchQueryService.getMatchDetail(123L)).thenThrow(new MatchNotFoundException(123L));
 
         assertThatThrownBy(() -> service.validateAndConfigured(123L))

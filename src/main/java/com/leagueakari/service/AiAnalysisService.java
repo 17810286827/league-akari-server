@@ -3,6 +3,7 @@ package com.leagueakari.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.ai.AiClient;
+import com.leagueakari.ai.PromptLoader;
 import com.leagueakari.ai.AiCompletionRequest;
 import com.leagueakari.ai.AiStreamHandler;
 import com.leagueakari.config.AiProperties;
@@ -10,7 +11,6 @@ import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.util.ClientDisconnectDetector;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -42,9 +42,6 @@ public class AiAnalysisService {
     /** 缓存有效期：2 分钟（毫秒） */
     private static final long CACHE_TTL_MS = 2 * 60 * 1000L;
 
-    /** API Key（application.yml ai.api-key，环境变量 AI_API_KEY 可覆盖；前置校验用） */
-    private final String apiKey;
-
     /** 系统提示词文件路径（classpath，md 格式，可直接编辑） */
     private final String promptFile;
 
@@ -54,6 +51,8 @@ public class AiAnalysisService {
     private final MatchQueryService matchQueryService;
     private final ObjectMapper objectMapper;
     private final AiClient aiClient;
+    /** 提示词加载器：文件读取 + 内置默认回退（全项目唯一实现，架构清理 T7） */
+    private final PromptLoader promptLoader;
 
     /** 游戏资源数据服务：英雄/装备 ID → 中文名（模型调用前转换，避免模型瞎猜 ID） */
     private final GameDataService gameDataService;
@@ -73,9 +72,10 @@ public class AiAnalysisService {
             MatchQueryService matchQueryService,
             ObjectMapper objectMapper,
             AiClient aiClient,
+            PromptLoader promptLoader,
             GameDataService gameDataService,
             Executor aiStreamExecutor) {
-        this.apiKey = ai.getApiKey();
+        this.promptLoader = promptLoader;
         this.promptFile = ai.getPromptFile();
         // 单局分析场景采样参数：penalty 抑制长文本重复，thinking 可经配置开启（前端灰字展示思维链）
         this.completionRequest = new AiCompletionRequest(
@@ -100,7 +100,8 @@ public class AiAnalysisService {
      */
     public void validateAndConfigured(Long gameId) {
         long startTime = System.currentTimeMillis();
-        if (apiKey == null || apiKey.isBlank()) {
+        // Key 状态判定统一走 AiClient（架构清理 T7：消除各服务自判的真相分裂）
+        if (!aiClient.isConfigured()) {
             log.error("AI API key not configured, analysis skipped: gameId={}", gameId);
             throw new IllegalStateException("AI API Key 未配置，无法进行对局分析");
         }
@@ -159,8 +160,10 @@ public class AiAnalysisService {
             // 取对局详情并组装紧凑数据摘要（只提取分析所需字段，控制 prompt 体积）
             MatchDetailResponse detail = matchQueryService.getMatchDetail(gameId);
             String matchSummary = buildMatchSummary(detail);
-            // 系统提示词：每次读取 md 文件（用户编辑后即时生效，无需重启）
-            String systemPrompt = loadSystemPrompt();
+            // 提示词：文件读取 + 内置默认回退，每次读取 md 文件（用户编辑后即时生效，无需重启）
+            String systemPrompt = promptLoader.load(promptFile,
+                    "你是一名资深的英雄联盟对局分析师，请根据提供的对局数据，用中文分析查询玩家（self）的本局表现，"
+                            + "包含 KDA/经济/伤害/承伤/关键表现等维度，最后给出总结评分。");
             log.info("AI analysis payload prepared: gameId={}, summaryLength={}, elapsed={}ms",
                     gameId, matchSummary.length(), System.currentTimeMillis() - startTime);
 
@@ -320,23 +323,6 @@ public class AiAnalysisService {
         if (stats.has(statsKey) && !stats.get(statsKey).isNull()) {
             player.put(shortKey, stats.get(statsKey).asDouble());
         }
-    }
-
-    /**
-     * 读取系统提示词文件（classpath，UTF-8）；
-     * 文件缺失时返回内置默认提示词，保证接口可用
-     */
-    private String loadSystemPrompt() {
-        try {
-            ClassPathResource resource = new ClassPathResource(promptFile);
-            if (resource.exists()) {
-                return new String(resource.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            }
-        } catch (Exception e) {
-            log.warn("Failed to load AI prompt file {}: {}", promptFile, e.getMessage());
-        }
-        return "你是一名资深的英雄联盟对局分析师，请根据提供的对局数据，用中文分析查询玩家（self）的本局表现，"
-                + "包含 KDA/经济/伤害/承伤/关键表现等维度，最后给出总结评分。";
     }
 
     /**

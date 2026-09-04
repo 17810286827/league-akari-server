@@ -2,14 +2,13 @@ package com.leagueakari.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.ai.AiClient;
+import com.leagueakari.ai.PromptLoader;
 import com.leagueakari.ai.AiCompletionRequest;
 import com.leagueakari.config.AiProperties;
 import com.leagueakari.dto.WeeklyReportResponse;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -35,8 +34,8 @@ public class WeeklyAiCommentService {
     /** 缓存有效期：10 分钟（毫秒）。周报数据一周一变，10 分钟足够覆盖页内反复刷新 */
     private static final long CACHE_TTL_MS = 10 * 60 * 1000L;
 
-    /** API Key（环境变量 AI_API_KEY；前置校验用） */
-    private final String apiKey;
+    /** 提示词加载器：文件读取 + 内置默认回退（全项目唯一实现，架构清理 T7） */
+    private final PromptLoader promptLoader;
 
     /** 周锐评提示词文件（classpath，可直接编辑，改动即时生效） */
     private final String promptFile;
@@ -54,9 +53,10 @@ public class WeeklyAiCommentService {
     public WeeklyAiCommentService(
             AiProperties ai,
             AiClient aiClient,
-            ObjectMapper objectMapper) {
-        this.apiKey = ai.getApiKey();
+            ObjectMapper objectMapper,
+            PromptLoader promptLoader) {
         this.promptFile = ai.getWeeklyPromptFile();
+        this.promptLoader = promptLoader;
         // 周锐评场景采样参数：无 penalty（保持既有采样行为），关闭思考直出正文
         this.completionRequest = new AiCompletionRequest(
                 ai.getModel(), ai.getTemperature(),
@@ -73,10 +73,7 @@ public class WeeklyAiCommentService {
      * @throws IllegalStateException AI Key 未配置 / 接口失败 / 重试后正文仍为空
      */
     public String generateComment(WeeklyReportResponse report) {
-        if (apiKey == null || apiKey.isBlank()) {
-            log.warn("Weekly AI comment skipped: API key not configured");
-            throw new IllegalStateException("AI API Key 未配置，无法生成周报锐评");
-        }
+        // apiKey 前置校验收敛到 AiClient 重载（架构清理 T7）；缓存命中（历史成功产物）不受 Key 状态影响
         // 缓存命中：同一周直接复用（10 分钟内）
         CacheEntry cached = cache.get(report.getWeekLabel());
         if (cached != null && System.currentTimeMillis() - cached.timestamp() < CACHE_TTL_MS) {
@@ -86,17 +83,13 @@ public class WeeklyAiCommentService {
         cache.remove(report.getWeekLabel());
 
         String summary = buildSummary(report);
-        String systemPrompt = loadPrompt();
-        // 空正文重试：推理模型偶发把输出预算耗在思维链上（finish_reason=length，正文为空），
-        // 重试一次通常能拿到正文；两次都为空才判定失败
-        String comment = null;
-        for (int attempt = 1; attempt <= 2 && comment == null; attempt++) {
-            comment = aiClient.call(completionRequest, systemPrompt, summary,
-                    "weekly:" + report.getWeekLabel());
-            if (comment == null) {
-                log.warn("Weekly AI comment empty, retrying: attempt={}/2, week={}", attempt, report.getWeekLabel());
-            }
-        }
+        // 提示词：文件读取 + 内置默认回退（PromptLoader 唯一实现）
+        String systemPrompt = promptLoader.load(promptFile,
+                "你是车队战绩群的锐评官，根据提供的周报摘要，用中文写一段 100 字以内的毒舌但善意的锐评，"
+                        + "直接点名 MVP 与战犯，语气幽默，不要使用 markdown 格式。");
+        // apiKey 前置校验与空正文重试由 AiClient 重载承载（架构清理 T7；2 = 首次 + 1 次重试）
+        String comment = aiClient.call(completionRequest, systemPrompt, summary,
+                "weekly:" + report.getWeekLabel(), 2);
         if (comment == null) {
             throw new IllegalStateException("AI 返回内容为空，请稍后重试");
         }
@@ -165,17 +158,4 @@ public class WeeklyAiCommentService {
         }
     }
 
-    /** 读取周锐评提示词（classpath；缺失时回退内置默认，保证接口可用） */
-    private String loadPrompt() {
-        try {
-            ClassPathResource resource = new ClassPathResource(promptFile);
-            if (resource.exists()) {
-                return new String(resource.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            }
-        } catch (Exception e) {
-            log.warn("Failed to load weekly prompt file {}: {}", promptFile, e.getMessage());
-        }
-        return "你是车队战绩群的锐评官，根据提供的周报摘要，用中文写一段 100 字以内的毒舌但善意的锐评，"
-                + "直接点名 MVP 与战犯，语气幽默，不要使用 markdown 格式。";
-    }
 }

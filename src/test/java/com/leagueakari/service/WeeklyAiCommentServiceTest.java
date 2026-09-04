@@ -13,6 +13,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -38,7 +39,7 @@ class WeeklyAiCommentServiceTest {
         props.setWeeklyPromptFile("ai/weekly-prompt.md");
         props.setTemperature(1.0);
         props.setWeeklyMaxTokens(512);
-        return new WeeklyAiCommentService(props, aiClient, new ObjectMapper());
+        return new WeeklyAiCommentService(props, aiClient, new ObjectMapper(), new com.leagueakari.ai.PromptLoader());
     }
 
     /** 构造最小周报：仅含 AI 摘要会用到的字段 */
@@ -65,25 +66,27 @@ class WeeklyAiCommentServiceTest {
 
     /** 用例：API Key 未配置时抛状态异常（调用方降级为 null） */
     @Test
-    void generateComment_throwsWhenKeyMissing() {
+    void generateComment_keyGateLivesInAiClient() {
+        // Key 状态判定已下沉 AiClient（架构清理 T7）：服务不再自判——
+        // mock 重载照常返回正文即透出，无 Key 拦截由 AiClient 承担（AiClientTest 锁定）
         WeeklyAiCommentService noKey = serviceWithKey("");
+        when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt())).thenReturn("正文照常");
 
-        assertThatThrownBy(() -> noKey.generateComment(report("2026-08-24 ~ 2026-08-30")))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("API Key 未配置");
+        String comment = noKey.generateComment(report("2026-08-24 ~ 2026-08-30"));
+        assertThat(comment).contains("正文照常");
     }
 
     /** 用例：AI 返回正文 → 透出给调用方；调用摘要里带上周报素材（周标签/榜单/名场面） */
     @Test
     void generateComment_returnsAiContentAndSendsWeeklySummary() throws Exception {
-        when(aiClient.call(any(), anyString(), anyString(), anyString())).thenReturn("本周赌书封神，鬼子战犯实锤");
+        when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt())).thenReturn("本周赌书封神，鬼子战犯实锤");
 
         String comment = service.generateComment(report("2026-08-24 ~ 2026-08-30"));
 
         assertThat(comment).isEqualTo("本周赌书封神，鬼子战犯实锤");
         // 摘要校验：user 消息里带上周标签与榜单素材（锐评点名用）
         ArgumentCaptor<String> userContent = ArgumentCaptor.forClass(String.class);
-        verify(aiClient).call(any(), anyString(), userContent.capture(), anyString());
+        verify(aiClient).call(any(), anyString(), userContent.capture(), anyString(), anyInt());
         assertThat(userContent.getValue())
                 .contains("2026-08-24 ~ 2026-08-30").contains("MVP").contains("手裂鬼子");
     }
@@ -91,7 +94,7 @@ class WeeklyAiCommentServiceTest {
     /** 用例：AI 调用失败（AiClient 转 IllegalStateException）→ 原样上抛（调用方降级） */
     @Test
     void generateComment_propagatesAiFailure() {
-        when(aiClient.call(any(), anyString(), anyString(), anyString()))
+        when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt()))
                 .thenThrow(new IllegalStateException("AI 接口调用失败（HTTP 502），请稍后重试"));
 
         assertThatThrownBy(() -> service.generateComment(report("2026-08-24 ~ 2026-08-30")))
@@ -102,39 +105,28 @@ class WeeklyAiCommentServiceTest {
     /** 用例：同一周缓存命中——第二次生成不再调 AI（避免重复计费） */
     @Test
     void generateComment_cachesPerWeek() {
-        when(aiClient.call(any(), anyString(), anyString(), anyString())).thenReturn("锐评");
+        when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt())).thenReturn("锐评");
 
         service.generateComment(report("2026-08-24 ~ 2026-08-30"));
         service.generateComment(report("2026-08-24 ~ 2026-08-30"));
 
-        verify(aiClient, times(1)).call(any(), anyString(), anyString(), anyString());
+        verify(aiClient, times(1)).call(any(), anyString(), anyString(), anyString(), anyInt());
         // 换一周则重新生成
         service.generateComment(report("2026-08-31 ~ 2026-09-06"));
-        verify(aiClient, times(2)).call(any(), anyString(), anyString(), anyString());
+        verify(aiClient, times(2)).call(any(), anyString(), anyString(), anyString(), anyInt());
     }
 
     /**
-     * 用例：正文为空（推理模型把预算耗在思维链，finish_reason=length）自动重试一次——
-     * 第一次空、第二次有正文 → 返回正文且共调用 2 次
+     * 用例：空正文重试已下沉为 AiClient 重载原语（架构清理 T7）——
+     * 重载返回 null（重试耗尽）→ 本层抛状态异常（调用方降级为 null）
      */
     @Test
-    void generateComment_retriesOnceOnEmptyContent() {
-        when(aiClient.call(any(), anyString(), anyString(), anyString())).thenReturn(null, "重试后的锐评");
-
-        String comment = service.generateComment(report("2026-08-24 ~ 2026-08-30"));
-
-        assertThat(comment).isEqualTo("重试后的锐评");
-        verify(aiClient, times(2)).call(any(), anyString(), anyString(), anyString());
-    }
-
-    /** 用例：两次调用正文都为空 → 抛状态异常（调用方降级为 null） */
-    @Test
     void generateComment_throwsWhenBothAttemptsEmpty() {
-        when(aiClient.call(any(), anyString(), anyString(), anyString())).thenReturn(null, (String) null);
+        when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt())).thenReturn(null);
 
         assertThatThrownBy(() -> service.generateComment(report("2026-08-24 ~ 2026-08-30")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("内容为空");
-        verify(aiClient, times(2)).call(any(), anyString(), anyString(), anyString());
+        verify(aiClient, times(1)).call(any(), anyString(), anyString(), anyString(), anyInt());
     }
 }
