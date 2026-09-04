@@ -202,11 +202,10 @@ class FleetGameSummaryServiceTest {
         assertThat(s.getMainDragonKills()).isEqualTo(3);
         assertThat(s.getMainBaronKills()).isEqualTo(1);
         assertThat(s.getMainFirstBlood()).isTrue();
-        // 对方资源：塔 2、龙 1、大龙 0、一血 false
+        // 对方资源：塔 2、龙 1、大龙 0（对方一血 = !主队一血，无独立槽位）
         assertThat(s.getOtherTowerKills()).isEqualTo(2);
         assertThat(s.getOtherDragonKills()).isEqualTo(1);
         assertThat(s.getOtherBaronKills()).isZero();
-        assertThat(s.getOtherFirstBlood()).isFalse();
     }
 
     /** 用例：10 人伤害/承伤合计（战报图占比分母），从 stats 求和 */

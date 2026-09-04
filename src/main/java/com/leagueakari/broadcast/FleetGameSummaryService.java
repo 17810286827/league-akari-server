@@ -212,9 +212,7 @@ public class FleetGameSummaryService {
                     s.setOtherTowerKills(t.path("towerKills").asInt(-1));
                     s.setOtherDragonKills(t.path("dragonKills").asInt(-1));
                     s.setOtherBaronKills(t.path("baronKills").asInt(-1));
-                    if (t.hasNonNull("firstBlood")) {
-                        s.setOtherFirstBlood(t.path("firstBlood").asBoolean());
-                    }
+                    // 对方一血 = !主队一血，摘要只保留主队槽位（渲染规格无对方独立字段）
                 }
             }
         } catch (Exception e) {
