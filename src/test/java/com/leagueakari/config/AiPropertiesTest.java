@@ -39,9 +39,9 @@ class AiPropertiesTest {
 
         // 网关与模型分工（决策见 docs/adr/0004）：
         // 分析/周报用 model；局后播报独立键 post-game-model 解耦
-        assertThat(props.getBaseUrl()).isEqualTo("https://opencode.ai/zen/go/v1");
-        assertThat(props.getModel()).isEqualTo("deepseek-v4-flash");
-        assertThat(props.getPostGameModel()).isEqualTo("deepseek-v4-flash");
+        assertThat(props.getBaseUrl()).isEqualTo("https://yt.19851117.xyz/v1");
+        assertThat(props.getModel()).isEqualTo("gemini-2.5-flash");
+        assertThat(props.getPostGameModel()).isEqualTo("gemini-2.5-flash");
 
         // 提示词文件三件套必须齐全（weekly-prompt-file 曾缺失、靠代码默认值兜底，现补入 yml）
         assertThat(props.getPromptFile()).isEqualTo("ai/system-prompt.md");
@@ -53,8 +53,8 @@ class AiPropertiesTest {
         assertThat(props.getTemperature()).isEqualTo(1.0);
         assertThat(props.getFrequencyPenalty()).isEqualTo(0.6);
         assertThat(props.getPresencePenalty()).isEqualTo(0.3);
-        assertThat(props.getMaxTokens()).isEqualTo(3072);
-        assertThat(props.getWeeklyMaxTokens()).isEqualTo(1536);
+        assertThat(props.getMaxTokens()).isEqualTo(4096);
+        assertThat(props.getWeeklyMaxTokens()).isEqualTo(4096);
         assertThat(props.getPostGameMaxTokens()).isEqualTo(2048);
     }
 
@@ -63,11 +63,12 @@ class AiPropertiesTest {
     void scenarioKeysShareBaseParams() throws Exception {
         AiProperties props = bindFromApplicationYml();
 
-        // 场景差异只在 model 与 max-tokens：基础参数（网关/温度）全场景共享
+        // 场景差异只在 model 与 max-tokens：基础参数（网关/温度）全场景共享；
+        // 分析与周报上限当前持平（4096），局后正文短（2048）
         assertThat(props.getModel()).isNotBlank();
         assertThat(props.getPostGameModel()).isNotBlank();
         assertThat(props.getTemperature()).isEqualTo(props.getTemperature());
-        assertThat(props.getMaxTokens()).isGreaterThan(props.getWeeklyMaxTokens());
+        assertThat(props.getMaxTokens()).isGreaterThanOrEqualTo(props.getWeeklyMaxTokens());
         assertThat(props.getMaxTokens()).isGreaterThan(props.getPostGameMaxTokens());
     }
 }
