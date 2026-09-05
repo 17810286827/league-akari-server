@@ -58,8 +58,10 @@ class TeamControllerIntegrationTest {
     private RiotMatchHistoryService backfillService;
 
     /**
-     * AI 周锐评是外部 I/O：集成测试固定返回值，保证断言确定性
-     * （本机若配了 AI_API_KEY，真实调用会产生非确定内容并拖慢测试）
+     * AI 周锐评是外部 I/O：mock 保证 SSE 流式端点不产生真实 AI 调用
+     * （本机若配了 AI_API_KEY，真实调用会产生非确定内容并拖慢测试）；
+     * streamComment 默认 mock 为空实现（异步无事件推送），SSE 契约细节由
+     * WeeklyAiCommentServiceTest 覆盖，集成测试只验证 HTTP 层装配
      */
     @MockBean
     private WeeklyAiCommentService aiCommentService;
@@ -137,13 +139,11 @@ class TeamControllerIntegrationTest {
 
     /**
      * 用例：周报只统计 date 所在周的车队对局（真实 SQL 范围过滤）——
-     * 入库本周 2 局 + 下周 1 局，周报 gameCount=2；响应契约 {data:{weekLabel, overview…}}
+     * 入库本周 2 局 + 下周 1 局，周报 gameCount=2；响应契约 {data:{weekLabel, overview…}}。
+     * 统计接口不再含 AI 锐评（已拆分到独立 SSE 端点，工单 #33）
      */
     @Test
     void weekly_onlyIncludesRequestedWeek() throws Exception {
-        // 周报主体 + AI 锐评透传（AI 服务已被 mock，返回值固定）
-        when(aiCommentService.generateComment(org.mockito.ArgumentMatchers.any()))
-                .thenReturn("测试锐评");
         // 本周两局（甲乙同队全胜）+ 下周一局（不应计入）
         mockMvc.perform(post("/api/matches").contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
@@ -164,8 +164,8 @@ class TeamControllerIntegrationTest {
                 .andExpect(jsonPath("$.data.overview.gameCount").value(2))
                 .andExpect(jsonPath("$.data.overview.winCount").value(4))
                 .andExpect(jsonPath("$.data.attendanceBoard[0].value").value(2))
-                // AI 锐评经 TeamStatsService 透传（mock 固定值，验证装配与降级链路之外的正常路径）
-                .andExpect(jsonPath("$.data.aiComment").value("测试锐评"));
+                // 锐评已拆分到流式端点：统计响应恒不含锐评字段
+                .andExpect(jsonPath("$.data.aiComment").doesNotExist());
     }
 
     /** 用例：roster 未配置时周报接口返回业务码 1101 与明确提示（全局异常处理器转换，HTTP 200） */
@@ -232,5 +232,24 @@ class TeamControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
                 .andExpect(jsonPath("$.data.started").value(true));
+    }
+
+    /**
+     * 用例：周报锐评 SSE 端点 Key 前置拦截（工单 #33）——
+     * Key 未配置时在流建立前拦截，返回统一 JSON 信封（业务码 4101，HTTP 200）。
+     * 流式事件契约由 WeeklyAiCommentServiceTest 覆盖（MockMvc 不等待异步分发，
+     * SSE 响应头无法同步断言，本测试只验同步可观测的拦截路径）
+     */
+    @Test
+    void weeklyAiComment_keyGateReturnsJsonEnvelope() throws Exception {
+        // Key 未配置：流建立前拦截
+        org.mockito.Mockito.doThrow(new com.leagueakari.common.exception.BizException(
+                        com.leagueakari.common.exception.ErrorCode.AI_KEY_MISSING,
+                        "AI API Key 未配置，无法生成周报锐评"))
+                .when(aiCommentService).validateAndConfigured();
+
+        mockMvc.perform(get("/api/team/weekly/ai-comment"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(4101));
     }
 }

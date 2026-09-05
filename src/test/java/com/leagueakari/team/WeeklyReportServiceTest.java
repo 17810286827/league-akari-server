@@ -16,7 +16,7 @@ import static org.mockito.Mockito.when;
 /**
  * WeeklyReportService 单元测试：车队周报的全部业务口径
  * <p>覆盖默认周边界、总览人次统计、MVP/战犯/送头王/Carry/绝活各榜单排序、
- * 名场面抽取与 AI 锐评优雅降级。断言数值与拆分前 TeamStatsServiceTest 逐字一致。</p>
+ * 名场面抽取。断言数值与拆分前 TeamStatsServiceTest 逐字一致（AI 锐评已拆分到流式服务，工单 #33）。</p>
  */
 class WeeklyReportServiceTest extends TeamStatsTestBase {
 
@@ -57,7 +57,6 @@ class WeeklyReportServiceTest extends TeamStatsTestBase {
         when(participantMapper.selectList(any())).thenReturn(participants);
         when(mvpMapper.selectList(any())).thenReturn(List.of());
         stubScoresByGame(Map.of());
-        when(aiCommentService.generateComment(any())).thenReturn("锐评");
 
         WeeklyReportResponse report = svc.weeklyReport(weekDay());
 
@@ -71,7 +70,8 @@ class WeeklyReportServiceTest extends TeamStatsTestBase {
         assertThat(report.getOverview().getBusiestDayGames()).isEqualTo(2);
         assertThat(report.getOverview().getActiveMembers())
                 .containsExactly("赌书消得泼茶香#iKun", "手裂鬼子#tw2");
-        assertThat(report.getAiComment()).isEqualTo("锐评");
+        // 锐评已拆分到流式服务：统计响应恒不含锐评
+        assertThat(report.getAiComment()).isNull();
     }
 
     /** 用例：MVP 榜统计 MVP+SVP（落库为 ACE）次数，非车队成员不入榜 */
@@ -93,7 +93,6 @@ class WeeklyReportServiceTest extends TeamStatsTestBase {
                 award(2, 5, "MVP", 8.8),
                 award(2, 4, "ACE", 8.0)));
         stubScoresByGame(Map.of());
-        when(aiCommentService.generateComment(any())).thenReturn("锐评");
 
         WeeklyReportResponse report = svc.weeklyReport(weekDay());
 
@@ -122,7 +121,6 @@ class WeeklyReportServiceTest extends TeamStatsTestBase {
         stubScoresByGame(Map.of(
                 100L, Map.of("puuid-a", 9.0, "puuid-b", 5.0),
                 200L, Map.of("puuid-a", 7.0, "puuid-b", 3.0)));
-        when(aiCommentService.generateComment(any())).thenReturn("锐评");
 
         WeeklyReportResponse report = svc.weeklyReport(weekDay());
 
@@ -155,7 +153,6 @@ class WeeklyReportServiceTest extends TeamStatsTestBase {
                 participant(6, 3, "puuid-x", "路人乙", 84, 200, 8, 1, 2, true, 25000)));
         when(mvpMapper.selectList(any())).thenReturn(List.of());
         stubScoresByGame(Map.of());
-        when(aiCommentService.generateComment(any())).thenReturn("锐评");
 
         WeeklyReportResponse report = svc.weeklyReport(weekDay());
 
@@ -179,7 +176,6 @@ class WeeklyReportServiceTest extends TeamStatsTestBase {
                 participant(3, 1, "puuid-c", "路人甲", 266, 100, 2, 6, 1, true, 9000)));
         when(mvpMapper.selectList(any())).thenReturn(List.of());
         stubScoresByGame(Map.of());
-        when(aiCommentService.generateComment(any())).thenReturn("锐评");
 
         WeeklyReportResponse report = svc.weeklyReport(weekDay());
 
@@ -212,7 +208,6 @@ class WeeklyReportServiceTest extends TeamStatsTestBase {
         when(gameDataService.championName(103)).thenReturn("阿狸");
         when(gameDataService.championName(117)).thenReturn("盲僧");
         when(gameDataService.championName(266)).thenReturn("锐雯");
-        when(aiCommentService.generateComment(any())).thenReturn("锐评");
 
         WeeklyReportResponse report = svc.weeklyReport(weekDay());
 
@@ -242,7 +237,6 @@ class WeeklyReportServiceTest extends TeamStatsTestBase {
                 participant(4, 2, "puuid-b", "手裂鬼子", 84, 200, 2, 8, 2, false, 9000)));
         when(mvpMapper.selectList(any())).thenReturn(List.of());
         stubScoresByGame(Map.of());
-        when(aiCommentService.generateComment(any())).thenReturn("锐评");
         when(gameDataService.championName(117)).thenReturn("盲僧");
         when(gameDataService.championName(266)).thenReturn("锐雯");
 
@@ -281,9 +275,9 @@ class WeeklyReportServiceTest extends TeamStatsTestBase {
         assertThat(report.getHighlights().getWorstStreak().getValue()).isEqualTo(1.0);
     }
 
-    /** 用例：AI 锐评失败时周报主体照常返回，aiComment 为 null（优雅降级） */
+    /** 用例：周报统计不再编排 AI 锐评（已拆分到独立流式服务，工单 #33）——aiComment 恒为 null */
     @Test
-    void weeklyReport_gracefulWhenAiCommentFails() {
+    void weeklyReport_noAiCommentOrchestration() {
         WeeklyReportService svc = weeklyService();
         Match g1 = match(1, 100L, ms(8, 26, 14), 1200, "KIWI", 100);
         when(matchMapper.selectList(any())).thenReturn(List.of(g1));
@@ -292,8 +286,6 @@ class WeeklyReportServiceTest extends TeamStatsTestBase {
                 participant(2, 1, "puuid-b", "手裂鬼子", 117, 100, 3, 4, 4, true, 15000)));
         when(mvpMapper.selectList(any())).thenReturn(List.of());
         stubScoresByGame(Map.of());
-        when(aiCommentService.generateComment(any()))
-                .thenThrow(new IllegalStateException("AI 接口调用失败"));
 
         WeeklyReportResponse report = svc.weeklyReport(weekDay());
 

@@ -19,9 +19,11 @@ import java.util.Map;
 
 /**
  * 车队周报聚合服务（TeamStatsService 拆分后的周报入口）：
- * 周边界归属、总览、七榜单装配、名场面抽取与 AI 锐评编排
+ * 周边界归属、总览、七榜单装配、名场面抽取。
  * <p>装载与榜单口径分别委托 FleetGameLoader 与 BoardEngine（共享组件）；
- * 本服务只保留周报特有的总览/名场面/锐评降级编排。</p>
+ * 本服务只保留周报特有的总览/名场面编排。</p>
+ * <p>AI 锐评已拆分到独立 SSE 流式服务（{@link WeeklyAiCommentService}，工单 #33 / ADR 0007）：
+ * 周报统计接口不再同步等待 AI 生成，锐评由前端经 /weekly/ai-comment 端点流式拉取。</p>
  */
 @Slf4j
 @Service
@@ -35,17 +37,17 @@ public class WeeklyReportService {
     /** 七榜单计算引擎：与榜单中心共享口径 */
     private final BoardEngine boardEngine;
     private final MatchTimelineService timelineService;
-    private final WeeklyAiCommentService aiCommentService;
     private final GameDataService gameDataService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
     /**
      * 车队周报：默认统计"上一个自然周"（今天回退 7 天所在周），
-     * 传入任意日期则统计该日期所在周。总览/六个榜单/名场面 + AI 锐评（失败降级为 null）
+     * 传入任意日期则统计该日期所在周。总览/六个榜单/名场面（不含 AI 锐评，
+     * 锐评经独立 SSE 端点流式生成，见 WeeklyAiCommentService）
      *
      * @param anyDayOfWeek 该周内任意一天；null 表示上一周
-     * @return 完整周报
+     * @return 周报统计（aiComment 恒为 null，由流式锐评端点单独提供）
      * @throws BizException 车队名单未配置（1101），任一成员解析失败（1102）
      */
     public WeeklyReportResponse weeklyReport(LocalDate anyDayOfWeek) {
@@ -61,7 +63,7 @@ public class WeeklyReportService {
         log.info("Weekly report games: weekOf={}, fleetGames={}", range.getMonday(), fleetGames.size());
 
         BoardEngine.Boards boards = boardEngine.computeBoards(fleetGames, roster);
-        WeeklyReportResponse report = WeeklyReportResponse.builder()
+        return WeeklyReportResponse.builder()
                 .weekStartMs(range.getStartMs())
                 .weekEndMs(range.getEndMs())
                 .weekLabel(range.getMonday() + " ~ " + range.getMonday().plusDays(6))
@@ -76,13 +78,6 @@ public class WeeklyReportService {
                 .attendanceBoard(boards.getAttendance())
                 .highlights(extractHighlights(fleetGames, roster))
                 .build();
-        // AI 锐评为增强信息：失败降级为 null，不影响周报主体（关键容错点，记 warn）
-        try {
-            report.setAiComment(aiCommentService.generateComment(report));
-        } catch (Exception e) {
-            log.warn("Weekly AI comment failed, degrade to null: {}", e.getMessage());
-        }
-        return report;
     }
 
     /**

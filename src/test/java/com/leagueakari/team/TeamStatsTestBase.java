@@ -47,7 +47,6 @@ abstract class TeamStatsTestBase {
     protected final MatchMvpService mvpService = mock(MatchMvpService.class);
     protected final TeamRosterService rosterService = mock(TeamRosterService.class);
     protected final GameDataService gameDataService = mock(GameDataService.class);
-    protected final WeeklyAiCommentService aiCommentService = mock(WeeklyAiCommentService.class);
     protected final BaselineService baselineService = mock(BaselineService.class);
 
     /** 固定时钟：2026-09-06（周日）10:00 +08:00，当前周 = 08-31 ~ 09-06，默认周 = 上一周（08-30 ~ 09-05） */
@@ -70,7 +69,7 @@ abstract class TeamStatsTestBase {
     protected WeeklyReportService weeklyService() {
         TeamProperties props = props();
         return new WeeklyReportService(props, rosterService, loader(), engine(),
-                timelineService, aiCommentService, gameDataService, new ObjectMapper(), clock);
+                timelineService, gameDataService, new ObjectMapper(), clock);
     }
 
     /** 构造被测榜单服务（与周报共享装载器与榜单引擎） */

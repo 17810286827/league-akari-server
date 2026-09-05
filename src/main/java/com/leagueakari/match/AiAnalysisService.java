@@ -3,6 +3,7 @@ package com.leagueakari.match;
 import com.leagueakari.common.exception.ErrorCode;
 
 import com.leagueakari.common.exception.BizException;
+import com.leagueakari.common.web.SseEventSender;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,7 +14,6 @@ import com.leagueakari.ai.AiStreamHandler;
 import com.leagueakari.config.AiProperties;
 import com.leagueakari.dto.match.MatchDetailResponse;
 import com.leagueakari.entity.MatchParticipant;
-import com.leagueakari.common.web.ClientDisconnectDetector;
 import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -169,9 +169,9 @@ public class AiAnalysisService {
             if (cached != null && System.currentTimeMillis() - cached.getTimestamp() < CACHE_TTL_MS) {
                 log.info("AI analysis cache hit: gameId={}, elapsed={}ms",
                         gameId, System.currentTimeMillis() - startTime);
-                send(emitter, "start", Map.of("fromCache", true));
-                send(emitter, "chunk", Map.of("content", cached.getAnalysis()));
-                send(emitter, "done", Map.of());
+                SseEventSender.send(emitter, objectMapper, "start", Map.of("fromCache", true));
+                SseEventSender.send(emitter, objectMapper, "chunk", Map.of("content", cached.getAnalysis()));
+                SseEventSender.send(emitter, objectMapper, "done", Map.of());
                 emitter.complete();
                 log.info("AI analysis cache served: gameId={}, length={}, elapsed={}ms",
                         gameId, cached.getAnalysis().length(), System.currentTimeMillis() - startTime);
@@ -193,7 +193,7 @@ public class AiAnalysisService {
             // 先推送 start（含缓存标记），再逐块推送增量文本；
             // start 事件同时也是响应头的 flush 时机——前端收到响应头即代表执行到此处。
             // start 只推一次：后续零内容重试不会重复推送，前端不感知重试的发生
-            send(emitter, "start", Map.of("fromCache", false));
+            SseEventSender.send(emitter, objectMapper, "start", Map.of("fromCache", false));
             log.info("AI analysis start event sent: gameId={}, elapsed={}ms",
                     gameId, System.currentTimeMillis() - startTime);
             // 最终分析正文（content 拼接，写入缓存）；思考过程（reasoning）单独透传不进缓存
@@ -217,7 +217,7 @@ public class AiAnalysisService {
                         // 重试入口日志：重试对前端不可见（零内容失败，无内容重复风险）；
                         // 若首次尝试已推送思维链，先发 reasoning-reset 让前端清空缓冲
                         if (reasoningStreamed[0]) {
-                            send(emitter, "reasoning-reset", Map.of());
+                            SseEventSender.send(emitter, objectMapper, "reasoning-reset", Map.of());
                         }
                         log.warn("AI stream retrying: gameId={}, attempt={}/{}, reasoningStreamed={}",
                                 gameId, attempt, maxAttempts, reasoningStreamed[0]);
@@ -228,13 +228,13 @@ public class AiAnalysisService {
                                 public void onContent(String chunk) {
                                     full.append(chunk);
                                     contentStreamed[0] = true;
-                                    send(emitter, "chunk", Map.of("content", chunk));
+                                    SseEventSender.send(emitter, objectMapper, "chunk", Map.of("content", chunk));
                                 }
 
                                 @Override
                                 public void onReasoning(String chunk) {
                                     reasoningStreamed[0] = true;
-                                    send(emitter, "reasoning", Map.of("content", chunk));
+                                    SseEventSender.send(emitter, objectMapper, "reasoning", Map.of("content", chunk));
                                 }
                             }, "gameId=" + gameId);
                     // 流自然结束但正文为空（推理模型把预算耗尽）：与零内容失败同语义纳入重试
@@ -258,11 +258,11 @@ public class AiAnalysisService {
             // 完成：写入缓存（成功才缓存，失败不缓存下次重试）并推送 done
             // （被截断时 done 携带 truncated=true，前端提示用户，避免"写一半"被误认为完整）
             analysisCache.put(gameId, new CacheEntry(full.toString(), System.currentTimeMillis()));
-            send(emitter, "done", truncated ? Map.of("truncated", true) : Map.of());
+            SseEventSender.send(emitter, objectMapper, "done", truncated ? Map.of("truncated", true) : Map.of());
             emitter.complete();
             log.info("AI analysis stream completed: gameId={}, length={}, truncated={}, elapsed={}ms",
                     gameId, full.length(), truncated, System.currentTimeMillis() - startTime);
-        } catch (ClientDisconnectedException e) {
+        } catch (SseEventSender.ClientDisconnectedException e) {
             // 客户端已断开（关页面/刷新/网络断开）：预期现象而非服务端故障——
             // 停止上游消费与推送即可，不推 error 事件、不调 complete（连接已断，均无意义），
             // 仅记 INFO 无堆栈，避免同一断开在多层重复打 ERROR 堆栈刷屏
@@ -274,23 +274,12 @@ public class AiAnalysisService {
             log.error("AI analysis stream failed: gameId={}, elapsed={}ms", gameId,
                     System.currentTimeMillis() - startTime, e);
             try {
-                send(emitter, "error", Map.of("message", e.getMessage()));
+                SseEventSender.send(emitter, objectMapper, "error", Map.of("message", e.getMessage()));
                 emitter.complete();
             } catch (Exception sendError) {
                 // 推送失败（连接已断开/未初始化，如前端关闭页面）：仅记日志
                 log.warn("Failed to send AI analysis error event, gameId={}", gameId, sendError);
             }
-        }
-    }
-
-    /**
-     * 客户端断开信号：SSE 推送因对端关闭连接（Broken pipe 等）失败时由 {@link #send}
-     * 抛出，用于让流式主流程<b>立即终止</b>（停止上游 AI 流消费与后续推送），
-     * 并与普通推送失败（IllegalStateException，需推 error 事件）区分处理
-     */
-    private static class ClientDisconnectedException extends RuntimeException {
-        ClientDisconnectedException(Throwable cause) {
-            super(cause);
         }
     }
 
@@ -383,35 +372,6 @@ public class AiAnalysisService {
     private void extract(JsonNode stats, Map<String, Object> player, String shortKey, String statsKey) {
         if (stats.has(statsKey) && !stats.get(statsKey).isNull()) {
             player.put(shortKey, stats.get(statsKey).asDouble());
-        }
-    }
-
-    /**
-     * 推送一条 SSE 事件：data 为 JSON 字符串（type 字段 + 业务字段）；
-     * 推送失败（连接已断开/未初始化）转为运行时异常，终止流式流程由外层统一收尾。
-     * 失败时打印完整堆栈——SseEmitter 未初始化竞态（send 早于 controller 返回）只能靠堆栈识别
-     *
-     * @param emitter SSE 连接
-     * @param type    事件类型（start/chunk/reasoning/done/error）
-     * @param payload 业务字段（写入 data JSON）
-     */
-    private void send(SseEmitter emitter, String type, Map<String, Object> payload) {
-        try {
-            // LinkedHashMap 保证 type 位于 JSON 首位，便于前端/测试解析
-            Map<String, Object> event = new LinkedHashMap<>();
-            event.put("type", type);
-            event.putAll(payload);
-            emitter.send(SseEmitter.event().data(objectMapper.writeValueAsString(event)));
-        } catch (Exception e) {
-            if (ClientDisconnectDetector.isClientDisconnect(e)) {
-                // 客户端已断开（关页面/刷新/网络闪断）：预期现象——INFO 无堆栈，
-                // 抛专用信号让流式主流程立即终止（停止上游消费与后续推送）
-                log.info("SSE client disconnected, stop pushing: type={}", type);
-                throw new ClientDisconnectedException(e);
-            }
-            // 其余推送失败（SseEmitter 未初始化竞态等）：完整堆栈，由外层统一收尾
-            log.error("SSE send failed: type={}, payload={}", type, payload, e);
-            throw new IllegalStateException("SSE 推送失败: " + e.getMessage());
         }
     }
 }
