@@ -84,6 +84,8 @@ class AiAnalysisServiceTest {
         props.setFrequencyPenalty(0.6);
         props.setPresencePenalty(0.3);
         props.setMaxTokens(2048);
+        // 流式重试次数同样来自 yaml（ai.retry-count）：1 = 零内容失败后最多再试 1 次
+        props.setRetryCount(1);
         return props;
     }
 
@@ -311,7 +313,8 @@ class AiAnalysisServiceTest {
 
     @Test
     void emptyStreamThrowsAndPushesError() throws Exception {
-        // 流无任何增量（服务端提前断开等）：正文为空 → 推 error 事件，不写缓存
+        // 流无任何增量（服务端提前断开等）：正文为空 → 按零内容语义重试（retry-count=1），
+        // 耗尽后推 error 事件，不写缓存
         when(aiClient.callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString()))
                 .thenReturn(null);
         when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
@@ -322,7 +325,8 @@ class AiAnalysisServiceTest {
         assertThat((String) events.get(events.size() - 1).get("message")).contains("内容为空");
         // 失败不缓存：再次分析会重新调用 AI
         service.analyzeStream(123L, mockEmitter());
-        verify(aiClient, times(2)).callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString());
+        // 每次生成 = 首次 + 1 次重试（ai.retry-count=1），两次生成共 4 次调用
+        verify(aiClient, times(4)).callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString());
     }
 
     @Test
@@ -356,5 +360,56 @@ class AiAnalysisServiceTest {
 
         assertThatThrownBy(() -> service.validateAndConfigured(123L))
                 .isInstanceOf(BizException.class);
+    }
+
+    /**
+     * 用例：流式零内容失败自动重试（重试次数读 yaml ai.retry-count）。
+     * <p>尚未向客户端推送任何增量（chunk/reasoning 均未发出）时 callStream 失败，
+     * 重试不会造成打字机内容重复——第一次网关瞬时失败、第二次成功 → 共调 2 次，
+     * 事件流 start→chunk→done 正常收尾且 start 只推一次。</p>
+     */
+    @Test
+    void streamRetriesWhenNoContentStreamed() throws Exception {
+        when(aiClient.isConfigured()).thenReturn(true);
+        when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
+        when(aiClient.callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString()))
+                .thenThrow(new BizException(ErrorCode.AI_API_ERROR, "AI 接口调用失败"))
+                .thenAnswer(inv -> {
+                    // 第二次成功：推一段正文后自然结束
+                    AiStreamHandler handler = inv.getArgument(3);
+                    handler.onContent("重试后的正文");
+                    return "stop";
+                });
+
+        service.analyzeStream(123L, mockEmitter());
+
+        // 重试发生：callStream 共 2 次；成功收尾不推 error，start 不因重试重复推送
+        verify(aiClient, times(2)).callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString());
+        assertThat(events).extracting(e -> e.get("type"))
+                .containsExactly("start", "chunk", "done");
+    }
+
+    /**
+     * 用例：已推送增量后失败不可重试。
+     * <p>chunk 已到达客户端（打字机已展示）时流中断，重试会导致正文重复——
+     * 此时无论剩余重试额度多少都直接 error 收尾，只调 1 次。</p>
+     */
+    @Test
+    void streamDoesNotRetryAfterContentStreamed() throws Exception {
+        when(aiClient.isConfigured()).thenReturn(true);
+        when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
+        when(aiClient.callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString()))
+                .thenAnswer(inv -> {
+                    AiStreamHandler handler = inv.getArgument(3);
+                    handler.onContent("前半段");
+                    throw new BizException(ErrorCode.AI_API_ERROR, "流中断");
+                });
+
+        service.analyzeStream(123L, mockEmitter());
+
+        // 已有增量推送：不重试，单次调用后 error 收尾
+        verify(aiClient, times(1)).callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString());
+        assertThat(events).extracting(e -> e.get("type")).endsWith("error");
+        assertThat(events).noneSatisfy(e -> assertThat(e.get("type")).isEqualTo("done"));
     }
 }

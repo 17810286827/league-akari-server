@@ -6,6 +6,7 @@ import com.leagueakari.common.exception.BizException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.ai.AiClient;
+import com.leagueakari.ai.AiCompletionRequest;
 import com.leagueakari.config.AiProperties;
 import com.leagueakari.dto.team.WeeklyReportResponse;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,7 +18,6 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -74,7 +74,7 @@ class WeeklyAiCommentServiceTest {
         // Key 状态判定已下沉 AiClient（架构清理 T7）：服务不再自判——
         // mock 重载照常返回正文即透出，无 Key 拦截由 AiClient 承担（AiClientTest 锁定）
         WeeklyAiCommentService noKey = serviceWithKey("");
-        when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt())).thenReturn("正文照常");
+        when(aiClient.callWithRetry(any(), anyString(), anyString(), anyString())).thenReturn("正文照常");
 
         String comment = noKey.generateComment(report("2026-08-24 ~ 2026-08-30"));
         assertThat(comment).contains("正文照常");
@@ -83,22 +83,45 @@ class WeeklyAiCommentServiceTest {
     /** 用例：AI 返回正文 → 透出给调用方；调用摘要里带上周报素材（周标签/榜单/名场面） */
     @Test
     void generateComment_returnsAiContentAndSendsWeeklySummary() throws Exception {
-        when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt())).thenReturn("本周赌书封神，鬼子战犯实锤");
+        when(aiClient.callWithRetry(any(), anyString(), anyString(), anyString())).thenReturn("本周赌书封神，鬼子战犯实锤");
 
         String comment = service.generateComment(report("2026-08-24 ~ 2026-08-30"));
 
         assertThat(comment).isEqualTo("本周赌书封神，鬼子战犯实锤");
         // 摘要校验：user 消息里带上周标签与榜单素材（锐评点名用）
         ArgumentCaptor<String> userContent = ArgumentCaptor.forClass(String.class);
-        verify(aiClient).call(any(), anyString(), userContent.capture(), anyString(), anyInt());
+        verify(aiClient).callWithRetry(any(), anyString(), userContent.capture(), anyString());
         assertThat(userContent.getValue())
                 .contains("2026-08-24 ~ 2026-08-30").contains("MVP").contains("手裂鬼子");
+    }
+
+    /** 用例：周报请求的 thinking 跟随 yaml（ai.thinking）——原先硬编码 false，现三个场景统一读配置 */
+    @Test
+    void generateComment_requestThinkingFollowsYaml() {
+        AiProperties props = new AiProperties();
+        props.setBaseUrl("https://ai.example.com/v1");
+        props.setApiKey("test-key");
+        props.setModel("test-model");
+        props.setWeeklyPromptFile("ai/weekly-prompt.md");
+        props.setTemperature(1.0);
+        props.setWeeklyMaxTokens(512);
+        // yaml thinking=true：周报请求应透传思考模式（payload 不写 chat_template_kwargs.thinking=false）
+        props.setThinking(true);
+        WeeklyAiCommentService thinkingSvc = new WeeklyAiCommentService(
+                props, aiClient, new ObjectMapper(), new com.leagueakari.ai.PromptLoader());
+        when(aiClient.callWithRetry(any(), anyString(), anyString(), anyString())).thenReturn("正文");
+
+        thinkingSvc.generateComment(report("2026-08-24 ~ 2026-08-30"));
+
+        ArgumentCaptor<AiCompletionRequest> req = ArgumentCaptor.forClass(AiCompletionRequest.class);
+        verify(aiClient).callWithRetry(req.capture(), anyString(), anyString(), anyString());
+        assertThat(req.getValue().isThinking()).isTrue();
     }
 
     /** 用例：AI 调用失败（AiClient 转 BizException）→ 原样上抛（调用方降级） */
     @Test
     void generateComment_propagatesAiFailure() {
-        when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt()))
+        when(aiClient.callWithRetry(any(), anyString(), anyString(), anyString()))
                 .thenThrow(new BizException(ErrorCode.AI_API_ERROR, "AI 接口调用失败（HTTP 502），请稍后重试"));
 
         assertThatThrownBy(() -> service.generateComment(report("2026-08-24 ~ 2026-08-30")))
@@ -109,15 +132,15 @@ class WeeklyAiCommentServiceTest {
     /** 用例：同一周缓存命中——第二次生成不再调 AI（避免重复计费） */
     @Test
     void generateComment_cachesPerWeek() {
-        when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt())).thenReturn("锐评");
+        when(aiClient.callWithRetry(any(), anyString(), anyString(), anyString())).thenReturn("锐评");
 
         service.generateComment(report("2026-08-24 ~ 2026-08-30"));
         service.generateComment(report("2026-08-24 ~ 2026-08-30"));
 
-        verify(aiClient, times(1)).call(any(), anyString(), anyString(), anyString(), anyInt());
+        verify(aiClient, times(1)).callWithRetry(any(), anyString(), anyString(), anyString());
         // 换一周则重新生成
         service.generateComment(report("2026-08-31 ~ 2026-09-06"));
-        verify(aiClient, times(2)).call(any(), anyString(), anyString(), anyString(), anyInt());
+        verify(aiClient, times(2)).callWithRetry(any(), anyString(), anyString(), anyString());
     }
 
     /**
@@ -126,11 +149,11 @@ class WeeklyAiCommentServiceTest {
      */
     @Test
     void generateComment_throwsWhenBothAttemptsEmpty() {
-        when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt())).thenReturn(null);
+        when(aiClient.callWithRetry(any(), anyString(), anyString(), anyString())).thenReturn(null);
 
         assertThatThrownBy(() -> service.generateComment(report("2026-08-24 ~ 2026-08-30")))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("内容为空");
-        verify(aiClient, times(1)).call(any(), anyString(), anyString(), anyString(), anyInt());
+        verify(aiClient, times(1)).callWithRetry(any(), anyString(), anyString(), anyString());
     }
 }

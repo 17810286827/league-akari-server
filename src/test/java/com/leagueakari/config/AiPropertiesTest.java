@@ -49,13 +49,16 @@ class AiPropertiesTest {
         assertThat(props.getPostGamePromptFile()).isEqualTo("ai/post-game-prompt.md");
 
         // 采样与输出参数：yml 当前值即意图（与三个 AI 服务共用同一份）
-        assertThat(props.isThinking()).isFalse();
         assertThat(props.getTemperature()).isEqualTo(1.0);
         assertThat(props.getFrequencyPenalty()).isEqualTo(0.6);
         assertThat(props.getPresencePenalty()).isEqualTo(0.3);
         assertThat(props.getMaxTokens()).isEqualTo(4096);
         assertThat(props.getWeeklyMaxTokens()).isEqualTo(4096);
         assertThat(props.getPostGameMaxTokens()).isEqualTo(2048);
+        // 思考模式开关（当前 yml 为开启）：三个 AI 场景统一读此键，不再有硬编码旁路
+        assertThat(props.isThinking()).isTrue();
+        // 重试次数（失败后重试次数，不含首次）：三个 AI 场景统一读此键
+        assertThat(props.getRetryCount()).isEqualTo(1);
     }
 
     /** 用例：分析/周报与局后锐评共用基础参数（base-url、temperature），仅模型与上限分场景 */

@@ -23,7 +23,6 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -75,7 +74,7 @@ class PostGameCommentServiceTest {
     /** 用例：AI 正常返回正文 → 返回锐评文本，且用局后独立模型（ai.post-game-model）调用 */
     @Test
     void generateComment_returnsAiContentWithPostGameModel() {
-        when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt()))
+        when(aiClient.callWithRetry(any(), anyString(), anyString(), anyString()))
                 .thenReturn("这把养鱼人把对面野区当自己家");
 
         String comment = service.generateComment(summary());
@@ -83,7 +82,7 @@ class PostGameCommentServiceTest {
         assertThat(comment).contains("养鱼人");
         // 参数归属：局后锐评必须用自己的独立模型键（与 ai.model 解耦，播报对延迟敏感）
         ArgumentCaptor<AiCompletionRequest> captor = ArgumentCaptor.forClass(AiCompletionRequest.class);
-        verify(aiClient, times(1)).call(captor.capture(), anyString(), anyString(), anyString(), anyInt());
+        verify(aiClient, times(1)).callWithRetry(captor.capture(), anyString(), anyString(), anyString());
         assertThat(captor.getValue().getModel()).isEqualTo("test-model");
         assertThat(captor.getValue().getMaxTokens()).isEqualTo(1024);
     }
@@ -92,18 +91,18 @@ class PostGameCommentServiceTest {
      *  空正文重试已下沉为 AiClient 重载原语（架构清理 T7），本层只验"重载返回 null 即降级"。 */
     @Test
     void generateComment_throwsWhenAlwaysEmpty() {
-        when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt())).thenReturn(null);
+        when(aiClient.callWithRetry(any(), anyString(), anyString(), anyString())).thenReturn(null);
 
         assertThatThrownBy(() -> service.generateComment(summary()))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("内容为空");
-        verify(aiClient, times(1)).call(any(), anyString(), anyString(), anyString(), anyInt());
+        verify(aiClient, times(1)).callWithRetry(any(), anyString(), anyString(), anyString());
     }
 
     /** 用例：AI 接口失败（AiClient 转 BizException）→ 原样上抛（由编排层降级） */
     @Test
     void generateComment_propagatesAiFailure() {
-        when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt()))
+        when(aiClient.callWithRetry(any(), anyString(), anyString(), anyString()))
                 .thenThrow(new BizException(ErrorCode.AI_API_ERROR, "AI 接口调用失败（HTTP 502），请稍后重试"));
 
         assertThatThrownBy(() -> service.generateComment(summary()))
@@ -117,7 +116,7 @@ class PostGameCommentServiceTest {
     @Test
     void generateComment_keyGateLivesInAiClient() {
         PostGameCommentService noKey = serviceWith("");
-        when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt()))
+        when(aiClient.callWithRetry(any(), anyString(), anyString(), anyString()))
                 .thenReturn("正文照常透出");
 
         assertThat(noKey.generateComment(summary())).contains("正文照常透出");

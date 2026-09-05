@@ -62,6 +62,9 @@ public class AiAnalysisService {
     /** 采样参数（组装后经 AiCompletionRequest 显式传给 AiClient，见 docs/adr/0005） */
     private final AiCompletionRequest completionRequest;
 
+    /** 流式零内容失败重试次数（yaml ai.retry-count，不含首次；与三个 AI 场景统一） */
+    private final int retryCount;
+
     private final MatchQueryService matchQueryService;
     private final ObjectMapper objectMapper;
     private final AiClient aiClient;
@@ -101,6 +104,8 @@ public class AiAnalysisService {
         this.aiClient = aiClient;
         this.gameDataService = gameDataService;
         this.executor = aiStreamExecutor;
+        // 重试次数 yaml 统一配置（三个 AI 场景同一键），构造时快照
+        this.retryCount = ai.getRetryCount();
     }
 
     /**
@@ -185,32 +190,60 @@ public class AiAnalysisService {
                     gameId, matchSummary.length(), System.currentTimeMillis() - startTime);
 
             // 先推送 start（含缓存标记），再逐块推送增量文本；
-            // start 事件同时也是响应头的 flush 时机——前端收到响应头即代表执行到此处
+            // start 事件同时也是响应头的 flush 时机——前端收到响应头即代表执行到此处。
+            // start 只推一次：后续零内容重试不会重复推送，前端不感知重试的发生
             send(emitter, "start", Map.of("fromCache", false));
             log.info("AI analysis start event sent: gameId={}, elapsed={}ms",
                     gameId, System.currentTimeMillis() - startTime);
             // 最终分析正文（content 拼接，写入缓存）；思考过程（reasoning）单独透传不进缓存
             StringBuilder full = new StringBuilder();
-            // 流式调用公共 AiClient：SSE 解析与增量分发在回调中完成，
-            // 回调内抛出的断开信号原样穿透、立即停止上游消费；日志上下文带 gameId 便于排障关联
-            String finishReason = aiClient.callStream(completionRequest, systemPrompt, matchSummary,
-                    new AiStreamHandler() {
-                        @Override
-                        public void onContent(String chunk) {
-                            full.append(chunk);
-                            send(emitter, "chunk", Map.of("content", chunk));
-                        }
+            // 流式重试门控：是否已向客户端推送过任何增量（chunk/reasoning）——
+            // 已推送后失败不可重试（重发内容会在前端打字机里重复展示），只能 error 收尾
+            boolean[] streamed = {false};
+            // 流式调用公共 AiClient：SSE 解析与增量分发在回调中完成；尚未推送任何增量时
+            // 失败按 ai.retry-count 自动重试（三个 AI 场景统一读 yaml），回调内抛出的
+            // 断开信号原样穿透、立即停止上游消费；日志上下文带 gameId 便于排障关联
+            String finishReason = null;
+            int maxAttempts = retryCount + 1;
+            for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                    if (attempt > 1) {
+                        // 重试入口日志：重试对前端不可见（零内容失败，无内容重复风险）
+                        log.warn("AI stream retrying: gameId={}, attempt={}/{}",
+                                gameId, attempt, maxAttempts);
+                    }
+                    finishReason = aiClient.callStream(completionRequest, systemPrompt, matchSummary,
+                            new AiStreamHandler() {
+                                @Override
+                                public void onContent(String chunk) {
+                                    full.append(chunk);
+                                    streamed[0] = true;
+                                    send(emitter, "chunk", Map.of("content", chunk));
+                                }
 
-                        @Override
-                        public void onReasoning(String chunk) {
-                            send(emitter, "reasoning", Map.of("content", chunk));
-                        }
-                    }, "gameId=" + gameId);
+                                @Override
+                                public void onReasoning(String chunk) {
+                                    streamed[0] = true;
+                                    send(emitter, "reasoning", Map.of("content", chunk));
+                                }
+                            }, "gameId=" + gameId);
+                    // 流自然结束但正文为空（推理模型把预算耗尽）：与零内容失败同语义纳入重试
+                    if (full.isEmpty()) {
+                        throw new BizException(ErrorCode.AI_API_ERROR, "AI 返回内容为空，请稍后重试");
+                    }
+                    break;
+                } catch (BizException e) {
+                    // 已推送过增量（内容/思维链已在打字机展示）或重试额度耗尽：放弃重试上抛，
+                    // 外层统一 error 收尾；否则记 WARN 后进入下一次尝试
+                    if (streamed[0] || attempt == maxAttempts) {
+                        throw e;
+                    }
+                    log.warn("AI stream failed before any content, will retry: gameId={}, attempt={}/{}, reason={}",
+                            gameId, attempt, maxAttempts, e.getMessage());
+                }
+            }
             // finishReason：stop=自然完成；length=输出预算耗尽被截断（正文可能不完整）
             boolean truncated = "length".equals(finishReason);
-            if (full.isEmpty()) {
-                throw new BizException(ErrorCode.AI_API_ERROR, "AI 返回内容为空，请稍后重试");
-            }
             // 完成：写入缓存（成功才缓存，失败不缓存下次重试）并推送 done
             // （被截断时 done 携带 truncated=true，前端提示用户，避免"写一半"被误认为完整）
             analysisCache.put(gameId, new CacheEntry(full.toString(), System.currentTimeMillis()));

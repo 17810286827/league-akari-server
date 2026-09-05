@@ -70,6 +70,8 @@ class AiClientTest {
         AiProperties props = new AiProperties();
         props.setBaseUrl("https://ai.test/v1");
         props.setApiKey("test-key");
+        // 重试次数同样来自 yaml（ai.retry-count）：1 = 空正文时最多再调 1 次（共 2 次请求）
+        props.setRetryCount(1);
         client = new AiClient(props, httpClient, new ObjectMapper());
     }
 
@@ -103,14 +105,15 @@ class AiClientTest {
 
     // ==================== 非流式 call ====================
 
-    /** 用例（T7 重载）：空正文自动重试——首次空、第二次有正文 → 返回正文且共发 2 次请求 */
+    /** 用例（T7 重载）：空正文自动重试——重试次数读 yaml（retry-count=1）：首次空、重试有正文 → 返回正文且共发 2 次请求 */
     @Test
     void callWithRetry_retriesOnEmptyContent() throws Exception {
         CloseableHttpResponse empty = mockResponseCapture(200, emptyBody());
         CloseableHttpResponse ok = mockResponseCapture(200, contentBody("重试后的正文"));
         when(httpClient.execute(any(HttpPost.class))).thenReturn(empty).thenReturn(ok);
 
-        String result = client.call(plainRequest(), "system", "user", "ctx", 2);
+        // 重试次数不再由调用方传参：AiClient 内部读 ai.retry-count（yaml 唯一真值）
+        String result = client.callWithRetry(plainRequest(), "system", "user", "ctx");
 
         org.assertj.core.api.Assertions.assertThat(result).contains("重试后的正文");
         org.mockito.Mockito.verify(httpClient, org.mockito.Mockito.times(2)).execute(any(HttpPost.class));
@@ -127,10 +130,28 @@ class AiClientTest {
             }
         });
 
-        String result = client.call(plainRequest(), "system", "user", "ctx", 2);
+        String result = client.callWithRetry(plainRequest(), "system", "user", "ctx");
 
         org.assertj.core.api.Assertions.assertThat(result).isNull();
         org.mockito.Mockito.verify(httpClient, org.mockito.Mockito.times(2)).execute(any(HttpPost.class));
+    }
+
+    /** 用例：retry-count=0 → 空正文不重试，单次调用即返回 null（重试次数 yaml 化的语义锚点） */
+    @Test
+    void callWithRetry_skipsRetryWhenCountZero() throws Exception {
+        AiProperties props = new AiProperties();
+        props.setBaseUrl("https://ai.test/v1");
+        props.setApiKey("test-key");
+        props.setRetryCount(0);
+        AiClient zeroRetry = new AiClient(props, httpClient, new ObjectMapper());
+
+        when(httpClient.execute(any(HttpPost.class)))
+                .thenAnswer(inv -> mockResponseCapture(200, emptyBody()));
+
+        String result = zeroRetry.callWithRetry(plainRequest(), "system", "user", "ctx");
+
+        org.assertj.core.api.Assertions.assertThat(result).isNull();
+        org.mockito.Mockito.verify(httpClient, org.mockito.Mockito.times(1)).execute(any(HttpPost.class));
     }
 
     /** 用例（T7 重载）：API Key 未配置 → 前置校验直接抛，零请求发出 */
@@ -139,10 +160,11 @@ class AiClientTest {
         AiProperties noKey = new AiProperties();
         noKey.setBaseUrl("https://ai.test/v1");
         noKey.setApiKey("");
+        noKey.setRetryCount(1);
         AiClient keyless = new AiClient(noKey, httpClient, new ObjectMapper());
 
         org.assertj.core.api.Assertions.assertThatThrownBy(
-                        () -> keyless.call(plainRequest(), "system", "user", "ctx", 2))
+                        () -> keyless.callWithRetry(plainRequest(), "system", "user", "ctx"))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("API Key");
         org.mockito.Mockito.verify(httpClient, org.mockito.Mockito.never()).execute(any(HttpPost.class));

@@ -70,10 +70,11 @@ public class WeeklyAiCommentService {
             PromptLoader promptLoader) {
         this.promptFile = ai.getWeeklyPromptFile();
         this.promptLoader = promptLoader;
-        // 周锐评场景采样参数：无 penalty（保持既有采样行为），关闭思考直出正文
+        // 周锐评场景采样参数：无 penalty（保持既有采样行为）；thinking 跟随 yaml（ai.thinking），
+        // 三个 AI 场景统一读同一开关——周报 max-tokens 预算充足，推理模式思维链也在预算内
         this.completionRequest = new AiCompletionRequest(
                 ai.getModel(), ai.getTemperature(),
-                null, null, ai.getWeeklyMaxTokens(), false);
+                null, null, ai.getWeeklyMaxTokens(), ai.isThinking());
         this.aiClient = aiClient;
         this.objectMapper = objectMapper;
     }
@@ -100,9 +101,9 @@ public class WeeklyAiCommentService {
         String systemPrompt = promptLoader.load(promptFile,
                 "你是车队战绩群的锐评官，根据提供的周报摘要，用中文写一段 100 字以内的毒舌但善意的锐评，"
                         + "直接点名 MVP 与战犯，语气幽默，不要使用 markdown 格式。");
-        // apiKey 前置校验与空正文重试由 AiClient 重载承载（架构清理 T7；2 = 首次 + 1 次重试）
-        String comment = aiClient.call(completionRequest, systemPrompt, summary,
-                "weekly:" + report.getWeekLabel(), 2);
+        // apiKey 前置校验与空正文重试由 AiClient.callWithRetry 承载（重试次数读 yaml ai.retry-count）
+        String comment = aiClient.callWithRetry(completionRequest, systemPrompt, summary,
+                "weekly:" + report.getWeekLabel());
         if (comment == null) {
             throw new BizException(ErrorCode.AI_API_ERROR, "AI 返回内容为空，请稍后重试");
         }

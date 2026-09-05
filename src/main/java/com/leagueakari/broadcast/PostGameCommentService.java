@@ -25,9 +25,6 @@ import java.util.Map;
 @Service
 public class PostGameCommentService {
 
-    /** 最大调用次数：1 次正常 + 1 次空正文重试（传给 AiClient 重载） */
-    private static final int MAX_ATTEMPTS = 2;
-
     /** 局后锐评提示词文件（classpath；缺失时回退内置默认，保证接口可用） */
     private final String promptFile;
 
@@ -76,9 +73,9 @@ public class PostGameCommentService {
             throw new BizException(ErrorCode.DATA_ASSEMBLY_FAILED, "局后摘要组装失败", e);
         }
 
-        // apiKey 前置校验与空正文重试由 AiClient 重载承载（架构清理 T7）
-        String comment = aiClient.call(completionRequest, systemPrompt, userContent,
-                "post-game", MAX_ATTEMPTS);
+        // apiKey 前置校验与空正文重试由 AiClient.callWithRetry 承载（重试次数读 yaml ai.retry-count）
+        String comment = aiClient.callWithRetry(completionRequest, systemPrompt, userContent,
+                "post-game");
         if (comment == null) {
             throw new BizException(ErrorCode.AI_API_ERROR, "AI 返回内容为空，局后锐评生成失败");
         }

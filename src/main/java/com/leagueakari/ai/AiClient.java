@@ -34,8 +34,8 @@ import java.util.Map;
  * 无 UA 会被 403/503 拦截）、payload 组装、HTTP 错误转业务异常（BizException/AI_API_ERROR）、
  * 响应/SSE 解析、API Key 前置校验。<b>不感知业务场景</b>：采样参数由调用方经
  * {@link AiCompletionRequest} 显式传入；JVM 缓存、提示词加载（见 PromptLoader）等
- * 业务策略留在各业务服务。传输层可靠性原语（空正文重试）由 {@link #call} 重载提供
- * （架构清理 T7：与连接重试同类，住客户端）。</p>
+ * 业务策略留在各业务服务。传输层可靠性原语（空正文重试，次数读 yaml ai.retry-count）
+ * 由 {@link #callWithRetry} 提供（架构清理 T7：与连接重试同类，住客户端）。</p>
  * <p>HTTP 走全局连接池 HttpClient（见 HttpClientConfig：读超时 300s、
  * disableAutomaticRetries 防 POST 重复计费）；流式调用由调用方在其专用线程池中执行。</p>
  */
@@ -53,6 +53,9 @@ public class AiClient {
     /** API Key（AiProperties 注入，Bearer 鉴权用） */
     private final String apiKey;
 
+    /** 失败重试次数（yaml ai.retry-count，不含首次；0 = 不重试）：三个 AI 场景统一读此键 */
+    private final int retryCount;
+
     /** 全局连接池 HttpClient（与 Riot API 共用，见 HttpClientConfig） */
     private final CloseableHttpClient httpClient;
 
@@ -63,6 +66,7 @@ public class AiClient {
     public AiClient(AiProperties ai, CloseableHttpClient httpClient, ObjectMapper objectMapper) {
         this.baseUrl = ai.getBaseUrl();
         this.apiKey = ai.getApiKey();
+        this.retryCount = ai.getRetryCount();
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
     }
@@ -129,16 +133,18 @@ public class AiClient {
 
     /**
      * 带空正文重试的非流式调用（传输层可靠性原语）：正文为空（推理模型把预算耗在
-     * 思维链、finish_reason=length）时自动重试，共最多 {@code maxAttempts} 次；
-     * 全部尝试后仍为空返回 null（调用方决定失败语义，如局后锐评的缺席提示降级）。
+     * 思维链、finish_reason=length）时自动重试，重试次数读 yaml（ai.retry-count，
+     * 不含首次；0 = 不重试），全部尝试后仍为空返回 null（调用方决定失败语义，
+     * 如局后锐评的缺席提示降级）。仅对空正文重试——网络/HTTP 错误直接抛出，
+     * 与 HttpClientConfig.disableAutomaticRetries 的"防 POST 重复计费"决策一致。
      * <p>API Key 前置校验：未配置直接抛 BizException(AI_KEY_MISSING)（三处调用方各自的
      * 校验收敛到此，消除三个真相来源）。</p>
-     *
-     * @param maxAttempts 最大尝试次数（含首次；如 2 = 首次 + 1 次重试）
      */
-    public String call(AiCompletionRequest request, String systemPrompt, String userContent,
-            String logContext, int maxAttempts) {
+    public String callWithRetry(AiCompletionRequest request, String systemPrompt, String userContent,
+            String logContext) {
         requireApiKey();
+        // 最大尝试次数 = 首次 + retryCount 次重试（yaml 统一配置，调用方不再硬编码传参）
+        int maxAttempts = retryCount + 1;
         String comment = null;
         for (int attempt = 1; attempt <= maxAttempts && comment == null; attempt++) {
             comment = call(request, systemPrompt, userContent, logContext);

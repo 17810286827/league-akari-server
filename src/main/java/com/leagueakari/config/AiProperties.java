@@ -40,9 +40,19 @@ public class AiProperties {
 
     /**
      * 是否开启模型思考模式：true = 先输出长思维链再出正文（前端灰字展示推理过程）；
-     * false = 直出正文（延迟低）。通过请求体 chat_template_kwargs.thinking 透传网关
+     * false = 直出正文（延迟低）。通过请求体 chat_template_kwargs.thinking 透传网关。
+     * <b>三个 AI 场景（单局分析/周报锐评/局后锐评）统一读此键</b>，不允许任何场景硬编码旁路
      */
     private boolean thinking;
+
+    /**
+     * 调用失败后的重试次数（不含首次；0 = 不重试）。<b>三个 AI 场景统一读此键</b>：
+     * 非流式场景（AiClient.callWithRetry）对空正文自动重试共 retryCount 次；
+     * 流式场景（单局分析）在尚未推送任何增量前失败时同样按此次数重试
+     */
+    @NotNull
+    @jakarta.validation.constraints.Min(0)
+    private Integer retryCount;
 
     /** 采样温度：降随机性，抑制长文本重复输出 */
     @NotNull
