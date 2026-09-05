@@ -51,7 +51,7 @@ public class PostGameCommentService {
         // 局后锐评场景采样参数：独立模型键（ai.post-game-model）、无 penalty（保持既有采样行为）
         this.completionRequest = new AiCompletionRequest(
                 ai.getPostGameModel(), ai.getTemperature(),
-                null, null, ai.getPostGameMaxTokens(), false);
+                null, null, ai.getPostGameMaxTokens(), ai.isThinking());
         this.aiClient = aiClient;
         this.objectMapper = objectMapper;
     }
