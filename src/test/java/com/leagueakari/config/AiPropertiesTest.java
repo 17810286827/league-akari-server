@@ -52,12 +52,13 @@ class AiPropertiesTest {
 
         // 采样与输出参数：yml 当前值即意图（与三个 AI 服务共用同一份）
         // 惩罚参数 2026-09-05 调至 1.0/0.5（抑制思维链重复，实测见 yml 注释）；
-        // max-tokens 4096→8192 + thinking-budget 2048：思维链耗尽预算生产故障的根治组合
+        // max-tokens 16384（永不截断的天花板：正文实际 <2000 token，思维链被
+        // thinking-budget 约束）+ thinking-budget 2048：思维链耗尽预算生产故障的根治组合
         //（budget=2048 实测 0/16 失败；3072 约束不稳定 4/16，见 yml 注释）
         assertThat(props.getTemperature()).isEqualTo(1.0);
         assertThat(props.getFrequencyPenalty()).isEqualTo(1.0);
         assertThat(props.getPresencePenalty()).isEqualTo(0.5);
-        assertThat(props.getMaxTokens()).isEqualTo(8192);
+        assertThat(props.getMaxTokens()).isEqualTo(16384);
         assertThat(props.getThinkingBudget()).isEqualTo(2048);
         assertThat(props.getWeeklyMaxTokens()).isEqualTo(4096);
         assertThat(props.getPostGameMaxTokens()).isEqualTo(2048);
