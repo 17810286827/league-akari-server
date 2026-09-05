@@ -169,15 +169,16 @@ class TeamControllerIntegrationTest {
                 .andExpect(jsonPath("$.data.aiComment").value("测试锐评"));
     }
 
-    /** 用例：roster 未配置时周报接口返回 400 与明确提示（全局异常处理器转换） */
+    /** 用例：roster 未配置时周报接口返回业务码 1101 与明确提示（全局异常处理器转换，HTTP 200） */
     @Test
-    void weekly_returns400WhenRosterMissing() throws Exception {
+    void weekly_returns1101WhenRosterMissing() throws Exception {
         when(teamRosterService.requireMembers())
-                .thenThrow(new IllegalArgumentException("车队名单未配置：请先在服务端配置 team.roster 成员名单"));
+                .thenThrow(new com.leagueakari.common.exception.BizException(
+                        com.leagueakari.common.exception.ErrorCode.ROSTER_NOT_CONFIGURED));
 
         mockMvc.perform(get("/api/team/weekly"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value(400))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(1101))
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("车队名单未配置")));
     }
 
@@ -195,8 +196,8 @@ class TeamControllerIntegrationTest {
                 .andExpect(jsonPath("$.data.entries[0].value").value(1));
 
         mockMvc.perform(get("/api/team/leaderboards").param("dimension", "no-such"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value(400));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(1104));
     }
 
     /** 用例：成员列表返回 roster 两名成员及车队对局出勤；成员卡对陌生 puuid 返回 400 */
@@ -219,8 +220,8 @@ class TeamControllerIntegrationTest {
                 .andExpect(jsonPath("$.data.trend.length()").value(8));
 
         mockMvc.perform(get("/api/team/members/stranger-puuid"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value(400));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(1103));
     }
 
     /** 用例：回填触发契约——POST 返回 code=0 且 started=true（服务被调用） */

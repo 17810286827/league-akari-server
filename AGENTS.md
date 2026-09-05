@@ -12,40 +12,14 @@ league-akari-server：英雄联盟对局同步后端。接收 LCU 客户端推�
 ## 目录结构
 
 - `controller/`：路由层，只做参数校验（`@Valid` / `@RequestParam`）与返回值封装，不写业务逻辑，不捕获异常
-- `service/`：业务逻辑层，抛出异常（如 `MatchNotFoundException`、`IllegalArgumentException`），不处理 HTTP 语义
-- `config/GlobalExceptionHandler`：统一异常转换——参数校验 → 400，对局不存在 → 404，未知异常 → 500，响应体统一 `{ code, message }`
+- 业务逻辑层（match/riot/team/scoring/broadcast 等特性包内）：抛出 `BizException`（携带全局错误码，`common/exception/ErrorCode` 登记），不处理 HTTP 语义
+- `common/web/GlobalExceptionHandler`：统一异常转换——全部响应 HTTP 200 + 统一信封；BizException 按登记错误码直出，参数校验 → 1001，未识别异常 → 5000 兜底（JDK 异常不再当语义通道）
 - `dto/`：请求/响应 DTO；`entity/`：数据库实体；`mapper/`：MyBatis-Plus Mapper
 
 ## 关键约定
 
-- **响应契约**：同步接口成功返回 `{ "code": 0 }`；详情接口包装为 `{ "data": ... }`；错误返回 `{ code, message }`
-- **幂等键是 gameId**：重复推送同一 gameId 不得产生重复数据或覆盖首次写入；时间线接口要求 path 与 body 的 gameId 一致，不一致抛 `IllegalArgumentException` 返回 400
-- **数据库变更走 Flyway**：迁移文件在 `src/main/resources/db/migration/`（现有 V1__init.sql、V2__match_timeline.sql）；已执行的迁移不可修改，新增表/字段必须新建 `V{n}__xxx.sql`；实体字段需加中文注释；配置已开 `map-underscore-to-camel-case`
-- **注释与日志**：代码注释率不低于 20%（中文注释）；关键业务节点、异常处理、数据变更处用 `@Slf4j` 打印日志
-- **提交风格**：Conventional Commits 中文描述，如 `feat(matches): ...`、`fix(timeline): ...`
-
-# AGENTS.md（工作区指令）
-
-## 项目概览
-
-league-akari-server：英雄联盟对局同步后端。接收 LCU 客户端推送的对局数据（比赛信息 + 时间线），幂等写入 MySQL，并提供分页列表 / 详情 / 时间线查询 API。
-
-- 技术栈：Spring Boot 3.3.5、Java 21、MyBatis-Plus 3.5.7、MySQL、Flyway、Lombok
-- 构建/测试命令：`mvn test`（Maven，无 wrapper）；无 lint 配置
-- 服务器：端口 8081，仅绑定 `127.0.0.1`（个人本机自用，勿放宽监听地址）
-- 测试：JUnit 5 + Mockito + AssertJ；测试路径与被测文件路径保持一致（如 `src/test/java/.../service/` ↔ `src/main/java/.../service/`）
-
-## 目录结构
-
-- `controller/`：路由层，只做参数校验（`@Valid` / `@RequestParam`）与返回值封装，不写业务逻辑，不捕获异常
-- `service/`：业务逻辑层，抛出异常（如 `MatchNotFoundException`、`IllegalArgumentException`），不处理 HTTP 语义
-- `config/GlobalExceptionHandler`：统一异常转换——参数校验 → 400，对局不存在 → 404，未知异常 → 500，响应体统一 `{ code, message }`
-- `dto/`：请求/响应 DTO；`entity/`：数据库实体；`mapper/`：MyBatis-Plus Mapper
-
-## 关键约定
-
-- **响应契约**：同步接口成功返回 `{ "code": 0 }`；详情接口包装为 `{ "data": ... }`；错误返回 `{ code, message }`
-- **幂等键是 gameId**：重复推送同一 gameId 不得产生重复数据或覆盖首次写入；时间线接口要求 path 与 body 的 gameId 一致，不一致抛 `IllegalArgumentException` 返回 400
+- **响应契约**：所有 JSON 接口统一 `{ code, message, data }`（`common/web/ApiResult`），HTTP 一律 200，错误语义全靠业务码（0=成功；1xxx 参数 / 11xx 车队配置 / 2xxx 对局 / 3xxx 账号 / 4xxx 外部依赖 / 5xxx 系统）；`data` 有值才序列化；前端判失败只看 `code !== 0`（豁免：SSE 流、/actuator/health）
+- **幂等键是 gameId**：重复推送同一 gameId 不得产生重复数据或覆盖首次写入；时间线接口要求 path 与 body 的 gameId 一致，不一致抛 `BizException(GAME_ID_MISMATCH)` 返回业务码 1002
 - **数据库变更走 Flyway**：迁移文件在 `src/main/resources/db/migration/`（现有 V1__init.sql、V2__match_timeline.sql）；已执行的迁移不可修改，新增表/字段必须新建 `V{n}__xxx.sql`；实体字段需加中文注释；配置已开 `map-underscore-to-camel-case`
 - **注释与日志**：代码注释率不低于 20%（中文注释）；关键业务节点、异常处理、数据变更处用 `@Slf4j` 打印日志
 - **提交风格**：Conventional Commits 中文描述，如 `feat(matches): ...`、`fix(timeline): ...`

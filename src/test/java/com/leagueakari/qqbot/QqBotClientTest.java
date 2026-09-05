@@ -1,5 +1,6 @@
 package com.leagueakari.qqbot;
 
+import com.leagueakari.common.exception.QqPushException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.config.PushProperties;
 import org.apache.hc.client5.http.classic.methods.HttpPost;

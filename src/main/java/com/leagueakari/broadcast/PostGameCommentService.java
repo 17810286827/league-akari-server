@@ -1,5 +1,7 @@
 package com.leagueakari.broadcast;
 
+import com.leagueakari.common.exception.BizException;
+import com.leagueakari.common.exception.ErrorCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.ai.AiClient;
 import com.leagueakari.ai.AiCompletionRequest;
@@ -17,7 +19,7 @@ import java.util.Map;
  * 空正文重试走 call 重载、提示词加载走 PromptLoader（架构清理 T7），
  * 本服务只剩缺席降级的业务语义。</p>
  * <p>失败语义：空正文自动重试 1 次（共最多 2 次调用，AiClient 重载承载），
- * 仍失败抛 IllegalStateException，由 BroadcastCoordinator 降级为"AI 缺席提示"发送。</p>
+ * 仍失败抛 BizException(AI_API_ERROR)，由 BroadcastCoordinator 降级为"AI 缺席提示"发送。</p>
  */
 @Slf4j
 @Service
@@ -59,7 +61,7 @@ public class PostGameCommentService {
      *
      * @param summary 本局摘要（胜负/比分/车队成员/焦点），由编排层组装
      * @return 可直接发群的锐评正文
-     * @throws IllegalStateException API Key 未配置 / 接口失败 / 重试后正文仍为空
+     * AI Key 未配置 / 接口失败 / 重试后正文仍为空时抛 BizException（AI_API_ERROR）
      */
     public String generateComment(Map<String, Object> summary) {
         // 提示词：文件读取 + 内置默认回退（PromptLoader 唯一实现）
@@ -71,14 +73,14 @@ public class PostGameCommentService {
             userContent = objectMapper.writeValueAsString(summary);
         } catch (Exception e) {
             log.error("Failed to serialize post-game summary: {}", e.getMessage());
-            throw new IllegalStateException("局后摘要组装失败", e);
+            throw new BizException(ErrorCode.DATA_ASSEMBLY_FAILED, "局后摘要组装失败", e);
         }
 
         // apiKey 前置校验与空正文重试由 AiClient 重载承载（架构清理 T7）
         String comment = aiClient.call(completionRequest, systemPrompt, userContent,
                 "post-game", MAX_ATTEMPTS);
         if (comment == null) {
-            throw new IllegalStateException("AI 返回内容为空，局后锐评生成失败");
+            throw new BizException(ErrorCode.AI_API_ERROR, "AI 返回内容为空，局后锐评生成失败");
         }
         log.info("Post-game comment generated: length={}", comment.length());
         return comment;

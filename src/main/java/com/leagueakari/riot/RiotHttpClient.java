@@ -1,5 +1,9 @@
 package com.leagueakari.riot;
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.client5.http.classic.methods.HttpGet;
@@ -17,9 +21,9 @@ import java.nio.charset.StandardCharsets;
  * <p>三合一职责：
  * 1. X-Riot-Token 请求头（开发者 Key 鉴权）；
  * 2. 限流器挂载——每次出网前 acquire，无差别生效（消除账号查询缓存 miss 时裸打 API 的限流盲区）；
- * 3. 状态码语义翻译——404 → RiotAccountNotFoundException（业务异常，全局处理器转 404）、
+ * 3. 状态码语义翻译——404 → BizException(RIOT_ACCOUNT_NOT_FOUND)（全局处理器统一转换）、
  *    429 → 等待 Retry-After 后重试一次（仍 429 抛限流异常，不无限重试）、
- *    其他非 2xx → 带 body 的 IllegalStateException。</p>
+ *    其他非 2xx → 业务异常 BizException(RIOT_API_ERROR)。</p>
  * <p>注意：QQ 开放平台（QqBotClient）是另一协议域（鉴权头/错误码/token 刷新语义不同），不并入本出口。
  * CommunityDragon 静态资源（gamedata 包）无鉴权无限流语义，同样不经此出口。</p>
  */
@@ -55,8 +59,8 @@ public class RiotHttpClient {
      *
      * @param uri 完整请求 URI（调用方负责路径段编码，见 URIBuilder.setPathSegments）
      * @return 响应体字符串（UTF-8；2xx 保证非 null，空体返回空串）
-     * @throws RiotAccountNotFoundException 404（账号不存在语义）
-     * @throws IllegalStateException        429 重试后仍限流，或其他非 2xx
+     * 404 → BizException(RIOT_ACCOUNT_NOT_FOUND)；429 重试后仍限流或其他非 2xx →
+     * BizException(RIOT_API_ERROR)。本类不感知具体资源语义，由调用方按需翻译上下文。
      */
     public String get(URI uri) {
         // 第一次尝试（限流在每次出网前生效）
@@ -67,7 +71,7 @@ public class RiotHttpClient {
             sleepQuietly(500);
             status = attemptOnce(uri);
             if (status == 429) {
-                throw new IllegalStateException("Riot API 限流（429），请稍后再试");
+                throw new BizException(ErrorCode.RIOT_API_ERROR, "Riot API 限流（429），请稍后再试");
             }
             // 重试后的非 429 状态由 attemptOnce 内部抛出/处理；走到这里说明重试成功（attemptOnce 返回 2xx）
         }
@@ -91,8 +95,8 @@ public class RiotHttpClient {
             String body = response.getEntity() != null
                     ? EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8) : "";
             if (status == 404) {
-                // 404：召唤师/对局不存在，抛业务异常由全局处理器转为 404
-                throw new RiotAccountNotFoundException(uri.toString());
+                // 404：资源不存在（账号/对局），抛业务异常由全局处理器统一转换
+                throw new BizException(ErrorCode.RIOT_ACCOUNT_NOT_FOUND, "Riot 资源不存在: " + uri);
             }
             if (status == 429) {
                 // 429：返回状态码由调用方决定重试（不在此抛，重试逻辑在 get）
@@ -101,15 +105,16 @@ public class RiotHttpClient {
             if (status < 200 || status >= 300) {
                 // 其他 4xx（401 Key 失效 / 403 无权限）与 5xx：记日志后抛出
                 log.error("Riot API error: status={}, uri={}, body={}", status, uri, body);
-                throw new IllegalStateException("Riot API 调用失败（" + status + "），请稍后重试");
+                throw new BizException(ErrorCode.RIOT_API_ERROR, "Riot API 调用失败（" + status + "），请稍后重试");
             }
             lastBody = body;
             return status;
-        } catch (RiotAccountNotFoundException | IllegalStateException e) {
+        } catch (BizException e) {
+            // 已翻译的业务异常（404/限流/非 2xx）：原样上抛
             throw e;
         } catch (Exception e) {
             log.error("Riot API request failed: uri={}, error={}", uri, e.getMessage());
-            throw new IllegalStateException("Riot API 请求失败：" + e.getMessage(), e);
+            throw new BizException(ErrorCode.RIOT_API_ERROR, "Riot API 请求失败：" + e.getMessage(), e);
         }
     }
 

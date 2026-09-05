@@ -1,4 +1,4 @@
-package com.leagueakari.match;
+package com.leagueakari.common.stats;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

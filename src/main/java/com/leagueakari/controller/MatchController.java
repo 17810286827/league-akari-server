@@ -1,5 +1,9 @@
 package com.leagueakari.controller;
 
+import com.leagueakari.common.exception.BizException;
+import com.leagueakari.common.exception.ErrorCode;
+import com.leagueakari.common.web.ApiResult;
+import com.leagueakari.common.web.ClientDisconnectDetector;
 import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.dto.MatchSummaryResponse;
 import com.leagueakari.dto.MatchSyncRequest;
@@ -7,7 +11,6 @@ import com.leagueakari.dto.PageResponse;
 import com.leagueakari.dto.TimelineSyncRequest;
 import com.leagueakari.match.AiAnalysisService;
 import com.leagueakari.broadcast.BroadcastCoordinator;
-import com.leagueakari.util.ClientDisconnectDetector;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,18 +24,16 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.util.Map;
 import java.util.Objects;
 import com.leagueakari.match.MatchIngestService;
-import com.leagueakari.match.MatchNotFoundException;
 import com.leagueakari.match.MatchQueryService;
 import com.leagueakari.match.MatchTimelineService;
 
 /**
  * 对局 API：同步写入（幂等）与查询
- * <p>路由层职责：参数校验（@Valid / @RequestParam）与返回值封装；
+ * <p>路由层职责：参数校验（@Valid / @RequestParam）与返回值封装（统一 ApiResult）；
  * 业务逻辑下沉 service 层（写入走 MatchIngestService，查询走 MatchQueryService），
- * 异常由全局异常处理器统一转换。</p>
+ * 异常由全局异常处理器统一转换（HTTP 200 + 业务码）。</p>
  */
 @Slf4j
 @RestController
@@ -51,14 +52,14 @@ public class MatchController {
 
     /** 接收对局同步推送，幂等写入 */
     @PostMapping
-    public Map<String, Object> syncMatch(@Valid @RequestBody MatchSyncRequest request) {
+    public ApiResult<Void> syncMatch(@Valid @RequestBody MatchSyncRequest request) {
         // 幂等保存：重复推送同一 gameId 不会产生重复数据
         matchIngestService.saveMatch(request);
         // 局后播报触发点：是否播报由 coordinator 内部判定（车队局/时间窗/开关/状态），
         // 判定不通过零副作用，发送失败仅落库 push_status=FAILED 等待桌面端补推重试
         broadcastCoordinator.maybeBroadcast(request.getGameId());
-        // 同步接口契约：成功即返回 code=0，无需回传实体数据
-        return Map.of("code", 0);
+        // 同步接口契约：成功即返回 code=0（无业务数据，data 缺省）
+        return ApiResult.success();
     }
 
     /**
@@ -66,7 +67,7 @@ public class MatchController {
      * puuid 与 summonerName 二选一（只能查询指定玩家，都缺失时返回空页）
      */
     @GetMapping
-    public PageResponse<MatchSummaryResponse> listMatches(
+    public ApiResult<PageResponse<MatchSummaryResponse>> listMatches(
             @RequestParam(defaultValue = "1") long page,
             @RequestParam(defaultValue = "20") long pageSize,
             @RequestParam(required = false) Integer queueId,
@@ -75,15 +76,15 @@ public class MatchController {
             @RequestParam(required = false) Long startTime,
             @RequestParam(required = false) Long endTime) {
         // 筛选参数均为可选，page/pageSize 缺省时取默认值 1/20
-        return matchQueryService.pageMatches(page, pageSize, queueId, puuid, summonerName, startTime, endTime);
+        return ApiResult.success(
+                matchQueryService.pageMatches(page, pageSize, queueId, puuid, summonerName, startTime, endTime));
     }
 
-    /** 查询对局详情，不存在返回 404 */
+    /** 查询对局详情，不存在返回业务码 2001（HTTP 仍为 200） */
     @GetMapping("/{gameId}")
-    public Map<String, MatchDetailResponse> getMatchDetail(@PathVariable Long gameId) {
-        // data 包装与分页/同步响应的扁平结构区分，详情契约见规格第 4.2 节
-        // 对局不存在时由 service 抛出 MatchNotFoundException，全局处理器转为 404
-        return Map.of("data", matchQueryService.getMatchDetail(gameId));
+    public ApiResult<MatchDetailResponse> getMatchDetail(@PathVariable Long gameId) {
+        // 对局不存在时由 service 抛出 BizException(MATCH_NOT_FOUND)，全局处理器转为统一响应
+        return ApiResult.success(matchQueryService.getMatchDetail(gameId));
     }
 
     /**
@@ -127,28 +128,30 @@ public class MatchController {
 
     /** 接收时间线推送（frames 全量），幂等写入 */
     @PostMapping("/{gameId}/timeline")
-    public Map<String, Object> syncTimeline(@PathVariable Long gameId,
+    public ApiResult<Void> syncTimeline(@PathVariable Long gameId,
             @Valid @RequestBody TimelineSyncRequest request) {
         // 契约要求 body 与 path 的 gameId 一致：不一致属调用方参数错误，
         // 拒绝写入而非静默按 path 落库，避免幂等键与调用方预期不符
         if (!Objects.equals(gameId, request.getGameId())) {
             log.warn("timeline gameId 不一致, path={}, body={}", gameId, request.getGameId());
-            throw new IllegalArgumentException("path 与 body 的 gameId 不一致");
+            throw new BizException(ErrorCode.GAME_ID_MISMATCH,
+                    "path 与 body 的 gameId 不一致: path=" + gameId + ", body=" + request.getGameId());
         }
         // 幂等保存：重复推送同一 gameId 不会覆盖首次写入的 frames
         matchTimelineService.saveTimeline(gameId, request.getFrames());
-        // 同步接口契约：成功即返回 code=0，无需回传实体数据
-        return Map.of("code", 0);
+        // 同步接口契约：成功即返回 code=0（无业务数据，data 缺省）
+        return ApiResult.success();
     }
 
-    /** 查询对局时间线，不存在返回 404 */
+    /** 查询对局时间线，不存在返回业务码 2002（HTTP 仍为 200） */
     @GetMapping("/{gameId}/timeline")
-    public Map<String, Object> getTimeline(@PathVariable Long gameId) {
-        // 未命中时由 service 返回 null，此处抛出 MatchNotFoundException 复用全局 404 处理
+    public ApiResult<Object> getTimeline(@PathVariable Long gameId) {
+        // 未命中时由 service 返回 null（TeamStatsService 依赖该 null 语义跳过缺失时间线），
+        // HTTP 404 语义在此转为业务码 2002 交给全局处理器
         Object frames = matchTimelineService.getTimeline(gameId);
         if (frames == null) {
-            throw new MatchNotFoundException(gameId);
+            throw new BizException(ErrorCode.TIMELINE_NOT_FOUND, "对局时间线不存在: gameId=" + gameId);
         }
-        return Map.of("data", frames);
+        return ApiResult.success(frames);
     }
 }

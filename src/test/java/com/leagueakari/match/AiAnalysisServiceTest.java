@@ -1,5 +1,9 @@
 package com.leagueakari.match;
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -245,9 +249,9 @@ class AiAnalysisServiceTest {
 
     @Test
     void aiErrorPushesErrorEvent() throws Exception {
-        // AI 调用失败（AiClient 转 IllegalStateException）：流中推送 error 事件（含状态码提示）
+        // AI 调用失败（AiClient 转 BizException）：流中推送 error 事件（含状态码提示）
         when(aiClient.callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString()))
-                .thenThrow(new IllegalStateException("AI 接口调用失败（HTTP 500），请稍后重试"));
+                .thenThrow(new BizException(ErrorCode.AI_API_ERROR, "AI 接口调用失败（HTTP 500），请稍后重试"));
         when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
 
         service.analyzeStream(123L, mockEmitter());
@@ -262,7 +266,7 @@ class AiAnalysisServiceTest {
     @Test
     void matchNotFoundPushesErrorEvent() throws Exception {
         // 流式线程内取详情失败（校验后数据被删等）：推送 error 事件而非崩溃
-        when(matchQueryService.getMatchDetail(123L)).thenThrow(new MatchNotFoundException(123L));
+        when(matchQueryService.getMatchDetail(123L)).thenThrow(new BizException(ErrorCode.MATCH_NOT_FOUND, "对局不存在: gameId=123"));
 
         service.analyzeStream(123L, mockEmitter());
 
@@ -326,7 +330,7 @@ class AiAnalysisServiceTest {
         when(aiClient.isConfigured()).thenReturn(false);
 
         assertThatThrownBy(() -> service.validateAndConfigured(123L))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("API Key");
     }
 
@@ -341,11 +345,11 @@ class AiAnalysisServiceTest {
 
     @Test
     void validateThrowsWhenMatchMissing() {
-        // 对局不存在：前置校验抛 MatchNotFoundException（由全局处理器转 404）
+        // 对局不存在：前置校验抛 BizException(MATCH_NOT_FOUND)（由全局处理器统一转换）
         when(aiClient.isConfigured()).thenReturn(true);
-        when(matchQueryService.getMatchDetail(123L)).thenThrow(new MatchNotFoundException(123L));
+        when(matchQueryService.getMatchDetail(123L)).thenThrow(new BizException(ErrorCode.MATCH_NOT_FOUND, "对局不存在: gameId=123"));
 
         assertThatThrownBy(() -> service.validateAndConfigured(123L))
-                .isInstanceOf(MatchNotFoundException.class);
+                .isInstanceOf(BizException.class);
     }
 }

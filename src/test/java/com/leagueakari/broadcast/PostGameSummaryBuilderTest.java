@@ -18,7 +18,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import com.leagueakari.gamedata.GameDataService;
-import com.leagueakari.match.ParticipantStatsReader;
+import com.leagueakari.common.stats.ParticipantStatsReader;
 import com.leagueakari.team.TeamRosterService;
 
 /**

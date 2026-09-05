@@ -1,10 +1,11 @@
 package com.leagueakari.riot;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.common.exception.BizException;
+import com.leagueakari.common.exception.ErrorCode;
 import com.leagueakari.dto.RiotAccountDto;
 import com.leagueakari.entity.RiotAccount;
 import com.leagueakari.mapper.RiotAccountMapper;
-import com.leagueakari.riot.RiotAccountNotFoundException;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.core5.http.HttpEntity;
@@ -134,21 +135,21 @@ class RiotAccountClientTest {
 
     @Test
     void searchNotFoundThrowsBusinessException() throws Exception {
-        // Riot 返回 404：转业务异常，由全局处理器转 404
+        // Riot 返回 404：转业务异常（RIOT_ACCOUNT_NOT_FOUND），全局处理器统一转换
         CloseableHttpResponse response = mockResponse(404, "");
         when(httpClient.execute(any())).thenReturn(response);
         assertThatThrownBy(() -> client.searchByRiotId("不存在#tag"))
-                .isInstanceOf(RiotAccountNotFoundException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("不存在");
     }
 
     @Test
     void searchServerErrorThrowsIllegalState() throws Exception {
-        // Riot 返回 5xx：转服务不可用（全局处理器 503）
+        // Riot 返回 5xx：转业务异常（RIOT_API_ERROR），全局处理器统一转换
         CloseableHttpResponse response = mockResponse(500, "{}");
         when(httpClient.execute(any())).thenReturn(response);
         assertThatThrownBy(() -> client.searchByRiotId("玩家#tag"))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("500");
     }
 
@@ -156,7 +157,7 @@ class RiotAccountClientTest {
     void invalidNameWithoutTagRejected() {
         // 昵称缺 #tag：参数错误（不触达查库与 API）
         assertThatThrownBy(() -> client.searchByRiotId("没有tag"))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("#tag");
     }
 
@@ -167,7 +168,7 @@ class RiotAccountClientTest {
                 "", "https://asia.api.riotgames.com", "https://sea.api.riotgames.com",
                 riotHttpClient(), new ObjectMapper(), riotAccountMapper);
         assertThatThrownBy(() -> noKey.searchByRiotId("玩家#tag"))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("API Key");
     }
 

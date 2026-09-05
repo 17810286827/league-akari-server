@@ -1,6 +1,7 @@
 package com.leagueakari.qqbot;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.common.exception.QqPushException;
 import com.leagueakari.config.PushProperties;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;

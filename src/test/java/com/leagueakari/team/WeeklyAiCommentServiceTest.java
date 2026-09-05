@@ -1,5 +1,9 @@
 package com.leagueakari.team;
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.ai.AiClient;
 import com.leagueakari.config.AiProperties;
@@ -91,14 +95,14 @@ class WeeklyAiCommentServiceTest {
                 .contains("2026-08-24 ~ 2026-08-30").contains("MVP").contains("手裂鬼子");
     }
 
-    /** 用例：AI 调用失败（AiClient 转 IllegalStateException）→ 原样上抛（调用方降级） */
+    /** 用例：AI 调用失败（AiClient 转 BizException）→ 原样上抛（调用方降级） */
     @Test
     void generateComment_propagatesAiFailure() {
         when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt()))
-                .thenThrow(new IllegalStateException("AI 接口调用失败（HTTP 502），请稍后重试"));
+                .thenThrow(new BizException(ErrorCode.AI_API_ERROR, "AI 接口调用失败（HTTP 502），请稍后重试"));
 
         assertThatThrownBy(() -> service.generateComment(report("2026-08-24 ~ 2026-08-30")))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("502");
     }
 
@@ -125,7 +129,7 @@ class WeeklyAiCommentServiceTest {
         when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt())).thenReturn(null);
 
         assertThatThrownBy(() -> service.generateComment(report("2026-08-24 ~ 2026-08-30")))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("内容为空");
         verify(aiClient, times(1)).call(any(), anyString(), anyString(), anyString(), anyInt());
     }

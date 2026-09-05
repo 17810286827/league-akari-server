@@ -1,5 +1,9 @@
 package com.leagueakari.match;
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.ai.AiClient;
@@ -9,7 +13,7 @@ import com.leagueakari.ai.AiStreamHandler;
 import com.leagueakari.config.AiProperties;
 import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.entity.MatchParticipant;
-import com.leagueakari.util.ClientDisconnectDetector;
+import com.leagueakari.common.web.ClientDisconnectDetector;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -22,7 +26,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import com.leagueakari.gamedata.GameDataService;
-import com.leagueakari.match.MatchNotFoundException;
 
 /**
  * AI 对局表现分析（service 层）：
@@ -97,17 +100,17 @@ public class AiAnalysisService {
      * 在 HTTP 响应阶段返回明确错误（503/404），避免流已建立后再中断
      *
      * @param gameId 对局 ID
-     * @throws IllegalStateException   API Key 未配置
-     * @throws MatchNotFoundException 对局不存在
+     * API Key 未配置时抛 BizException(AI_KEY_MISSING)（由全局处理器统一转换）
+     * 对局不存在时由 MatchQueryService 抛 BizException(MATCH_NOT_FOUND)（全局处理器统一转换）
      */
     public void validateAndConfigured(Long gameId) {
         long startTime = System.currentTimeMillis();
         // Key 状态判定统一走 AiClient（架构清理 T7：消除各服务自判的真相分裂）
         if (!aiClient.isConfigured()) {
             log.error("AI API key not configured, analysis skipped: gameId={}", gameId);
-            throw new IllegalStateException("AI API Key 未配置，无法进行对局分析");
+            throw new BizException(ErrorCode.AI_KEY_MISSING, "AI API Key 未配置，无法进行对局分析");
         }
-        // 对局不存在时抛 MatchNotFoundException（全局处理器转 404）；
+        // 对局不存在时由查询服务抛 BizException(MATCH_NOT_FOUND)（全局处理器统一转换）；
         // 记录耗时：若此处卡住（DB 慢/连接池耗尽）会导致响应头迟迟不返回
         matchQueryService.getMatchDetail(gameId);
         log.info("AI analysis validated: gameId={}, elapsed={}ms", gameId, System.currentTimeMillis() - startTime);
@@ -194,7 +197,7 @@ public class AiAnalysisService {
             // finishReason：stop=自然完成；length=输出预算耗尽被截断（正文可能不完整）
             boolean truncated = "length".equals(finishReason);
             if (full.isEmpty()) {
-                throw new IllegalStateException("AI 返回内容为空，请稍后重试");
+                throw new BizException(ErrorCode.AI_API_ERROR, "AI 返回内容为空，请稍后重试");
             }
             // 完成：写入缓存（成功才缓存，失败不缓存下次重试）并推送 done
             // （被截断时 done 携带 truncated=true，前端提示用户，避免"写一半"被误认为完整）
@@ -316,7 +319,7 @@ public class AiAnalysisService {
             return objectMapper.writeValueAsString(summary);
         } catch (Exception e) {
             log.error("Failed to serialize match summary: {}", e.getMessage());
-            throw new IllegalStateException("对局数据组装失败");
+            throw new BizException(ErrorCode.DATA_ASSEMBLY_FAILED, "对局数据组装失败");
         }
     }
 

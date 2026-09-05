@@ -2,6 +2,7 @@ package com.leagueakari.qqbot;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.common.exception.QqPushException;
 import com.leagueakari.config.PushProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.client5.http.classic.methods.HttpPost;

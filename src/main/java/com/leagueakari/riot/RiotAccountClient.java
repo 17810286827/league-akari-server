@@ -1,10 +1,13 @@
 package com.leagueakari.riot;
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.dto.RiotAccountDto;
-import com.leagueakari.riot.RiotAccountNotFoundException;
 import com.leagueakari.entity.RiotAccount;
 import com.leagueakari.mapper.RiotAccountMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -74,15 +77,14 @@ public class RiotAccountClient {
      *
      * @param riotName 召唤师名，格式 "昵称#tag"（如 "赌书消得泼茶香#iKun"）
      * @return 账号信息（puuid/gameName/tagLine/等级/头像）
-     * @throws IllegalArgumentException     riotName 缺少 #tag
-     * @throws IllegalStateException        库未命中且 API Key 未配置，或 API 调用失败
+     * @throws BizException riotName 缺少 #tag（1003）、Key 未配置（4001）、API 调用失败（4002）
      * @throws RiotAccountNotFoundException 召唤师不存在（Riot 返回 404）
      */
     public RiotAccountDto searchByRiotId(String riotName) {
         // 输入格式校验：必须包含 #（Riot Account-V1 需要 gameName + tagLine 两部分）
         if (riotName == null || !riotName.contains("#")) {
             log.warn("Invalid riot name (missing #tag): {}", riotName);
-            throw new IllegalArgumentException("召唤师名格式错误，应为 昵称#tag（如 赌书消得泼茶香#iKun）");
+            throw new BizException(ErrorCode.INVALID_RIOT_NAME, "召唤师名格式错误，应为 昵称#tag（如 赌书消得泼茶香#iKun）");
         }
         // 拆分 gameName 与 tagLine：只按第一个 # 拆（tagLine 本身不含 #）
         String[] parts = riotName.split("#", 2);
@@ -99,7 +101,7 @@ public class RiotAccountClient {
         // 配置校验：需要调 Riot API 时才检查 Key，避免库命中场景被误拦截
         if (apiKey == null || apiKey.isBlank()) {
             log.error("Riot API key not configured, search skipped: {}", riotName);
-            throw new IllegalStateException("Riot API Key 未配置，无法搜索召唤师");
+            throw new BizException(ErrorCode.RIOT_API_KEY_MISSING, "Riot API Key 未配置，无法搜索召唤师");
         }
 
         // URI 构建：gameName/tagLine 可能含中文与特殊字符，由 URIBuilder.setPathSegments 统一编码（%XX），
@@ -112,7 +114,7 @@ public class RiotAccountClient {
             if (account == null || account.getPuuid() == null) {
                 // 响应体为空或缺少 puuid：视为异常数据，不入库
                 log.warn("Riot Account API returned empty body: {}", riotName);
-                throw new IllegalStateException("Riot 返回异常数据，请稍后重试");
+                throw new BizException(ErrorCode.RIOT_API_ERROR, "Riot 返回异常数据，请稍后重试");
             }
             // 补充召唤师等级与头像 ID（Summoner-V4 by-puuid）：失败不阻塞主流程（等级缺失时前端占位）
             fillSummonerProfile(account);
@@ -122,17 +124,18 @@ public class RiotAccountClient {
             log.info("Riot account found: {} -> {} (level={})", riotName, account.getPuuid(),
                     account.getSummonerLevel());
             return account;
-        } catch (RiotAccountNotFoundException e) {
-            // 404：召唤师不存在（业务异常，转给全局处理器返回 404 提示）
-            log.warn("Riot account not found: {}", riotName);
-            throw e;
-        } catch (IllegalStateException e) {
-            // 其余 4xx/5xx 与网络异常：统一抛出提示
+        } catch (BizException e) {
+            if (e.getErrorCode() == ErrorCode.RIOT_ACCOUNT_NOT_FOUND) {
+                // 404：召唤师不存在——补充搜索名上下文后重抛，便于用户定位
+                log.warn("Riot account not found: {}", riotName);
+                throw new BizException(ErrorCode.RIOT_ACCOUNT_NOT_FOUND, "召唤师不存在: " + riotName);
+            }
+            // 其余 4xx/5xx 与网络异常（已带统一文案）：原样上抛
             throw e;
         } catch (Exception e) {
             // 网络/解析等客户端异常：不入库，抛出便于上层提示
             log.error("Riot Account API request failed: {}", e.getMessage());
-            throw new IllegalStateException("Riot API 请求失败，请检查网络后重试");
+            throw new BizException(ErrorCode.RIOT_API_ERROR, "Riot API 请求失败，请检查网络后重试", e);
         }
     }
 
@@ -227,7 +230,7 @@ public class RiotAccountClient {
 
     /**
      * 构建带路径段的请求 URI：路径段由 URIBuilder 统一编码（中文/特殊字符 → %XX）；
-     * 域名或路径非法时视为配置错误，抛 IllegalStateException
+     * 域名或路径非法时视为配置错误，抛业务异常（INTERNAL_ERROR）
      *
      * @param domain   基础域名（如 https://asia.api.riotgames.com）
      * @param segments 路径段（按顺序拼接，每段单独编码）
@@ -239,7 +242,7 @@ public class RiotAccountClient {
         } catch (URISyntaxException e) {
             // 配置/入参导致的 URI 非法：配置错误应尽早暴露而非静默失败
             log.error("Invalid URI: domain={}, segments={}: {}", domain, String.join("/", segments), e.getMessage());
-            throw new IllegalStateException("外部 API 地址配置错误");
+            throw new BizException(ErrorCode.INTERNAL_ERROR, "外部 API 地址配置错误");
         }
     }
 

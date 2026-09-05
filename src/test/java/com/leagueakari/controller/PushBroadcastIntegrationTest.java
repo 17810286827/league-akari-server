@@ -1,5 +1,9 @@
 package com.leagueakari.controller;
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.dto.MatchSyncRequest;
@@ -173,7 +177,7 @@ class PushBroadcastIntegrationTest {
     void postFleetMatch_aiFailureSendsAbsenceTip() throws Exception {
         stubRoster();
         when(postGameCommentService.generateComment(org.mockito.ArgumentMatchers.anyMap()))
-                .thenThrow(new IllegalStateException("AI 返回内容为空，局后锐评生成失败"));
+                .thenThrow(new BizException(ErrorCode.AI_API_ERROR, "AI 返回内容为空，局后锐评生成失败"));
 
         mockMvc.perform(post("/api/matches")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -240,7 +244,7 @@ class PushBroadcastIntegrationTest {
     @Test
     void postFleetMatch_sendFailureMarksFailedButSyncOk() throws Exception {
         stubRoster();
-        org.mockito.Mockito.doThrow(new com.leagueakari.qqbot.QqPushException("QQ 图片消息发送失败（HTTP 401）"))
+        org.mockito.Mockito.doThrow(new com.leagueakari.common.exception.QqPushException("QQ 图片消息发送失败（HTTP 401）"))
                 .when(qqBotClient).sendGroupImageMessage(any(), any());
 
         mockMvc.perform(post("/api/matches")

@@ -1,5 +1,6 @@
 package com.leagueakari.controller;
 
+import com.leagueakari.common.web.ApiResult;
 import com.leagueakari.dto.LeaderboardResponse;
 import com.leagueakari.dto.MemberCardResponse;
 import com.leagueakari.dto.TeamMembersResponse;
@@ -26,7 +27,8 @@ import com.leagueakari.team.TeamStatsService;
  *   <li>GET /api/team/members/{puuid} —— 成员卡（成长曲线 + 英雄基线对比）</li>
  *   <li>POST /api/team/backfill —— 触发 Riot 历史对局回填（异步）</li>
  * </ul>
- * 异常由全局异常处理器统一转换：roster 未配置/维度未知 → 400，AI/外部依赖失败 → 503
+ * 异常由全局异常处理器统一转换（HTTP 200 + 业务码）：roster 未配置 → 1101，
+ * 维度未知 → 1104，非成员 → 1103，AI/外部依赖失败 → 4xxx
  */
 @RestController
 @RequestMapping("/api/team")
@@ -44,9 +46,9 @@ public class TeamController {
      * 车队周报：date 为该周内任意一天（ISO yyyy-MM-dd），缺省统计上一周
      */
     @GetMapping("/weekly")
-    public Map<String, WeeklyReportResponse> weekly(@RequestParam(required = false)
+    public ApiResult<WeeklyReportResponse> weekly(@RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        return Map.of("data", teamStatsService.weeklyReport(date));
+        return ApiResult.success(teamStatsService.weeklyReport(date));
     }
 
     /**
@@ -54,36 +56,36 @@ public class TeamController {
      * mode 为模式过滤，start/end 为毫秒时间戳范围（缺省全时段）
      */
     @GetMapping("/leaderboards")
-    public Map<String, LeaderboardResponse> leaderboards(
+    public ApiResult<LeaderboardResponse> leaderboards(
             @RequestParam String dimension,
             @RequestParam(required = false) String mode,
             @RequestParam(required = false) Long start,
             @RequestParam(required = false) Long end) {
-        return Map.of("data", teamStatsService.leaderboard(dimension, mode, start, end));
+        return ApiResult.success(teamStatsService.leaderboard(dimension, mode, start, end));
     }
 
     /**
      * 车队成员列表与全时段车队对局出勤
      */
     @GetMapping("/members")
-    public Map<String, TeamMembersResponse> members() {
-        return Map.of("data", teamStatsService.members());
+    public ApiResult<TeamMembersResponse> members() {
+        return ApiResult.success(teamStatsService.members());
     }
 
     /**
      * 成员卡：成长曲线（近 8 周）+ 英雄基线对比（全时段）
      */
     @GetMapping("/members/{puuid}")
-    public Map<String, MemberCardResponse> memberCard(@PathVariable String puuid) {
-        return Map.of("data", teamStatsService.memberCard(puuid));
+    public ApiResult<MemberCardResponse> memberCard(@PathVariable String puuid) {
+        return ApiResult.success(teamStatsService.memberCard(puuid));
     }
 
     /**
      * 触发 Riot 历史对局回填（异步执行，立即返回）；重复触发返回 started=false
      */
     @PostMapping("/backfill")
-    public Map<String, Object> backfill() {
+    public ApiResult<Map<String, Object>> backfill() {
         boolean started = backfillService.startBackfill();
-        return Map.of("code", 0, "data", Map.of("started", started));
+        return ApiResult.success(Map.of("started", started));
     }
 }

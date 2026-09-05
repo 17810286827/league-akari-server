@@ -1,5 +1,9 @@
 package com.leagueakari.ai;
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.config.AiProperties;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
@@ -26,7 +30,7 @@ import static org.mockito.Mockito.when;
 /**
  * AiClient 单元测试（公共 AI 调用组件，外部 I/O 接缝）：
  * 通过 mock CloseableHttpClient 隔离网络，验证对外契约——
- * 请求组装（payload 字段、Bearer/浏览器 UA 请求头）、HTTP 错误转 IllegalStateException、
+ * 请求组装（payload 字段、Bearer/浏览器 UA 请求头）、HTTP 错误转 BizException(AI_API_ERROR)、
  * 非流式空正文返回 null、流式 SSE 逐块回调（content/reasoning 分流、finish_reason 透传）。
  * 这些用例取代三个业务服务测试中原有的 payload 断言，是网关行为变化的回归网。
  */
@@ -139,7 +143,7 @@ class AiClientTest {
 
         org.assertj.core.api.Assertions.assertThatThrownBy(
                         () -> keyless.call(plainRequest(), "system", "user", "ctx", 2))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("API Key");
         org.mockito.Mockito.verify(httpClient, org.mockito.Mockito.never()).execute(any(HttpPost.class));
     }
@@ -249,23 +253,23 @@ class AiClientTest {
         assertThat(client.call(plainRequest(), "系统提示", "用户内容", "test")).isNull();
     }
 
-    /** 用例：非 200 → IllegalStateException（携带状态码，提示重试） */
+    /** 用例：非 200 → BizException(AI_API_ERROR)（携带状态码，提示重试） */
     @Test
     void call_throwsOnNon200() throws Exception {
         mockResponse(502, "{\"error\":\"bad gateway\"}");
 
         assertThatThrownBy(() -> client.call(plainRequest(), "系统提示", "用户内容", "test"))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("502");
     }
 
-    /** 用例：网络异常（超时/断连）→ IllegalStateException（提示检查网络与 Key） */
+    /** 用例：网络异常（超时/断连）→ BizException(AI_API_ERROR)（提示检查网络与 Key） */
     @Test
     void call_throwsOnNetworkError() throws Exception {
         when(httpClient.execute(any(HttpPost.class))).thenThrow(new IOException("connect timed out"));
 
         assertThatThrownBy(() -> client.call(plainRequest(), "系统提示", "用户内容", "test"))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("网络与 API Key");
     }
 
@@ -325,7 +329,7 @@ class AiClientTest {
         assertThat(finishReason).isEqualTo("length");
     }
 
-    /** 用例：流式非 200 → IllegalStateException（携带状态码） */
+    /** 用例：流式非 200 → BizException(AI_API_ERROR)（携带状态码） */
     @Test
     void callStream_throwsOnNon200() throws Exception {
         mockResponse(500, "{\"error\":\"boom\"}");
@@ -333,11 +337,11 @@ class AiClientTest {
         assertThatThrownBy(() -> client.callStream(analysisRequest(false), "系统提示", "用户内容",
                 chunk -> {
                 }, "test"))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("500");
     }
 
-    /** 用例：SSE 数据不是合法 JSON → IllegalStateException（提示数据异常） */
+    /** 用例：SSE 数据不是合法 JSON → BizException(AI_API_ERROR)（提示数据异常） */
     @Test
     void callStream_throwsOnGarbledData() throws Exception {
         mockResponse(200, "data: {不是JSON");
@@ -345,7 +349,7 @@ class AiClientTest {
         assertThatThrownBy(() -> client.callStream(analysisRequest(false), "系统提示", "用户内容",
                 chunk -> {
                 }, "test"))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("数据异常");
     }
 
@@ -369,7 +373,7 @@ class AiClientTest {
     @Test
     void callStream_propagatesCallbackRuntimeException() throws Exception {
         mockResponse(200, SSE_STREAM);
-        // 专用异常类型：区别于 AiClient 自身抛出的 IllegalStateException，验证不发生转译
+        // 专用异常类型：区别于 AiClient 自身抛出的 BizException，验证不发生转译
         class StopConsumptionException extends RuntimeException {
             StopConsumptionException() {
                 super("stop");

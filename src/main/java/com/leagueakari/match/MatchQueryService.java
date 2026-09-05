@@ -25,6 +25,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
+import com.leagueakari.common.stats.ParticipantStatsReader;
+import com.leagueakari.common.exception.BizException;
+import com.leagueakari.common.exception.ErrorCode;
 import com.leagueakari.scoring.MatchMvpService;
 
 /**
@@ -149,7 +152,7 @@ public class MatchQueryService {
     }
 
     /**
-     * 查询对局详情（含参赛者列表），不存在抛 MatchNotFoundException
+     * 查询对局详情（含参赛者列表），不存在抛 BizException(MATCH_NOT_FOUND)
      * <p>主表按 game_id 精确查询，命中后按主键关联参赛者明细；
      * 详情包含 teams_json 与各参赛者的 stats_json 全量快照。</p>
      */
@@ -157,9 +160,9 @@ public class MatchQueryService {
         // 按幂等键 game_id 查询主表记录
         Match match = matchMapper.selectOne(new QueryWrapper<Match>().eq("game_id", gameId));
         if (match == null) {
-            // 未命中：抛出领域异常，由全局异常处理器转为 404
+            // 未命中：抛出带业务码的业务异常，全局处理器转为统一响应（HTTP 200 + 2001）
             log.warn("Match not found, gameId={}", gameId);
-            throw new MatchNotFoundException(gameId);
+            throw new BizException(ErrorCode.MATCH_NOT_FOUND, "对局不存在: gameId=" + gameId);
         }
 
         // 按主表主键查询参赛者明细（match_participant.match_id 外键）；

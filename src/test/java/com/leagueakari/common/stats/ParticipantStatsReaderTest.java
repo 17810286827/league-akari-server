@@ -1,4 +1,4 @@
-package com.leagueakari.match;
+package com.leagueakari.common.stats;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;

@@ -1,5 +1,9 @@
 package com.leagueakari.riot;
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.config.TeamProperties;
 import com.leagueakari.dto.MatchSyncRequest;
@@ -167,14 +171,14 @@ class RiotMatchHistoryServiceTest {
     @Test
     void runBackfill_throwsWhenRosterNotConfigured() {
         when(rosterService.requireMembers())
-                .thenThrow(new IllegalArgumentException("车队名单未配置"));
+                .thenThrow(new BizException(ErrorCode.ROSTER_NOT_CONFIGURED));
 
         assertThatTeamNotConfigured();
     }
 
     private void assertThatTeamNotConfigured() {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.runBackfillSync())
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("车队名单未配置");
     }
 }

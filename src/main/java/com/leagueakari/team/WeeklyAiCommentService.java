@@ -1,5 +1,9 @@
 package com.leagueakari.team;
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.ai.AiClient;
 import com.leagueakari.ai.PromptLoader;
@@ -70,7 +74,7 @@ public class WeeklyAiCommentService {
      *
      * @param report 已聚合完成的周报（只读其摘要字段）
      * @return 锐评文本（中文，一两句话）
-     * @throws IllegalStateException AI Key 未配置 / 接口失败 / 重试后正文仍为空
+     * AI Key 未配置 / 接口失败 / 重试后正文仍为空时抛 BizException(AI_API_ERROR)
      */
     public String generateComment(WeeklyReportResponse report) {
         // apiKey 前置校验收敛到 AiClient 重载（架构清理 T7）；缓存命中（历史成功产物）不受 Key 状态影响
@@ -91,7 +95,7 @@ public class WeeklyAiCommentService {
         String comment = aiClient.call(completionRequest, systemPrompt, summary,
                 "weekly:" + report.getWeekLabel(), 2);
         if (comment == null) {
-            throw new IllegalStateException("AI 返回内容为空，请稍后重试");
+            throw new BizException(ErrorCode.AI_API_ERROR, "AI 返回内容为空，请稍后重试");
         }
         cache.put(report.getWeekLabel(), new CacheEntry(comment, System.currentTimeMillis()));
         log.info("Weekly AI comment generated: week={}, length={}", report.getWeekLabel(), comment.length());
@@ -132,7 +136,7 @@ public class WeeklyAiCommentService {
             return objectMapper.writeValueAsString(summary);
         } catch (Exception e) {
             log.error("Failed to serialize weekly summary: {}", e.getMessage());
-            throw new IllegalStateException("周报摘要组装失败");
+            throw new BizException(ErrorCode.DATA_ASSEMBLY_FAILED, "周报摘要组装失败", e);
         }
     }
 

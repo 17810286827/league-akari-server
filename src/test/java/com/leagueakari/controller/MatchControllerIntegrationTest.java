@@ -146,14 +146,14 @@ class MatchControllerIntegrationTest {
                         .param("startTime", "1719999999999")
                         .param("endTime", "1720000000001"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.data.total").value(1))
                 // self 卡片：召唤师名/英雄/胜负都是查询者（红队败方）的，而非推送者
-                .andExpect(jsonPath("$.data[0].self.summonerName").value("手裂鬼子"))
-                .andExpect(jsonPath("$.data[0].self.championId").value(57))
-                .andExpect(jsonPath("$.data[0].self.kills").value(8))
-                .andExpect(jsonPath("$.data[0].self.win").value(false))
+                .andExpect(jsonPath("$.data.items[0].self.summonerName").value("手裂鬼子"))
+                .andExpect(jsonPath("$.data.items[0].self.championId").value(57))
+                .andExpect(jsonPath("$.data.items[0].self.kills").value(8))
+                .andExpect(jsonPath("$.data.items[0].self.win").value(false))
                 // 视角归属：响应的 selfPuuid 是查询者，而非对局推送者
-                .andExpect(jsonPath("$.data[0].selfPuuid").value("enemy-puuid-1"));
+                .andExpect(jsonPath("$.data.items[0].selfPuuid").value("enemy-puuid-1"));
     }
 
     /**
@@ -202,7 +202,7 @@ class MatchControllerIntegrationTest {
     }
 
     /**
-     * 用例：先入库一局，再分页查询应能命中，且响应带 total 与 data 数组
+     * 用例：先入库一局，再分页查询应能命中，统一信封 data 内为 { items, page, pageSize, total }
      */
     @Test
     void queryMatches_returnsPagedList() throws Exception {
@@ -222,23 +222,23 @@ class MatchControllerIntegrationTest {
                         .param("startTime", "1719999999999")
                         .param("endTime", "1720000000001"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.total").isNumber())
-                .andExpect(jsonPath("$.data").isArray())
+                .andExpect(jsonPath("$.data.total").isNumber())
+                .andExpect(jsonPath("$.data.items").isArray())
                 // 本玩家数据：self 由 puuid 与 selfPuuid 匹配的行填充
-                .andExpect(jsonPath("$.data[0].self.championId").value(103))
-                .andExpect(jsonPath("$.data[0].self.kills").value(5))
-                .andExpect(jsonPath("$.data[0].self.win").value(true))
+                .andExpect(jsonPath("$.data.items[0].self.championId").value(103))
+                .andExpect(jsonPath("$.data.items[0].self.kills").value(5))
+                .andExpect(jsonPath("$.data.items[0].self.win").value(true))
                 // stats_json 解析路径：伤害/补刀/标记字段应取自 stats 快照
-                .andExpect(jsonPath("$.data[0].self.totalDamage").value(25430))
-                .andExpect(jsonPath("$.data[0].self.cs").value(212))
-                .andExpect(jsonPath("$.data[0].self.largestMultiKill").value(4))
-                .andExpect(jsonPath("$.data[0].self.gameEndedInSurrender").value(false))
+                .andExpect(jsonPath("$.data.items[0].self.totalDamage").value(25430))
+                .andExpect(jsonPath("$.data.items[0].self.cs").value(212))
+                .andExpect(jsonPath("$.data.items[0].self.largestMultiKill").value(4))
+                .andExpect(jsonPath("$.data.items[0].self.gameEndedInSurrender").value(false))
                 // 队伍聚合：kills 为 5 人直显击杀之和（5+4+3+2+1=15），非负
-                .andExpect(jsonPath("$.data[0].teamTotals.kills").value(15))
-                .andExpect(jsonPath("$.data[0].teamTotals.damage").value(25430 * 5))
+                .andExpect(jsonPath("$.data.items[0].teamTotals.kills").value(15))
+                .andExpect(jsonPath("$.data.items[0].teamTotals.damage").value(25430 * 5))
                 // 队友摘要：同队除 self 外应有 4 人
-                .andExpect(jsonPath("$.data[0].teammates.length()").value(4))
-                .andExpect(jsonPath("$.data[0].teammates[0].puuid").value("teammate-1"));
+                .andExpect(jsonPath("$.data.items[0].teammates.length()").value(4))
+                .andExpect(jsonPath("$.data.items[0].teammates[0].puuid").value("teammate-1"));
     }
 
     /**
@@ -261,18 +261,19 @@ class MatchControllerIntegrationTest {
     }
 
     /**
-     * 用例：不存在的 gameId 应返回 404，且响应体 code=404（全局异常处理器契约）
+     * 用例：不存在的 gameId 返回统一响应（HTTP 200 + 业务码 2001，全局异常处理器契约）
      */
     @Test
     void getMatchDetail_notFound() throws Exception {
         mockMvc.perform(get("/api/matches/{gameId}", 9999999999L))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value(404));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(2001))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("对局不存在")));
     }
 
     /**
      * 防御用例：payload 中 teams[0].win 传字符串（LCU 归一化前的原始 'Win'/'Fail'）
-     * 属于字段类型错误，应返回 400 参数错误而非 500，
+     * 属于字段类型错误，应返回业务码 1001 参数错误（HTTP 200），
      * 防止跨端类型断链（Electron 侧未归一化时）导致默认 LCU 路径同步必败
      */
     @Test
@@ -290,7 +291,7 @@ class MatchControllerIntegrationTest {
                 "stats":{"totalDamageDealtToChampions":25430,"visionScore":42}}]}
                 """;
         mockMvc.perform(post("/api/matches").contentType(MediaType.APPLICATION_JSON).content(body))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value(400));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(1001));
     }
 }

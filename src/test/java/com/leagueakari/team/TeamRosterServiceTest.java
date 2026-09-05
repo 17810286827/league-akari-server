@@ -1,11 +1,12 @@
 package com.leagueakari.team;
 
 import com.leagueakari.config.TeamProperties;
+import com.leagueakari.common.exception.BizException;
+import com.leagueakari.common.exception.ErrorCode;
 import com.leagueakari.dto.RiotAccountDto;
 import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.mapper.MatchParticipantMapper;
 import com.leagueakari.riot.RiotAccountClient;
-import com.leagueakari.riot.RiotAccountNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -64,14 +65,14 @@ class TeamRosterServiceTest {
         return row;
     }
 
-    /** 用例：名单为空时 isConfigured=false，requireMembers 抛出带提示的参数异常 */
+    /** 用例：名单为空时 isConfigured=false，requireMembers 抛业务异常（1101） */
     @Test
     void requireMembers_throwsWhenRosterEmpty() {
         teamRosterService = new TeamRosterService(properties(), riotAccountClient, matchParticipantMapper);
 
         assertThat(teamRosterService.isConfigured()).isFalse();
         assertThatThrownBy(() -> teamRosterService.requireMembers())
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("车队名单未配置");
     }
 
@@ -122,23 +123,23 @@ class TeamRosterServiceTest {
                 properties("手裂鬼子#tw2"), riotAccountClient, matchParticipantMapper);
         when(matchParticipantMapper.selectList(any())).thenReturn(List.of(dbRow("tencent-uuid-b")));
         when(riotAccountClient.searchByRiotId("手裂鬼子#tw2"))
-                .thenThrow(new RiotAccountNotFoundException("not found"));
+                .thenThrow(new BizException(ErrorCode.RIOT_ACCOUNT_NOT_FOUND, "not found"));
 
         TeamRosterService.RosterMember member = teamRosterService.requireMembers().get(0);
 
         assertThat(member.puuids()).containsExactly("tencent-uuid-b");
     }
 
-    /** 用例：库内与 Riot 两套来源都查不到 → 整体抛参数异常（400 语义）并带成员名定位 */
+    /** 用例：库内与 Riot 两套来源都查不到 → 整体抛业务异常（1102）并带成员名定位 */
     @Test
     void requireMembers_failsWhenBothSourcesMiss() {
         teamRosterService = new TeamRosterService(properties("消失的人#tw2"), riotAccountClient, matchParticipantMapper);
         when(matchParticipantMapper.selectList(any())).thenReturn(List.of());
         when(riotAccountClient.searchByRiotId("消失的人#tw2"))
-                .thenThrow(new RiotAccountNotFoundException("not found"));
+                .thenThrow(new BizException(ErrorCode.RIOT_ACCOUNT_NOT_FOUND, "not found"));
 
         assertThatThrownBy(() -> teamRosterService.requireMembers())
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("消失的人#tw2");
     }
 

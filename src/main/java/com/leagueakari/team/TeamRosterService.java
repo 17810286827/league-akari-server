@@ -1,5 +1,9 @@
 package com.leagueakari.team;
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.leagueakari.config.TeamProperties;
 import com.leagueakari.dto.RiotAccountDto;
@@ -86,7 +90,7 @@ public class TeamRosterService {
      * 首次调用解析并缓存，之后直接返回缓存
      *
      * @return 车队成员列表（按 riotId 去重，保持配置顺序）
-     * @throws IllegalArgumentException 名单未配置，或任一成员两套来源都查不到
+     * @throws BizException 名单未配置（1101），或任一成员两套来源都查不到（1102）
      */
     public List<RosterMember> requireMembers() {
         // 已解析：直接返回缓存，避免每次请求重复查询
@@ -97,7 +101,7 @@ public class TeamRosterService {
         // 未配置：业务参数错误，返回 400 让管理员第一时间知道要先配名单
         if (!isConfigured()) {
             log.warn("Team roster is not configured (team.roster is empty)");
-            throw new IllegalArgumentException("车队名单未配置：请先在服务端配置 team.roster 成员名单");
+            throw new BizException(ErrorCode.ROSTER_NOT_CONFIGURED);
         }
         // 逐项解析：单个成员两套来源都失败则整体失败并带上成员名，便于定位
         LinkedHashMap<String, RosterMember> resolved = new LinkedHashMap<>();
@@ -121,7 +125,7 @@ public class TeamRosterService {
      *
      * @param riotId 配置的 "昵称#tag"
      * @return 成员（身份集合非空）
-     * @throws IllegalArgumentException 两套来源都查不到该成员
+     * @throws BizException 两套来源都查不到该成员（1102）
      */
     private RosterMember resolveMember(String riotId) {
         LinkedHashSet<String> puuids = new LinkedHashSet<>();
@@ -156,7 +160,8 @@ public class TeamRosterService {
             if (puuids.isEmpty()) {
                 // 两套来源都已尝试且库内无命中：这是真失败，按 400 语义抛出
                 log.error("Failed to resolve roster member {}: {}", riotId, e.getMessage());
-                throw new IllegalArgumentException("车队成员解析失败：" + riotId + "（" + e.getMessage() + "）");
+                throw new BizException(ErrorCode.ROSTER_MEMBER_RESOLVE_FAILED,
+                        "车队成员解析失败：" + riotId + "（" + e.getMessage() + "）");
             }
             // 库内已有身份：Riot 失败只影响历史回填能力，记 warn 不阻塞周报/榜单
             log.warn("Riot lookup failed for {} (db identity kept, backfill unavailable): {}",
@@ -164,7 +169,8 @@ public class TeamRosterService {
         }
 
         if (puuids.isEmpty()) {
-            throw new IllegalArgumentException("车队成员解析失败：" + riotId + "（库内无对局记录且 Riot 查询未命中）");
+            throw new BizException(ErrorCode.ROSTER_MEMBER_RESOLVE_FAILED,
+                    "车队成员解析失败：" + riotId + "（库内无对局记录且 Riot 查询未命中）");
         }
         return new RosterMember(riotId, puuids, riotPuuid);
     }

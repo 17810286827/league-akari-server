@@ -1,6 +1,7 @@
 package com.leagueakari.match;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.leagueakari.common.stats.ParticipantStatsReader;
 import com.leagueakari.dto.MatchDetailResponse;
 import com.leagueakari.dto.MatchSummaryResponse;
 import com.leagueakari.dto.PlayerScoreView;
@@ -213,7 +214,7 @@ class MatchQueryServiceTest {
                 matchQueryService.pageMatches(1, 10, null, "self-puuid-1", null, null, null);
 
         // 列表项契约：mvp 称号携带玩家档案与得分
-        MatchSummaryResponse item = resp.getData().get(0);
+        MatchSummaryResponse item = resp.getItems().get(0);
         assertThat(item.getMvp()).isNotNull();
         assertThat(item.getMvp().getParticipantId()).isEqualTo(101L);
         assertThat(item.getMvp().getSummonerName()).isEqualTo("PlayerOne");
@@ -253,7 +254,7 @@ class MatchQueryServiceTest {
 
         // 执行分页查询，取唯一一条列表项
         PageResponse<MatchSummaryResponse> resp = matchQueryService.pageMatches(1, 10, null, "self-puuid-1", null, null, null);
-        MatchSummaryResponse item = resp.getData().get(0);
+        MatchSummaryResponse item = resp.getItems().get(0);
 
         // self 增强字段：出装 7 槽、海克斯 6 槽、召唤师技能 2 槽、三杀 1 次
         assertThat(item.getSelf().getItems()).hasSize(7);
@@ -308,7 +309,7 @@ class MatchQueryServiceTest {
                 matchQueryService.pageMatches(1, 10, null, null, null, null, null);
 
         // 空页契约：data 空列表、total 0，且不抛错
-        assertThat(resp.getData()).isEmpty();
+        assertThat(resp.getItems()).isEmpty();
         assertThat(resp.getTotal()).isZero();
         assertThat(resp.getRecentOpponents()).isNull();
     }
@@ -351,7 +352,7 @@ class MatchQueryServiceTest {
 
         // 执行分页查询，取唯一一条列表项
         PageResponse<MatchSummaryResponse> resp = matchQueryService.pageMatches(1, 10, null, "self-puuid-1", null, null, null);
-        MatchSummaryResponse item = resp.getData().get(0);
+        MatchSummaryResponse item = resp.getItems().get(0);
 
         // self 兜底契约：出装/技能/海克斯为空列表，perks 为空 perkIds + 样式 0
         assertThat(item.getSelf().getItems()).isEmpty();
@@ -429,7 +430,7 @@ class MatchQueryServiceTest {
         // 查询者视角查询战绩
         PageResponse<MatchSummaryResponse> resp =
                 matchQueryService.pageMatches(1, 10, null, "other-puuid", null, null, null);
-        MatchSummaryResponse item = resp.getData().get(0);
+        MatchSummaryResponse item = resp.getItems().get(0);
 
         // 断言：self 卡片是查询者本人的数据，而不是推送者 ikun 的
         assertThat(item.getSelfPuuid()).isEqualTo("other-puuid");

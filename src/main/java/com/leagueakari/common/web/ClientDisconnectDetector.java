@@ -1,7 +1,7 @@
-package com.leagueakari.util;
+package com.leagueakari.common.web;
 
 /**
- * 客户端断开异常识别工具
+ * 客户端断开异常识别工具（web 层横切设施，供全局处理器与 SSE 推送方共用）
  * <p>SSE/流式响应场景下，客户端关闭页面、刷新或网络断开都会导致服务端写入失败
  * （Broken pipe / Connection reset / ClientAbortException / AsyncRequestNotUsableException）。
  * 这类异常是<b>预期现象</b>而非服务端故障，调用方应据此降级日志（INFO/WARN、无堆栈）

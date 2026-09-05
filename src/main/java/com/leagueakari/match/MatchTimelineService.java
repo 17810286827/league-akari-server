@@ -1,5 +1,9 @@
 package com.leagueakari.match;
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.entity.MatchTimeline;
@@ -87,7 +91,7 @@ public class MatchTimelineService {
     private String writeJson(Long gameId, Object value) {
         if (value == null) {
             // frames_json 为 NOT NULL 列：null 入参属调用错误，失败即抛并带 gameId 定位
-            throw new IllegalArgumentException("timeline frames 不能为 null: gameId=" + gameId);
+            throw new BizException(ErrorCode.INVALID_ARGUMENT, "timeline frames 不能为 null: gameId=" + gameId);
         }
         try {
             // 通过 Jackson 序列化为 JSON 字符串
@@ -96,7 +100,7 @@ public class MatchTimelineService {
             // 序列化失败即抛：返回 null 会在插入时触发 NOT NULL 约束错误，
             // 提前抛出并携带 gameId，便于调用方定位与排查
             log.error("Failed to serialize timeline frames to JSON, gameId={}", gameId, e);
-            throw new IllegalStateException("timeline frames 序列化失败: gameId=" + gameId, e);
+            throw new BizException(ErrorCode.DATA_ASSEMBLY_FAILED, "timeline frames 序列化失败: gameId=" + gameId, e);
         }
     }
 }

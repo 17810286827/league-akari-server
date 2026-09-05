@@ -1,6 +1,8 @@
 package com.leagueakari.riot;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.leagueakari.common.exception.BizException;
+import com.leagueakari.common.exception.ErrorCode;
 import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
@@ -28,8 +30,8 @@ import static org.mockito.Mockito.when;
 /**
  * RiotHttpClient 单元测试（统一出口的三合一契约，mock HttpClient）：
  * 1. X-Riot-Token 头恒携带；2. 限流器在每次出网前 acquire（无差别挂载）；
- * 3. 状态码语义翻译：404 → RiotAccountNotFoundException、429 → 等待重试一次、
- * 其他非 2xx → 带 body 的 IllegalStateException。
+ * 3. 状态码语义翻译：404 → BizException(RIOT_ACCOUNT_NOT_FOUND)、429 → 等待重试一次、
+ * 其他非 2xx → BizException(RIOT_API_ERROR)。
  */
 @ExtendWith(MockitoExtension.class)
 class RiotHttpClientTest {
@@ -79,13 +81,14 @@ class RiotHttpClientTest {
     }
 
     @Test
-    @DisplayName("404：抛 RiotAccountNotFoundException（业务异常，全局处理器转 404）")
+    @DisplayName("404：抛 BizException(RIOT_ACCOUNT_NOT_FOUND)（全局处理器统一转换）")
     void get_404ThrowsAccountNotFound() throws Exception {
         CloseableHttpResponse notFound = response(404, "");
         when(httpClient.execute(any(HttpGet.class))).thenReturn(notFound);
 
         assertThatThrownBy(() -> client.get(URI.create("https://example.com/x")))
-                .isInstanceOf(RiotAccountNotFoundException.class);
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("不存在");
     }
 
     @Test
@@ -103,25 +106,25 @@ class RiotHttpClientTest {
     }
 
     @Test
-    @DisplayName("429 重试仍 429：抛限流异常（不再无限重试）")
+    @DisplayName("429 重试仍 429：抛限流业务异常（不再无限重试）")
     void get_429TwiceThrows() throws Exception {
         CloseableHttpResponse limited = response(429, "");
         when(httpClient.execute(any(HttpGet.class))).thenReturn(limited);
 
         assertThatThrownBy(() -> client.get(URI.create("https://example.com/z")))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("429");
         verify(httpClient, times(2)).execute(any(HttpGet.class));
     }
 
     @Test
-    @DisplayName("其他非 2xx（如 403）：抛带状态码的 IllegalStateException")
+    @DisplayName("其他非 2xx（如 403）：抛带状态码的业务异常（RIOT_API_ERROR）")
     void get_otherNon2xxThrowsIllegalState() throws Exception {
         CloseableHttpResponse forbidden = response(403, "forbidden");
         when(httpClient.execute(any(HttpGet.class))).thenReturn(forbidden);
 
         assertThatThrownBy(() -> client.get(URI.create("https://example.com/w")))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("403");
     }
 }

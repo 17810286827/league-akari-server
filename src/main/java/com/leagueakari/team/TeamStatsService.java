@@ -1,5 +1,9 @@
 package com.leagueakari.team;
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,7 +36,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import com.leagueakari.gamedata.GameDataService;
 import com.leagueakari.match.MatchTimelineService;
-import com.leagueakari.match.ParticipantStatsReader;
+import com.leagueakari.common.stats.ParticipantStatsReader;
 import com.leagueakari.scoring.BaselineService;
 import com.leagueakari.scoring.ChampionBaseline;
 import com.leagueakari.scoring.MatchMvpService;
@@ -164,8 +168,7 @@ public class TeamStatsService {
      *
      * @param anyDayOfWeek 该周内任意一天；null 表示上一周
      * @return 完整周报
-     * @throws IllegalArgumentException 车队名单未配置
-     * @throws IllegalStateException    任一成员解析失败
+     * @throws BizException 车队名单未配置（1101），任一成员解析失败（1102）
      */
     public WeeklyReportResponse weeklyReport(LocalDate anyDayOfWeek) {
         // 默认周：今天回退 7 天所在周（无论今天是周几，都落在上一个自然周）
@@ -212,11 +215,11 @@ public class TeamStatsService {
      * @param startMs   范围起始（含）；null 表示不限
      * @param endMs     范围结束（不含）；null 表示不限
      * @return 榜单数据（已排序）
-     * @throws IllegalArgumentException 维度未知或车队名单未配置
+     * @throws BizException 维度未知（1104）或车队名单未配置（1101）
      */
     public LeaderboardResponse leaderboard(String dimension, String gameMode, Long startMs, Long endMs) {
         if (dimension == null || !DIMENSIONS.contains(dimension)) {
-            throw new IllegalArgumentException("未知榜单维度：" + dimension + "，可选：" + DIMENSIONS);
+            throw new BizException(ErrorCode.UNKNOWN_DIMENSION, "未知榜单维度：" + dimension + "，可选：" + DIMENSIONS);
         }
         List<TeamRosterService.RosterMember> roster = rosterService.requireMembers();
         List<GameData> fleetGames = loadGames(startMs, endMs, gameMode, true).stream()
@@ -279,7 +282,7 @@ public class TeamStatsService {
      * 成员卡：个人成长曲线（近 {@value TREND_WEEKS} 周）+ 英雄基线对比（全时段）
      *
      * @param puuid 成员 puuid（主标识或任一别名均可）
-     * @throws IllegalArgumentException 非车队成员
+     * @throws BizException 非车队成员（1103）
      */
     public MemberCardResponse memberCard(String puuid) {
         List<TeamRosterService.RosterMember> roster = rosterService.requireMembers();
@@ -287,7 +290,7 @@ public class TeamStatsService {
         TeamRosterService.RosterMember member = roster.stream()
                 .filter(m -> m.owns(puuid))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("非车队成员：" + puuid));
+                .orElseThrow(() -> new BizException(ErrorCode.NOT_TEAM_MEMBER, "非车队成员：" + puuid));
         log.info("Building member card: riotId={}, puuids={}", member.riotId(), member.puuids().size());
 
         // 成长曲线：近 TREND_WEEKS 周（含当前周），按"个人全部对局"统计（含单人局与回填局）

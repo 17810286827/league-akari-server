@@ -12,7 +12,7 @@ import com.leagueakari.mapper.MatchMapper;
 import com.leagueakari.mapper.MatchMvpMapper;
 import com.leagueakari.mapper.MatchParticipantMapper;
 import com.leagueakari.qqbot.QqBotClient;
-import com.leagueakari.qqbot.QqPushException;
+import com.leagueakari.common.exception.QqPushException;
 import com.leagueakari.reportimage.ReportImageRenderer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

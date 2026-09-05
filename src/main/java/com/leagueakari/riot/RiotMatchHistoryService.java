@@ -1,5 +1,9 @@
 package com.leagueakari.riot;
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -90,8 +94,7 @@ public class RiotMatchHistoryService {
      * 正在运行时返回 false（不重复触发）；roster 未配置抛参数异常（400 语义）
      *
      * @return 是否成功启动
-     * @throws IllegalArgumentException 车队名单未配置
-     * @throws IllegalStateException    Riot API Key 未配置
+     * @throws BizException 车队名单未配置（1101）、Riot API Key 未配置（4001）
      */
     public boolean startBackfill() {
         requireApiKey();
@@ -117,7 +120,7 @@ public class RiotMatchHistoryService {
         } catch (Exception e) {
             running = false;
             log.error("Backfill submit failed: {}", e.getMessage());
-            throw new IllegalStateException("回填任务提交失败：" + e.getMessage());
+            throw new BizException(ErrorCode.INTERNAL_ERROR, "回填任务提交失败：" + e.getMessage());
         }
         return true;
     }
@@ -201,7 +204,7 @@ public class RiotMatchHistoryService {
     /** 校验 API Key，未配置抛状态异常（503 语义） */
     private void requireApiKey() {
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("Riot API Key 未配置，无法回填历史对局");
+            throw new BizException(ErrorCode.RIOT_API_KEY_MISSING, "Riot API Key 未配置，无法回填历史对局");
         }
     }
 
@@ -216,11 +219,12 @@ public class RiotMatchHistoryService {
             String body = riotHttpClient.get(uri);
             return objectMapper.readValue(body,
                     objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
-        } catch (IllegalStateException e) {
+        } catch (BizException e) {
+            // Riot 出口已翻译的业务异常：原样上抛
             throw e;
         } catch (Exception e) {
             log.error("Failed to fetch match ids: puuid={}, start={}, error={}", puuid, start, e.getMessage());
-            throw new IllegalStateException("拉取对局列表失败：" + e.getMessage());
+            throw new BizException(ErrorCode.RIOT_API_ERROR, "拉取对局列表失败：" + e.getMessage(), e);
         }
     }
 
@@ -257,11 +261,12 @@ public class RiotMatchHistoryService {
                 request.getParticipants().add(toParticipantSync(participant));
             }
             return request;
-        } catch (IllegalStateException e) {
+        } catch (BizException e) {
+            // Riot 出口已翻译的业务异常：原样上抛
             throw e;
         } catch (Exception e) {
             log.error("Failed to fetch/convert match: id={}, error={}", matchId, e.getMessage());
-            throw new IllegalStateException("拉取对局详情失败：" + e.getMessage());
+            throw new BizException(ErrorCode.RIOT_API_ERROR, "拉取对局详情失败：" + e.getMessage(), e);
         }
     }
 

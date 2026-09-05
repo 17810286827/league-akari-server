@@ -18,7 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import com.leagueakari.gamedata.GameDataService;
-import com.leagueakari.match.ParticipantStatsReader;
+import com.leagueakari.common.stats.ParticipantStatsReader;
 import com.leagueakari.team.TeamRosterService;
 
 /**

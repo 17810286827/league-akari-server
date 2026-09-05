@@ -1,6 +1,10 @@
 package com.leagueakari.broadcast;
 
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
@@ -14,7 +18,7 @@ import com.leagueakari.mapper.MatchMapper;
 import com.leagueakari.mapper.MatchMvpMapper;
 import com.leagueakari.mapper.MatchParticipantMapper;
 import com.leagueakari.qqbot.QqBotClient;
-import com.leagueakari.qqbot.QqPushException;
+import com.leagueakari.common.exception.QqPushException;
 import com.leagueakari.reportimage.ReportImageData;
 import com.leagueakari.reportimage.ReportImageRenderer;
 import org.mockito.ArgumentCaptor;
@@ -46,7 +50,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import com.leagueakari.gamedata.GameDataService;
-import com.leagueakari.match.ParticipantStatsReader;
+import com.leagueakari.common.stats.ParticipantStatsReader;
 import com.leagueakari.team.TeamRosterService;
 
 /**
@@ -334,7 +338,7 @@ class BroadcastCoordinatorTest {
         stubCommon();
         stubNoAwards();
         when(postGameCommentService.generateComment(any()))
-                .thenThrow(new IllegalStateException("AI 返回内容为空"));
+                .thenThrow(new BizException(ErrorCode.AI_API_ERROR, "AI 返回内容为空"));
 
         coordinator.maybeBroadcast(2000000001L);
 

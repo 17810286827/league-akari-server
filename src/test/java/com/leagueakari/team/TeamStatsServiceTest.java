@@ -1,5 +1,9 @@
 package com.leagueakari.team;
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.config.TeamProperties;
 import com.leagueakari.dto.LeaderboardResponse;
@@ -35,7 +39,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import com.leagueakari.gamedata.GameDataService;
 import com.leagueakari.match.MatchTimelineService;
-import com.leagueakari.match.ParticipantStatsReader;
+import com.leagueakari.common.stats.ParticipantStatsReader;
 import com.leagueakari.scoring.BaselineService;
 import com.leagueakari.scoring.ChampionBaseline;
 import com.leagueakari.scoring.MatchMvpService;
@@ -486,7 +490,7 @@ class TeamStatsServiceTest {
         assertThat(board.getEntries().get(0).getValue()).isEqualTo(1.0);
 
         assertThatThrownBy(() -> svc.leaderboard("no-such-dim", null, null, null))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("维度");
     }
 
@@ -571,7 +575,7 @@ class TeamStatsServiceTest {
         TeamStatsService svc = service();
 
         assertThatThrownBy(() -> svc.memberCard("puuid-stranger"))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("车队成员");
     }
 

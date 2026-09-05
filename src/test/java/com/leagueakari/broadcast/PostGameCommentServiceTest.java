@@ -1,6 +1,10 @@
 package com.leagueakari.broadcast;
 
 
+import com.leagueakari.common.exception.ErrorCode;
+
+import com.leagueakari.common.exception.BizException;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.ai.AiClient;
 import com.leagueakari.ai.AiCompletionRequest;
@@ -84,26 +88,26 @@ class PostGameCommentServiceTest {
         assertThat(captor.getValue().maxTokens()).isEqualTo(1024);
     }
 
-    /** 用例：重试耗尽仍空正文 → 抛 IllegalStateException（由编排层降级为缺席提示）。
+    /** 用例：重试耗尽仍空正文 → 抛 BizException(AI_API_ERROR)（由编排层降级为缺席提示）。
      *  空正文重试已下沉为 AiClient 重载原语（架构清理 T7），本层只验"重载返回 null 即降级"。 */
     @Test
     void generateComment_throwsWhenAlwaysEmpty() {
         when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt())).thenReturn(null);
 
         assertThatThrownBy(() -> service.generateComment(summary()))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("内容为空");
         verify(aiClient, times(1)).call(any(), anyString(), anyString(), anyString(), anyInt());
     }
 
-    /** 用例：AI 接口失败（AiClient 转 IllegalStateException）→ 原样上抛（由编排层降级） */
+    /** 用例：AI 接口失败（AiClient 转 BizException）→ 原样上抛（由编排层降级） */
     @Test
     void generateComment_propagatesAiFailure() {
         when(aiClient.call(any(), anyString(), anyString(), anyString(), anyInt()))
-                .thenThrow(new IllegalStateException("AI 接口调用失败（HTTP 502），请稍后重试"));
+                .thenThrow(new BizException(ErrorCode.AI_API_ERROR, "AI 接口调用失败（HTTP 502），请稍后重试"));
 
         assertThatThrownBy(() -> service.generateComment(summary()))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(BizException.class)
                 .hasMessageContaining("502");
     }
 

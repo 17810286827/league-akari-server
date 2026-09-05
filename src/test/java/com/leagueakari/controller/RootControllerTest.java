@@ -11,7 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * RootController 单元测试（standalone MockMvc，不依赖数据库）：
- * 根路径 "/" 返回服务引导信息（code=0），裸地址访问得到 200 友好响应
+ * 根路径 "/" 按统一信封返回服务引导信息（data 内含 service/health）
  */
 class RootControllerTest {
 
@@ -28,7 +28,7 @@ class RootControllerTest {
         mockMvc.perform(get("/"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
-                .andExpect(jsonPath("$.service").value("league-akari-server"))
-                .andExpect(jsonPath("$.health").value("/actuator/health"));
+                .andExpect(jsonPath("$.data.service").value("league-akari-server"))
+                .andExpect(jsonPath("$.data.health").value("/actuator/health"));
     }
 }

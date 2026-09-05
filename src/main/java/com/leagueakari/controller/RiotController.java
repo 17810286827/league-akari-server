@@ -1,5 +1,6 @@
 package com.leagueakari.controller;
 
+import com.leagueakari.common.web.ApiResult;
 import com.leagueakari.dto.RiotAccountDto;
 import com.leagueakari.riot.RiotAccountClient;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,14 +25,14 @@ public class RiotController {
     }
 
     /**
-     * 按"昵称#tag"搜索召唤师账号（Riot Account-V1，带 JVM 缓存）
+     * 按"昵称#tag"搜索召唤师账号（Riot Account-V1，库缓存优先）
      *
      * @param riotName 召唤师名，格式 "昵称#tag"（如 "赌书消得泼茶香#iKun"）
-     * @return 账号信息（puuid/gameName/tagLine）
+     * @return 统一响应：data 为账号信息（puuid/gameName/tagLine）
      */
     @GetMapping("/by-name")
-    public RiotAccountDto searchByRiotId(@RequestParam String riotName) {
-        // 参数格式校验（缺 #tag）与业务异常均由 service/全局异常处理器处理
-        return riotAccountClient.searchByRiotId(riotName);
+    public ApiResult<RiotAccountDto> searchByRiotId(@RequestParam String riotName) {
+        // 参数格式校验（缺 #tag）与业务异常均由 service 抛 BizException、全局处理器统一转换
+        return ApiResult.success(riotAccountClient.searchByRiotId(riotName));
     }
 }
