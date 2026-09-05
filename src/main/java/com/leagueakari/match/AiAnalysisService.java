@@ -11,7 +11,7 @@ import com.leagueakari.ai.PromptLoader;
 import com.leagueakari.ai.AiCompletionRequest;
 import com.leagueakari.ai.AiStreamHandler;
 import com.leagueakari.config.AiProperties;
-import com.leagueakari.dto.MatchDetailResponse;
+import com.leagueakari.dto.match.MatchDetailResponse;
 import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.common.web.ClientDisconnectDetector;
 import lombok.extern.slf4j.Slf4j;

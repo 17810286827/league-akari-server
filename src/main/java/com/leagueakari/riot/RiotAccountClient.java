@@ -7,7 +7,7 @@ import com.leagueakari.common.exception.BizException;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.leagueakari.dto.RiotAccountDto;
+import com.leagueakari.dto.riot.RiotAccountDto;
 import com.leagueakari.entity.RiotAccount;
 import com.leagueakari.mapper.RiotAccountMapper;
 import lombok.extern.slf4j.Slf4j;

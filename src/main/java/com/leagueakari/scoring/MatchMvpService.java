@@ -3,7 +3,7 @@ package com.leagueakari.scoring;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.config.ScoringConfig;
-import com.leagueakari.dto.PlayerScoreView;
+import com.leagueakari.dto.scoring.PlayerScoreView;
 import com.leagueakari.entity.Match;
 import com.leagueakari.entity.MatchMvp;
 import com.leagueakari.entity.MatchParticipant;

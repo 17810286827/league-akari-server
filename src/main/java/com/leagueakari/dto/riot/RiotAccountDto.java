@@ -1,4 +1,4 @@
-package com.leagueakari.dto;
+package com.leagueakari.dto.riot;
 
 import lombok.Data;
 

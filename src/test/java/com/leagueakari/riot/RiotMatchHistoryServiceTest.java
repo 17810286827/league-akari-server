@@ -6,7 +6,7 @@ import com.leagueakari.common.exception.BizException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.config.TeamProperties;
-import com.leagueakari.dto.MatchSyncRequest;
+import com.leagueakari.dto.match.MatchSyncRequest;
 import com.leagueakari.entity.RiotAccount;
 import com.leagueakari.mapper.MatchMapper;
 import com.leagueakari.mapper.RiotAccountMapper;

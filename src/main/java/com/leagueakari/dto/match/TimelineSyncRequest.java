@@ -1,4 +1,4 @@
-package com.leagueakari.dto;
+package com.leagueakari.dto.match;
 
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;

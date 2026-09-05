@@ -13,7 +13,7 @@ import com.leagueakari.ai.AiClient;
 import com.leagueakari.ai.AiCompletionRequest;
 import com.leagueakari.ai.AiStreamHandler;
 import com.leagueakari.config.AiProperties;
-import com.leagueakari.dto.MatchDetailResponse;
+import com.leagueakari.dto.match.MatchDetailResponse;
 import com.leagueakari.entity.MatchParticipant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

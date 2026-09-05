@@ -1,7 +1,7 @@
 package com.leagueakari.match;
 
-import com.leagueakari.dto.MatchSyncRequest;
-import com.leagueakari.dto.ParticipantSyncRequest;
+import com.leagueakari.dto.match.MatchSyncRequest;
+import com.leagueakari.dto.match.ParticipantSyncRequest;
 import com.leagueakari.entity.Match;
 import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.mapper.MatchMapper;

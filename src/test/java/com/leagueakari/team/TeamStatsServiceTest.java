@@ -6,11 +6,11 @@ import com.leagueakari.common.exception.BizException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.config.TeamProperties;
-import com.leagueakari.dto.LeaderboardResponse;
-import com.leagueakari.dto.MemberCardResponse;
-import com.leagueakari.dto.PlayerScoreView;
-import com.leagueakari.dto.TeamMembersResponse;
-import com.leagueakari.dto.WeeklyReportResponse;
+import com.leagueakari.dto.team.LeaderboardResponse;
+import com.leagueakari.dto.team.MemberCardResponse;
+import com.leagueakari.dto.scoring.PlayerScoreView;
+import com.leagueakari.dto.team.TeamMembersResponse;
+import com.leagueakari.dto.team.WeeklyReportResponse;
 import com.leagueakari.entity.Match;
 import com.leagueakari.entity.MatchMvp;
 import com.leagueakari.entity.MatchParticipant;

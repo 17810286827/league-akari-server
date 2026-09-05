@@ -1,4 +1,4 @@
-package com.leagueakari.dto;
+package com.leagueakari.dto.match;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;

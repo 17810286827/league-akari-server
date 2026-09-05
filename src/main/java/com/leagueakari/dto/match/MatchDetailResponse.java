@@ -1,5 +1,6 @@
-package com.leagueakari.dto;
+package com.leagueakari.dto.match;
 
+import com.leagueakari.dto.scoring.PlayerScoreView;
 import com.leagueakari.entity.MatchParticipant;
 import lombok.Data;
 

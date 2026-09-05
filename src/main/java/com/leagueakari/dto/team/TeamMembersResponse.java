@@ -1,4 +1,4 @@
-package com.leagueakari.dto;
+package com.leagueakari.dto.team;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

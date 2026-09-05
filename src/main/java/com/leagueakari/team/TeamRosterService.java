@@ -6,7 +6,7 @@ import com.leagueakari.common.exception.BizException;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.leagueakari.config.TeamProperties;
-import com.leagueakari.dto.RiotAccountDto;
+import com.leagueakari.dto.riot.RiotAccountDto;
 import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.mapper.MatchParticipantMapper;
 import com.leagueakari.riot.RiotAccountClient;

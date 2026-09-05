@@ -1,7 +1,7 @@
 package com.leagueakari.controller;
 
 import com.leagueakari.common.web.ApiResult;
-import com.leagueakari.dto.RiotAccountDto;
+import com.leagueakari.dto.riot.RiotAccountDto;
 import com.leagueakari.riot.RiotAccountClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;

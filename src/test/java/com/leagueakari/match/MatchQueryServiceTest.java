@@ -2,10 +2,10 @@ package com.leagueakari.match;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.leagueakari.common.stats.ParticipantStatsReader;
-import com.leagueakari.dto.MatchDetailResponse;
-import com.leagueakari.dto.MatchSummaryResponse;
-import com.leagueakari.dto.PlayerScoreView;
-import com.leagueakari.dto.PageResponse;
+import com.leagueakari.dto.match.MatchDetailResponse;
+import com.leagueakari.dto.match.MatchSummaryResponse;
+import com.leagueakari.dto.scoring.PlayerScoreView;
+import com.leagueakari.dto.common.PageResponse;
 import com.leagueakari.entity.Match;
 import com.leagueakari.entity.MatchMvp;
 import com.leagueakari.entity.MatchParticipant;

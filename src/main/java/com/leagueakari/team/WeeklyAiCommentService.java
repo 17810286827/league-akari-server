@@ -9,7 +9,7 @@ import com.leagueakari.ai.AiClient;
 import com.leagueakari.ai.PromptLoader;
 import com.leagueakari.ai.AiCompletionRequest;
 import com.leagueakari.config.AiProperties;
-import com.leagueakari.dto.WeeklyReportResponse;
+import com.leagueakari.dto.team.WeeklyReportResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 

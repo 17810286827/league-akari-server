@@ -7,7 +7,7 @@ import com.leagueakari.common.exception.BizException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.ai.AiClient;
 import com.leagueakari.config.AiProperties;
-import com.leagueakari.dto.WeeklyReportResponse;
+import com.leagueakari.dto.team.WeeklyReportResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;

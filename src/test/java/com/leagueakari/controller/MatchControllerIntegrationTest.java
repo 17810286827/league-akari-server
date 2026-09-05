@@ -2,8 +2,8 @@ package com.leagueakari.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.leagueakari.dto.MatchSyncRequest;
-import com.leagueakari.dto.ParticipantSyncRequest;
+import com.leagueakari.dto.match.MatchSyncRequest;
+import com.leagueakari.dto.match.ParticipantSyncRequest;
 import com.leagueakari.entity.Match;
 import com.leagueakari.mapper.MatchMapper;
 import org.junit.jupiter.api.Test;

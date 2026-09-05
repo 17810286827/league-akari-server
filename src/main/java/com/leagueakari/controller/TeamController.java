@@ -1,10 +1,10 @@
 package com.leagueakari.controller;
 
 import com.leagueakari.common.web.ApiResult;
-import com.leagueakari.dto.LeaderboardResponse;
-import com.leagueakari.dto.MemberCardResponse;
-import com.leagueakari.dto.TeamMembersResponse;
-import com.leagueakari.dto.WeeklyReportResponse;
+import com.leagueakari.dto.team.LeaderboardResponse;
+import com.leagueakari.dto.team.MemberCardResponse;
+import com.leagueakari.dto.team.TeamMembersResponse;
+import com.leagueakari.dto.team.WeeklyReportResponse;
 import com.leagueakari.riot.RiotMatchHistoryService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;

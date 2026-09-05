@@ -1,5 +1,6 @@
-package com.leagueakari.dto;
+package com.leagueakari.dto.common;
 
+import com.leagueakari.dto.match.MatchSummaryResponse;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Data;
 

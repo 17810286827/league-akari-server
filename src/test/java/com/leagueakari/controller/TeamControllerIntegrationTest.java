@@ -1,9 +1,9 @@
 package com.leagueakari.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.leagueakari.dto.MatchSyncRequest;
-import com.leagueakari.dto.ParticipantSyncRequest;
-import com.leagueakari.dto.TeamSyncRequest;
+import com.leagueakari.dto.match.MatchSyncRequest;
+import com.leagueakari.dto.match.ParticipantSyncRequest;
+import com.leagueakari.dto.match.TeamSyncRequest;
 import com.leagueakari.riot.RiotMatchHistoryService;
 import com.leagueakari.team.TeamRosterService;
 import com.leagueakari.team.WeeklyAiCommentService;

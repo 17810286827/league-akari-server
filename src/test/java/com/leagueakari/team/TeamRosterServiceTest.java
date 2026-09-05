@@ -3,7 +3,7 @@ package com.leagueakari.team;
 import com.leagueakari.config.TeamProperties;
 import com.leagueakari.common.exception.BizException;
 import com.leagueakari.common.exception.ErrorCode;
-import com.leagueakari.dto.RiotAccountDto;
+import com.leagueakari.dto.riot.RiotAccountDto;
 import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.mapper.MatchParticipantMapper;
 import com.leagueakari.riot.RiotAccountClient;

@@ -3,7 +3,7 @@ package com.leagueakari.riot;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.common.exception.BizException;
 import com.leagueakari.common.exception.ErrorCode;
-import com.leagueakari.dto.RiotAccountDto;
+import com.leagueakari.dto.riot.RiotAccountDto;
 import com.leagueakari.entity.RiotAccount;
 import com.leagueakari.mapper.RiotAccountMapper;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
