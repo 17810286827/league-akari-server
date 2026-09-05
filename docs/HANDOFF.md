@@ -2,7 +2,13 @@
 
 > 面向接手者的一站式文档：整体结构、全部 HTTP 接口、核心业务流程、外部依赖、配置与测试。
 > 领域术语的唯一权威定义见根目录 `CONTEXT.md`；架构决策记录见 `docs/adr/`；部署交接见 `DEPLOY_HANDOVER.md`。
-> 最后更新：2026-09-05（基于 main 分支 ba33de8）
+> 最后更新：2026-09-05（基于 main 分支 d8dc493，已含 #26 统一响应契约与 #27 结构收敛）
+
+> ⚠️ 本文档第 3.4 节异常映射表与第 5.4 节播报触发方式已被 #26/#27 改造覆盖，
+> 现行契约：所有 JSON 接口 HTTP 200 + `{code, message, data}` 统一信封，错误语义全靠业务码
+> （0 成功 / 1xxx 参数 / 11xx 车队配置 / 2xxx 对局 / 3xxx 账号 / 4xxx 外部依赖 / 5xxx 系统，
+> 登记处 `common/exception/ErrorCode`）；播报由 `MatchSavedEvent` 事务提交后触发，
+> controller 不再直调 BroadcastCoordinator。最新结构见 AGENTS.md 目录结构章节。
 
 ---
 
