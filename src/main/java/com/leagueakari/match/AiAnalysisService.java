@@ -94,11 +94,12 @@ public class AiAnalysisService {
             Executor aiStreamExecutor) {
         this.promptLoader = promptLoader;
         this.promptFile = ai.getPromptFile();
-        // 单局分析场景采样参数：penalty 抑制长文本重复，thinking 可经配置开启（前端灰字展示思维链）
+        // 单局分析场景采样参数：penalty 抑制长文本重复，thinking 可经配置开启（前端灰字展示思维链）；
+        // thinkingBudget 限制思维链上限（防推理模型耗尽输出预算、正文为空——生产故障根治参数）
         this.completionRequest = new AiCompletionRequest(
                 ai.getModel(), ai.getTemperature(),
                 ai.getFrequencyPenalty(), ai.getPresencePenalty(),
-                ai.getMaxTokens(), ai.isThinking());
+                ai.getMaxTokens(), ai.isThinking(), ai.getThinkingBudget());
         this.matchQueryService = matchQueryService;
         this.objectMapper = objectMapper;
         this.aiClient = aiClient;
@@ -197,10 +198,15 @@ public class AiAnalysisService {
                     gameId, System.currentTimeMillis() - startTime);
             // 最终分析正文（content 拼接，写入缓存）；思考过程（reasoning）单独透传不进缓存
             StringBuilder full = new StringBuilder();
-            // 流式重试门控：是否已向客户端推送过任何增量（chunk/reasoning）——
-            // 已推送后失败不可重试（重发内容会在前端打字机里重复展示），只能 error 收尾
-            boolean[] streamed = {false};
-            // 流式调用公共 AiClient：SSE 解析与增量分发在回调中完成；尚未推送任何增量时
+            // 流式重试门控：是否已向客户端推送过正文增量（chunk）——
+            // 正文已推送后失败不可重试（重发内容会在前端打字机里重复展示），只能 error 收尾。
+            // 注意：思维链（reasoning）推送不再阻断重试——"思维链耗尽预算、正文为空"恰是
+            // 最值得重试的失败（重采样大概率思维链更短）；重试前推 reasoning-reset 事件
+            // 通知前端清空思维链缓冲（两次尝试的思维链拼接会变成杂乱文本）
+            boolean[] contentStreamed = {false};
+            // 思维链是否已推送（重试时用于决定是否需要 reasoning-reset）
+            boolean[] reasoningStreamed = {false};
+            // 流式调用公共 AiClient：SSE 解析与增量分发在回调中完成；尚未推送正文增量时
             // 失败按 ai.retry-count 自动重试（三个 AI 场景统一读 yaml），回调内抛出的
             // 断开信号原样穿透、立即停止上游消费；日志上下文带 gameId 便于排障关联
             String finishReason = null;
@@ -208,22 +214,26 @@ public class AiAnalysisService {
             for (int attempt = 1; attempt <= maxAttempts; attempt++) {
                 try {
                     if (attempt > 1) {
-                        // 重试入口日志：重试对前端不可见（零内容失败，无内容重复风险）
-                        log.warn("AI stream retrying: gameId={}, attempt={}/{}",
-                                gameId, attempt, maxAttempts);
+                        // 重试入口日志：重试对前端不可见（零内容失败，无内容重复风险）；
+                        // 若首次尝试已推送思维链，先发 reasoning-reset 让前端清空缓冲
+                        if (reasoningStreamed[0]) {
+                            send(emitter, "reasoning-reset", Map.of());
+                        }
+                        log.warn("AI stream retrying: gameId={}, attempt={}/{}, reasoningStreamed={}",
+                                gameId, attempt, maxAttempts, reasoningStreamed[0]);
                     }
                     finishReason = aiClient.callStream(completionRequest, systemPrompt, matchSummary,
                             new AiStreamHandler() {
                                 @Override
                                 public void onContent(String chunk) {
                                     full.append(chunk);
-                                    streamed[0] = true;
+                                    contentStreamed[0] = true;
                                     send(emitter, "chunk", Map.of("content", chunk));
                                 }
 
                                 @Override
                                 public void onReasoning(String chunk) {
-                                    streamed[0] = true;
+                                    reasoningStreamed[0] = true;
                                     send(emitter, "reasoning", Map.of("content", chunk));
                                 }
                             }, "gameId=" + gameId);
@@ -233,9 +243,10 @@ public class AiAnalysisService {
                     }
                     break;
                 } catch (BizException e) {
-                    // 已推送过增量（内容/思维链已在打字机展示）或重试额度耗尽：放弃重试上抛，
-                    // 外层统一 error 收尾；否则记 WARN 后进入下一次尝试
-                    if (streamed[0] || attempt == maxAttempts) {
+                    // 正文已推送（打字机已展示内容，重发会重复）或重试额度耗尽：放弃重试上抛，
+                    // 外层统一 error 收尾；仅推送过思维链/零增量的失败进入下一次尝试
+                    // （思维链缓冲由 reasoning-reset 事件清空，重试无内容重复风险）
+                    if (contentStreamed[0] || attempt == maxAttempts) {
                         throw e;
                     }
                     log.warn("AI stream failed before any content, will retry: gameId={}, attempt={}/{}, reason={}",

@@ -302,6 +302,10 @@ public class AiClient {
         payload.put("max_tokens", request.getMaxTokens());
         if (!request.isThinking()) {
             payload.put("chat_template_kwargs", Map.of("thinking", false));
+        } else if (request.getThinkingBudget() != null) {
+            // 思维链 token 上限（thinking=true 时生效）：防推理模型把输出预算耗尽在
+            // 思维链导致正文为空（2026-09-05 生产故障根治参数之一，网关实测有效）
+            payload.put("chat_template_kwargs", Map.of("thinking_budget", request.getThinkingBudget()));
         }
         payload.put("messages", List.of(
                 Map.of("role", "system", "content", systemPrompt),

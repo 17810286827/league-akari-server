@@ -77,12 +77,12 @@ class AiClientTest {
 
     /** 构造非流式场景的请求参数（无 penalty、thinking=false：周报/局后锐评同款） */
     private AiCompletionRequest plainRequest() {
-        return new AiCompletionRequest("test-model", 1.0, null, null, 512, false);
+        return new AiCompletionRequest("test-model", 1.0, null, null, 512, false, null);
     }
 
     /** 构造单局分析场景的请求参数（带 penalty、thinking 可控） */
     private AiCompletionRequest analysisRequest(boolean thinking) {
-        return new AiCompletionRequest("test-model", 0.7, 0.6, 0.3, 2048, thinking);
+        return new AiCompletionRequest("test-model", 0.7, 0.6, 0.3, 2048, thinking, null);
     }
 
     /** 模拟 AI 接口响应：状态码 + 响应体（JSON 或 SSE 流） */
@@ -255,6 +255,39 @@ class AiClientTest {
 
         assertThat(EntityUtils.toString(capturedPost().getEntity()))
                 .doesNotContain("chat_template_kwargs");
+    }
+
+    /**
+     * 用例：thinkingBudget 非 null 且 thinking=true 时，写 chat_template_kwargs.thinking_budget
+     * 限制思维链 token 上限（防推理模型把输出预算耗尽在思维链、正文为空——
+     * 2026-09-05 生产故障的根治参数之一，网关实测 8192+thinking_budget 组合 0/8 失败）
+     */
+    @Test
+    void call_carriesThinkingBudgetWhenPresent() throws Exception {
+        mockResponse(200, "{\"choices\":[{\"message\":{\"content\":\"正文\"}}]}");
+
+        AiCompletionRequest request = new AiCompletionRequest(
+                "test-model", 1.0, 1.0, 0.5, 8192, true, 3072);
+        client.call(request, "系统提示", "用户内容", "test");
+
+        String body = EntityUtils.toString(capturedPost().getEntity());
+        assertThat(body).contains("\"chat_template_kwargs\"")
+                .contains("\"thinking_budget\":3072")
+                // thinking=true 不写 thinking 开关（保持模型默认推理模式），仅带上限
+                .doesNotContain("\"thinking\":true");
+    }
+
+    /** 用例：thinkingBudget 为 null 时不写 chat_template_kwargs.thinking_budget（保持旧行为） */
+    @Test
+    void call_omitsThinkingBudgetWhenNull() throws Exception {
+        mockResponse(200, "{\"choices\":[{\"message\":{\"content\":\"正文\"}}]}");
+
+        AiCompletionRequest request = new AiCompletionRequest(
+                "test-model", 1.0, 1.0, 0.5, 8192, true, null);
+        client.call(request, "系统提示", "用户内容", "test");
+
+        assertThat(EntityUtils.toString(capturedPost().getEntity()))
+                .doesNotContain("thinking_budget");
     }
 
     /** 用例：200 响应 → 透出 choices[0].message.content */

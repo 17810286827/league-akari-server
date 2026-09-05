@@ -45,10 +45,11 @@ public class PostGameCommentService {
             PromptLoader promptLoader) {
         this.promptFile = ai.getPostGamePromptFile();
         this.promptLoader = promptLoader;
-        // 局后锐评场景采样参数：独立模型键（ai.post-game-model）、无 penalty（保持既有采样行为）
+        // 局后锐评场景采样参数：独立模型键（ai.post-game-model）、无 penalty（保持既有采样行为）；
+        // thinkingBudget 跟随全局配置（仅 thinking=true 时生效，防思维链耗尽预算正文为空）
         this.completionRequest = new AiCompletionRequest(
                 ai.getPostGameModel(), ai.getTemperature(),
-                null, null, ai.getPostGameMaxTokens(), ai.isThinking());
+                null, null, ai.getPostGameMaxTokens(), ai.isThinking(), ai.getThinkingBudget());
         this.aiClient = aiClient;
         this.objectMapper = objectMapper;
     }

@@ -231,6 +231,60 @@ class AiAnalysisServiceTest {
         assertThat(events.get(5)).containsEntry("type", "done");
     }
 
+    /**
+     * 用例：思维链已推送但正文为空（推理模型把预算耗尽在生产环境重现的故障形态）——
+     * 服务必须重试而非直接失败：重试前先推 reasoning-reset 事件（通知前端清空思维链缓冲，
+     * 避免两次尝试的思维链拼接成杂乱文本），重试成功后正常输出正文。
+     * <p>回归背景：2026-09-05 生产 gameId=442534037，reasoning=4086 chars=0 finish=length，
+     * 旧实现 onReasoning 置 streamed=true 阻断重试，用户直接吃"AI 返回内容为空"。</p>
+     */
+    @Test
+    void reasoningOnlyStreamRetriesWithResetEvent() throws Exception {
+        // 第一次尝试：只推思维链、正文为空（finish=length 预算耗尽的精确形态）
+        // 第二次尝试：正常输出正文（重试成功路径）
+        doAnswer(inv -> {
+            AiStreamHandler handler = inv.getArgument(3);
+            handler.onReasoning("第一轮思考");
+            return "length";
+        }).doAnswer(inv -> {
+            AiStreamHandler handler = inv.getArgument(3);
+            handler.onContent("重试后的正文");
+            return "stop";
+        }).when(aiClient).callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString());
+        when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
+
+        service.analyzeStream(123L, mockEmitter());
+
+        // 事件顺序：start → reasoning(第一轮) → reasoning-reset → chunk(重试正文) → done
+        assertThat(events).extracting(e -> e.get("type"))
+                .containsExactly("start", "reasoning", "reasoning-reset", "chunk", "done");
+        // reasoning-reset 事件无内容载荷（仅作清空信号）
+        assertThat(events.get(2)).containsEntry("type", "reasoning-reset");
+        // 重试后的正文与完成事件正常
+        assertThat(events.get(3)).containsEntry("content", "重试后的正文");
+        assertThat(events.get(4)).containsEntry("type", "done");
+        // AI 调用共 2 次（首次失败 + 重试成功）
+        verify(aiClient, times(2)).callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString());
+    }
+
+    /**
+     * 用例：思维链已推送、正文非空（正常成功流）——不触发重试与 reasoning-reset
+     * （重试门控按"正文为空"判定，思维链推送不再阻断重试但正常流不受影响）
+     */
+    @Test
+    void contentStreamDoesNotRetryEvenIfReasoningStreamed() throws Exception {
+        mockAiStream(null);
+        when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
+
+        service.analyzeStream(123L, mockEmitter());
+
+        // 正常流事件序列不含 reasoning-reset
+        assertThat(events).extracting(e -> e.get("type"))
+                .containsExactly("start", "reasoning", "chunk", "reasoning", "chunk", "done");
+        // AI 只调用 1 次（无重试）
+        verify(aiClient, times(1)).callStream(any(AiCompletionRequest.class), anyString(), anyString(), any(), anyString());
+    }
+
     @Test
     void cacheHitPushesFullTextWithoutCallingAi() throws Exception {
         // 第一次：流式分析成功（写缓存；缓存只含正文，不含思维链）

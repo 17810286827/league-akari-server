@@ -12,6 +12,8 @@ import lombok.Value;
  *       （周报/局后场景不传 penalty，保持既有采样行为）</li>
  *   <li>{@code thinking=false} 时写 chat_template_kwargs.thinking=false（DeepSeek 原生参数
  *       直出正文）；{@code true} 时不写该键（保持模型默认推理模式，思维链经回调透传）</li>
+ *   <li>{@code thinkingBudget} 非 null 且 thinking=true 时写 chat_template_kwargs.thinking_budget
+ *       （限制思维链 token 上限，防推理模型把输出预算耗尽在思维链导致正文为空）；null = 不传</li>
  * </ul>
  */
 @Value
@@ -34,4 +36,10 @@ public class AiCompletionRequest {
 
     /** 是否开启思考模式（false = 写 chat_template_kwargs.thinking=false 直出正文） */
     boolean thinking;
+
+    /**
+     * 思维链 token 上限（chat_template_kwargs.thinking_budget）；null = 不传。
+     * 仅 thinking=true 时生效（false 时思维链本就被关闭，上限无意义）
+     */
+    Integer thinkingBudget;
 }

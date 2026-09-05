@@ -46,6 +46,13 @@ public class AiProperties {
     private boolean thinking;
 
     /**
+     * 思维链 token 上限（chat_template_kwargs.thinking_budget）：null = 不传。
+     * 仅 thinking=true 时生效；限制推理模型把输出预算耗尽在思维链导致正文为空
+     * （2026-09-05 生产故障的根治参数，网关实测 8192 预算 + 该上限组合 0/8 失败）
+     */
+    private Integer thinkingBudget;
+
+    /**
      * 调用失败后的重试次数（不含首次；0 = 不重试）。<b>三个 AI 场景统一读此键</b>：
      * 非流式场景（AiClient.callWithRetry）对空正文自动重试共 retryCount 次；
      * 流式场景（单局分析）在尚未推送任何增量前失败时同样按此次数重试
