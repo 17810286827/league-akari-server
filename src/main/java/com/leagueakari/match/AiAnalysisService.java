@@ -119,9 +119,12 @@ public class AiAnalysisService {
             log.error("AI API key not configured, analysis skipped: gameId={}", gameId);
             throw new BizException(ErrorCode.AI_KEY_MISSING, "AI API Key 未配置，无法进行对局分析");
         }
-        // 对局不存在时由查询服务抛 BizException(MATCH_NOT_FOUND)（全局处理器统一转换）；
+        // 对局存在性校验走轻量 assertExists（主表 exists 探存，一条 SELECT ... LIMIT 1）：
+        // 不能借道 getMatchDetail——那会附带参赛者加载/MVP 评选/全员评分，
+        // 把 SSE 响应头前的同步路径拖成全链路最重一步；不存在时由查询服务
+        // 抛 BizException(MATCH_NOT_FOUND)（全局处理器统一转换）；
         // 记录耗时：若此处卡住（DB 慢/连接池耗尽）会导致响应头迟迟不返回
-        matchQueryService.getMatchDetail(gameId);
+        matchQueryService.assertExists(gameId);
         log.info("AI analysis validated: gameId={}, elapsed={}ms", gameId, System.currentTimeMillis() - startTime);
     }
 

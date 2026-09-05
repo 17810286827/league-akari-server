@@ -32,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -338,16 +339,20 @@ class AiAnalysisServiceTest {
     void validatePassesWithKeyAndExistingMatch() {
         // 配置齐全（Key 状态走 AiClient.isConfigured，架构清理 T7 统一真相）+ 对局存在：校验通过
         when(aiClient.isConfigured()).thenReturn(true);
-        when(matchQueryService.getMatchDetail(123L)).thenReturn(buildDetail());
-
+        // 存在性校验必须走轻量 assertExists（void 方法默认放行），
+        // 并锁定"校验路径不再拉全量详情"——getMatchDetail 会附带跑全员评分，前置校验用不起
         service.validateAndConfigured(123L);
+        verify(matchQueryService).assertExists(123L);
+        verify(matchQueryService, never()).getMatchDetail(any());
     }
 
     @Test
     void validateThrowsWhenMatchMissing() {
-        // 对局不存在：前置校验抛 BizException(MATCH_NOT_FOUND)（由全局处理器统一转换）
+        // 对局不存在：前置校验抛 BizException(MATCH_NOT_FOUND)（由全局处理器统一转换），
+        // 错误语义由 MatchQueryService.assertExists 提供（与 getMatchDetail 同源）
         when(aiClient.isConfigured()).thenReturn(true);
-        when(matchQueryService.getMatchDetail(123L)).thenThrow(new BizException(ErrorCode.MATCH_NOT_FOUND, "对局不存在: gameId=123"));
+        doThrow(new BizException(ErrorCode.MATCH_NOT_FOUND, "对局不存在: gameId=123"))
+                .when(matchQueryService).assertExists(123L);
 
         assertThatThrownBy(() -> service.validateAndConfigured(123L))
                 .isInstanceOf(BizException.class);

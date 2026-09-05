@@ -152,6 +152,22 @@ public class MatchQueryService {
     }
 
     /**
+     * 对局存在性断言（轻量）：主表一条 exists 探存（SELECT ... LIMIT 1），不做任何视图组装。
+     * <p>供前置校验使用（如 AI 分析的 validateAndConfigured）——校验场景只关心
+     * "对局在不在"，绝不能借道 {@link #getMatchDetail}：那会附带参赛者批量加载、
+     * MVP 评选与全员实时评分，把 SSE 响应头前的同步路径拖成全链路最重一步。
+     * 不存在时抛出与 {@link #getMatchDetail} 完全一致的
+     * BizException(MATCH_NOT_FOUND)（业务码 2001、同一文案），对外契约不变。</p>
+     */
+    public void assertExists(Long gameId) {
+        // exists 仅探存在性不取列：命中返回 true；未命中与 getMatchDetail 同语义抛 2001
+        if (!matchMapper.exists(new QueryWrapper<Match>().eq("game_id", gameId))) {
+            log.warn("Match not found, gameId={}", gameId);
+            throw new BizException(ErrorCode.MATCH_NOT_FOUND, "对局不存在: gameId=" + gameId);
+        }
+    }
+
+    /**
      * 查询对局详情（含参赛者列表），不存在抛 BizException(MATCH_NOT_FOUND)
      * <p>主表按 game_id 精确查询，命中后按主键关联参赛者明细；
      * 详情包含 teams_json 与各参赛者的 stats_json 全量快照。</p>

@@ -1,6 +1,7 @@
 package com.leagueakari.match;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.leagueakari.common.exception.BizException;
 import com.leagueakari.common.stats.ParticipantStatsReader;
 import com.leagueakari.dto.match.MatchDetailResponse;
 import com.leagueakari.dto.match.MatchSummaryResponse;
@@ -25,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.*;
@@ -500,5 +502,37 @@ class MatchQueryServiceTest {
     private String sgpNestedPerksJson() {
         return "{\"item0\":3157,\"item1\":3089,\"item2\":3020,\"item3\":3135,\"item4\":3152,\"item5\":3340,\"item6\":3364,"
                 + "\"perks\":{\"perkIds\":[8112,8128,8009,8138,8304,8316],\"perkStyle\":8100,\"perkSubStyle\":8300}}";
+    }
+
+    /**
+     * 用例：对局存在性断言放行——主表有记录（exists=true）时不抛任何异常
+     * <p>轻量语义：仅一次 exists 探存（SELECT ... LIMIT 1），不得触发详情组装
+     * （参赛者批量加载 / MVP 评选 / 全员评分都是重路径，前置校验用不起）。</p>
+     */
+    @Test
+    void 存在性断言_对局存在时放行() {
+        // 主表 exists 命中：对局已同步入库
+        when(matchMapper.exists(any())).thenReturn(true);
+
+        // 不抛即通过；除 exists 外不应有任何其他 mapper 交互
+        matchQueryService.assertExists(1000000006L);
+        verify(matchMapper, times(1)).exists(any());
+        verifyNoMoreInteractions(matchMapper);
+    }
+
+    /**
+     * 用例：对局不存在时抛 BizException(MATCH_NOT_FOUND, 2001)
+     * <p>错误语义与 {@code getMatchDetail} 完全一致（同一文案、同一业务码），
+     * 调用方（如 AI 分析前置校验）换用本方法后对外契约不变。</p>
+     */
+    @Test
+    void 存在性断言_对局不存在时抛业务异常() {
+        // 主表 exists 未命中：gameId 不存在
+        when(matchMapper.exists(any())).thenReturn(false);
+
+        assertThatThrownBy(() -> matchQueryService.assertExists(123L))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("对局不存在")
+                .satisfies(e -> assertThat(((BizException) e).getErrorCode().getCode()).isEqualTo(2001));
     }
 }
