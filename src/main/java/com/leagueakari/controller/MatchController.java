@@ -58,8 +58,9 @@ public class MatchController {
     }
 
     /**
-     * 分页查询对局列表：支持 queueId / puuid / summonerName / startTime / endTime 筛选；
-     * puuid 与 summonerName 二选一（只能查询指定玩家，都缺失时返回空页）
+     * 分页查询对局列表：支持 queueId / puuid / summonerName / startTime / endTime / championId 筛选；
+     * puuid 与 summonerName 二选一（只能查询指定玩家，都缺失时返回空页）；
+     * championId 过滤"该玩家本局使用的英雄"，与其余筛选叠加
      */
     @GetMapping
     public ApiResult<PageResponse<MatchSummaryResponse>> listMatches(
@@ -69,10 +70,11 @@ public class MatchController {
             @RequestParam(required = false) String puuid,
             @RequestParam(required = false) String summonerName,
             @RequestParam(required = false) Long startTime,
-            @RequestParam(required = false) Long endTime) {
-        // 筛选参数均为可选，page/pageSize 缺省时取默认值 1/20
+            @RequestParam(required = false) Long endTime,
+            @RequestParam(required = false) Integer championId) {
+        // 筛选参数均为可选，page/pageSize 缺省时取默认值 1/20；业务校验与查询下沉 service 层
         return ApiResult.success(
-                matchQueryService.pageMatches(page, pageSize, queueId, puuid, summonerName, startTime, endTime));
+                matchQueryService.pageMatches(page, pageSize, queueId, puuid, summonerName, startTime, endTime, championId));
     }
 
     /** 查询对局详情，不存在返回业务码 2001（HTTP 仍为 200） */

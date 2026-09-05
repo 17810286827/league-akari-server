@@ -55,8 +55,9 @@ class AiPropertiesTest {
         assertThat(props.getMaxTokens()).isEqualTo(4096);
         assertThat(props.getWeeklyMaxTokens()).isEqualTo(4096);
         assertThat(props.getPostGameMaxTokens()).isEqualTo(2048);
-        // 思考模式开关（当前 yml 为开启）：三个 AI 场景统一读此键，不再有硬编码旁路
-        assertThat(props.isThinking()).isTrue();
+        // 思考模式开关（当前 yml 为关闭——2026-09-05 网关实测 gemini-2.5-flash 通道
+        // 不吐思维链、思考参数被静默忽略，决策见 docs/adr/0006）：三个 AI 场景统一读此键
+        assertThat(props.isThinking()).isFalse();
         // 重试次数（失败后重试次数，不含首次）：三个 AI 场景统一读此键
         assertThat(props.getRetryCount()).isEqualTo(3);
     }

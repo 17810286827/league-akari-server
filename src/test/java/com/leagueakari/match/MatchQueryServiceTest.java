@@ -1,5 +1,6 @@
 package com.leagueakari.match;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.leagueakari.common.exception.BizException;
 import com.leagueakari.common.stats.ParticipantStatsReader;
@@ -16,6 +17,7 @@ import com.leagueakari.mapper.MatchParticipantMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
@@ -213,7 +215,7 @@ class MatchQueryServiceTest {
         when(matchMvpMapper.selectList(any())).thenReturn(List.of(mvpRecord));
 
         PageResponse<MatchSummaryResponse> resp =
-                matchQueryService.pageMatches(1, 10, null, "self-puuid-1", null, null, null);
+                matchQueryService.pageMatches(1, 10, null, "self-puuid-1", null, null, null, null);
 
         // 列表项契约：mvp 称号携带玩家档案与得分
         MatchSummaryResponse item = resp.getItems().get(0);
@@ -255,7 +257,7 @@ class MatchQueryServiceTest {
         when(matchParticipantMapper.selectList(any())).thenReturn(participants);
 
         // 执行分页查询，取唯一一条列表项
-        PageResponse<MatchSummaryResponse> resp = matchQueryService.pageMatches(1, 10, null, "self-puuid-1", null, null, null);
+        PageResponse<MatchSummaryResponse> resp = matchQueryService.pageMatches(1, 10, null, "self-puuid-1", null, null, null, null);
         MatchSummaryResponse item = resp.getItems().get(0);
 
         // self 增强字段：出装 7 槽、海克斯 6 槽、召唤师技能 2 槽、三杀 1 次
@@ -308,7 +310,7 @@ class MatchQueryServiceTest {
     void 未提供puuid时返回空页() {
         // 不 mock 任何 Mapper：若实现误查库会因 mock 默认返回 null/空而暴露，此处直接断言空页
         PageResponse<MatchSummaryResponse> resp =
-                matchQueryService.pageMatches(1, 10, null, null, null, null, null);
+                matchQueryService.pageMatches(1, 10, null, null, null, null, null, null);
 
         // 空页契约：data 空列表、total 0，且不抛错
         assertThat(resp.getItems()).isEmpty();
@@ -353,7 +355,7 @@ class MatchQueryServiceTest {
         when(matchParticipantMapper.selectList(any())).thenReturn(List.of(p));
 
         // 执行分页查询，取唯一一条列表项
-        PageResponse<MatchSummaryResponse> resp = matchQueryService.pageMatches(1, 10, null, "self-puuid-1", null, null, null);
+        PageResponse<MatchSummaryResponse> resp = matchQueryService.pageMatches(1, 10, null, "self-puuid-1", null, null, null, null);
         MatchSummaryResponse item = resp.getItems().get(0);
 
         // self 兜底契约：出装/技能/海克斯为空列表，perks 为空 perkIds + 样式 0
@@ -431,7 +433,7 @@ class MatchQueryServiceTest {
 
         // 查询者视角查询战绩
         PageResponse<MatchSummaryResponse> resp =
-                matchQueryService.pageMatches(1, 10, null, "other-puuid", null, null, null);
+                matchQueryService.pageMatches(1, 10, null, "other-puuid", null, null, null, null);
         MatchSummaryResponse item = resp.getItems().get(0);
 
         // 断言：self 卡片是查询者本人的数据，而不是推送者 ikun 的
@@ -534,5 +536,75 @@ class MatchQueryServiceTest {
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("对局不存在")
                 .satisfies(e -> assertThat(((BizException) e).getErrorCode().getCode()).isEqualTo(2001));
+    }
+
+    /**
+     * 用例：英雄过滤（championId）作用于"查询者自己的参与者行"——
+     * 列表只返回该玩家本局使用指定英雄的对局，与 puuid/队列筛选叠加生效。
+     * <p>实现契约：champion_id 条件加在玩家定位查询（第一次 selectList）上，
+     * 本页参赛者批量加载（第二次 selectList）不受英雄过滤影响。</p>
+     */
+    @Test
+    void 英雄过滤条件作用于查询者参与者行() {
+        // 主表：1 局对局
+        Match match = new Match();
+        match.setId(1L);
+        match.setGameId(1000000011L);
+        match.setGameCreation(1720000000000L);
+        match.setGameDuration(1800);
+        match.setGameMode("ARAM");
+        match.setMapId(12);
+        match.setQueueId(450);
+        match.setRegion("tw2");
+        match.setWinnerTeamId(100);
+        match.setSelfPuuid("self-puuid-1");
+        Page<Match> page = new Page<>(1, 10);
+        page.setRecords(List.of(match));
+        page.setTotal(1);
+        when(matchMapper.selectPage(any(), any())).thenReturn(page);
+
+        // 参赛者：第一次（玩家定位）与第二次（本页批量加载）都返回同一人
+        MatchParticipant p = new MatchParticipant();
+        p.setMatchId(1L);
+        p.setId(102L);
+        p.setPuuid("self-puuid-1");
+        p.setSummonerName("PlayerOne");
+        p.setChampionId(22);
+        p.setTeamId(100);
+        p.setWin(true);
+        when(matchParticipantMapper.selectList(any())).thenReturn(List.of(p));
+
+        PageResponse<MatchSummaryResponse> resp = matchQueryService.pageMatches(
+                1, 10, null, "self-puuid-1", null, null, null, 22);
+
+        assertThat(resp.getItems()).hasSize(1);
+        // 两次 selectList：第一次玩家定位（应携带 champion_id 条件与参数 22），第二次批量加载（不带）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<QueryWrapper<MatchParticipant>> captor =
+                ArgumentCaptor.forClass(QueryWrapper.class);
+        verify(matchParticipantMapper, times(2)).selectList(captor.capture());
+        QueryWrapper<MatchParticipant> playerWrapper = captor.getAllValues().get(0);
+        assertThat(playerWrapper.getSqlSegment()).contains("champion_id");
+        assertThat(playerWrapper.getParamNameValuePairs().containsValue(22)).isTrue();
+        QueryWrapper<MatchParticipant> batchWrapper = captor.getAllValues().get(1);
+        assertThat(batchWrapper.getSqlSegment()).doesNotContain("champion_id");
+    }
+
+    /**
+     * 用例：英雄过滤无匹配参与者时直接返回空页——
+     * 玩家定位查询（携带 champion_id）结果为空即短路，不再触发主表分页查询
+     */
+    @Test
+    void 英雄过滤无匹配参与者时返回空页() {
+        // 玩家定位查询（含 champion_id 条件）未命中任何参与者行
+        when(matchParticipantMapper.selectList(any())).thenReturn(List.of());
+
+        PageResponse<MatchSummaryResponse> resp = matchQueryService.pageMatches(
+                1, 10, null, "self-puuid-1", null, null, null, 999999);
+
+        assertThat(resp.getItems()).isEmpty();
+        assertThat(resp.getTotal()).isZero();
+        // 短路契约：主表分页查询不发起
+        verify(matchMapper, never()).selectPage(any(), any());
     }
 }

@@ -83,11 +83,16 @@ ai:
   # 分析模型（单局 AI 分析与周报锐评共用，决策见 docs/adr/0004）：
   # 曾用 mimo-v2.5 / deepseek-v4-flash，现切至 gemini-2.5-flash
   model: gemini-2.5-flash
-  # 是否开启模型思考模式（开启）：
-  # 开启 → 模型先输出长思维链再出正文，整流约 90s，分析更细致、英雄识别更准；
-  # 关闭 → 直接输出正文，整流约 25s（实测快 3.6 倍），配合提示词英雄 ID 映射保证识别准确。
-  # 三个 AI 场景（单局分析/周报锐评/局后锐评）统一读此键，无任何硬编码旁路
-  thinking: true
+  # 是否开启模型思考模式（关闭）：
+  # 语义：true = 期望模型先输出长思维链再出正文；false = 直出正文。
+  # 三个 AI 场景（单局分析/周报锐评/局后锐评）统一读此键，无任何硬编码旁路。
+  # ⚠️ 2026-09-05 网关实测结论（详见 docs/adr/0006）：
+  #   当前模型 gemini-2.5-flash 所在网关会"静默忽略"全部思考参数风格
+  #   （chat_template_kwargs.thinking / reasoning_effort / enable_thinking 均不报错也不生效），
+  #   流式与非流式均不输出 reasoning_content，即 thinking=true/false 行为完全一致（均为直出）。
+  #   故此处固定 false 以如实反映现状；换回支持思考参数的模型（如 deepseek 系）时再改回 true。
+  #   历史参考（deepseek-v4-flash 时期）：开启整流约 90s，关闭约 25s（快 3.6 倍）。
+  thinking: false
   # 调用失败后的重试次数（不含首次，0 = 不重试）：
   # 非流式场景对"空正文"（推理模型把预算耗在思维链、finish_reason=length）自动重试；
   # 流式场景（单局分析）在尚未向客户端推送任何增量前失败时按此次数重试。

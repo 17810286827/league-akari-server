@@ -53,16 +53,17 @@ public class MatchQueryService {
     private final ParticipantStatsReader statsReader;
 
     /**
-     * 分页查询对局列表，支持队列与时间范围筛选
+     * 分页查询对局列表，支持队列、时间范围与英雄筛选
      * <p>筛选条件：queueId 精确匹配，startTime/endTime 为 game_creation
      * 时间戳区间，puuid / summonerName 二选一按玩家过滤（仅返回该玩家参与过的对局）；
-     * 结果按创建时间倒序，返回精简的列表项 DTO。</p>
+     * championId 过滤"该玩家本局使用的英雄"（作用在其本人参与者行上，语义见 CONTEXT.md 英雄过滤词条），
+     * 与玩家/队列/时间筛选叠加生效；结果按创建时间倒序，返回精简的列表项 DTO。</p>
      * <p>玩家过滤必填（只允许查询指定玩家）：两者均缺失或空白时直接返回空页，避免暴露全量对局。
      * summonerName 用于数据库按参与者名称精确匹配（如 Riot puuid 与本地对局 ID 体系不一致的场景）。</p>
      */
     public PageResponse<MatchSummaryResponse> pageMatches(
             long page, long pageSize, Integer queueId, String puuid, String summonerName,
-            Long startTime, Long endTime) {
+            Long startTime, Long endTime, Integer championId) {
 
         // 权限约束：只能查询指定玩家的对局，未提供任何玩家标识时返回空页
         boolean hasPuuid = puuid != null && !puuid.isBlank();
@@ -94,9 +95,15 @@ public class MatchQueryService {
         } else {
             playerWrapper.eq("summoner_name", summonerName);
         }
+        // 英雄过滤：作用在查询者本人的参与者行上（champion_id 为该局所玩英雄），
+        // 过滤后 match_id IN 天然只含"该玩家使用该英雄"的对局，与队列/时间筛选叠加
+        if (championId != null) {
+            playerWrapper.eq("champion_id", championId);
+        }
         List<MatchParticipant> played = matchParticipantMapper.selectList(playerWrapper);
         if (played.isEmpty()) {
-            log.info("No matches found for player: puuid={}, summonerName={}", puuid, summonerName);
+            log.info("No matches found for player: puuid={}, summonerName={}, championId={}",
+                    puuid, summonerName, championId);
             return new PageResponse<>(List.of(), page, pageSize, 0);
         }
         List<Long> playedMatchIds = played.stream()
