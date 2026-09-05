@@ -27,8 +27,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *   <li>兜底异常 → 5000（堆栈落日志、响应不透出细节）；</li>
  *   <li>客户端断开 / 响应已提交 → 放弃写响应体（null）。</li>
  * </ul>
- * 注意：路径不存在（404）与方法不支持（405）属"未达业务"的框架级响应，
- * 交由 Spring 默认行为（HTTP 非 200），不在本处理器职责内、不在此测试。
+ * 框架级响应（真 HTTP 非 200）：路径不存在 → 404、方法不支持 → 405，
+ * WARN 一行并携带请求 URI 便于定位来源——不落兜底分支（否则 ERROR + 全堆栈刷屏、
+ * 且语义漂移为 200 + 5000）。
  */
 class GlobalExceptionHandlerTest {
 
@@ -53,6 +54,19 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/boom-runtime")
         public String boomRuntime() {
             throw new IllegalStateException("数据库密码错误等内部细节");
+        }
+
+        /** 只接受 POST 的路径：GET 访问时由 Spring 抛 HttpRequestMethodNotSupportedException */
+        @org.springframework.web.bind.annotation.PostMapping("/post-only")
+        public String postOnly() {
+            return "ok";
+        }
+
+        /** 显式抛 NoResourceFoundException：模拟静态资源未命中（裸地址/未知路径场景同语义） */
+        @GetMapping("/boom-no-resource")
+        public String boomNoResource() throws org.springframework.web.servlet.resource.NoResourceFoundException {
+            throw new org.springframework.web.servlet.resource.NoResourceFoundException(
+                    org.springframework.http.HttpMethod.GET, "missing-resource");
         }
     }
 
@@ -133,11 +147,14 @@ class GlobalExceptionHandlerTest {
     void committedResponseSkipsErrorBody() {
         HttpServletResponse response = mock(HttpServletResponse.class);
         when(response.isCommitted()).thenReturn(true);
+        var request = mock(jakarta.servlet.http.HttpServletRequest.class);
+        when(request.getMethod()).thenReturn("GET");
+        when(request.getRequestURI()).thenReturn("/api/matches/1/ai-analysis");
 
         var handler = new GlobalExceptionHandler();
         // 已提交响应 + 客户端断开类异常：返回 null，不再构造错误响应体
         var result = handler.handleOther(
-                new RuntimeException("java.io.IOException: Broken pipe"), response);
+                new RuntimeException("java.io.IOException: Broken pipe"), request, response);
 
         assertThat(result).isNull();
     }
@@ -149,13 +166,34 @@ class GlobalExceptionHandlerTest {
     void uncommittedResponseStillReturnsInternalError() {
         HttpServletResponse response = mock(HttpServletResponse.class);
         when(response.isCommitted()).thenReturn(false);
+        var request = mock(jakarta.servlet.http.HttpServletRequest.class);
+        when(request.getMethod()).thenReturn("GET");
+        when(request.getRequestURI()).thenReturn("/api/matches");
 
         var handler = new GlobalExceptionHandler();
-        var result = handler.handleOther(new IllegalStateException("boom"), response);
+        var result = handler.handleOther(new IllegalStateException("boom"), request, response);
 
         assertThat(result).isNotNull();
         assertThat(result.getCode()).isEqualTo(5000);
         assertThat(result.getMessage()).isEqualTo("服务器内部错误");
         assertThat(result.getData()).isNull();
+    }
+
+    /** 用例：GET 访问 POST-only 端点（浏览器直开接口 URL / 公网扫描）→ 真 HTTP 405，非兜底 5000 */
+    @Test
+    void methodNotSupportedReturnsReal405() throws Exception {
+        mockMvc.perform(get("/post-only"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.code").value(405))
+                .andExpect(jsonPath("$.message").exists());
+    }
+
+    /** 用例：静态资源未命中 → 真 HTTP 404（不落兜底 5000） */
+    @Test
+    void noResourceFoundReturnsReal404() throws Exception {
+        mockMvc.perform(get("/boom-no-resource"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(404))
+                .andExpect(jsonPath("$.message").value("资源不存在"));
     }
 }

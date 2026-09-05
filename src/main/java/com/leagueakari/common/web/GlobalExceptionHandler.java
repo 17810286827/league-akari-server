@@ -2,14 +2,21 @@ package com.leagueakari.common.web;
 
 import com.leagueakari.common.exception.BizException;
 import com.leagueakari.common.exception.ErrorCode;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
+
+import java.util.Map;
 
 /**
  * 统一异常处理：全部转成 HTTP 200 + ApiResult{code, message}，错误语义全靠业务码。
@@ -24,7 +31,10 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
  * <p><b>不写响应体的两类例外</b>（返回 null 放弃响应）：
  * ① SSE 中途客户端断开（响应头与 event-stream 已提交，无 converter 能写 JSON 错误体）；
  * ② 客户端断开类异常 / 响应已提交——预期现象仅记日志，避免重复 ERROR 刷屏。
- * HTTP 非 200 只留给"未达业务"的框架级响应（路径不存在 404、方法不支持 405，交由 Spring 默认行为）。</p>
+ * <b>框架级"未达业务"响应</b>：路径不存在（404）与方法不支持（405，常见于浏览器直开
+ * POST-only 接口 URL 或公网扫描）显式处理——返回真 HTTP 404/405，WARN 一行并携带请求
+ * 方法与 URI 便于从日志定位来源；不落兜底分支（兜底会打 ERROR 全堆栈刷屏、且语义漂移为
+ * 200 + 5000。#26 重写时曾撤掉这两个 handler，属回归，现恢复并增强定位日志）。</p>
  */
 @Slf4j
 @RestControllerAdvice
@@ -87,6 +97,33 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 方法不支持（GET 打到 POST-only 端点）：常见于浏览器直接打开接口 URL 或公网扫描。
+     * 返回真 HTTP 405（"未达业务"，不走业务码信封），WARN 一行并携带请求方法与 URI
+     * ——从日志即可定位请求来源，无需翻 nginx access log
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Map<String, Object>> handleMethodNotSupported(
+            HttpRequestMethodNotSupportedException e, HttpServletRequest request) {
+        log.warn("Method not supported: {} {} (supported: {})",
+                request.getMethod(), request.getRequestURI(), e.getMessage());
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(Map.of("code", 405, "message", "请求方法不支持：" + e.getMessage()));
+    }
+
+    /**
+     * 路径不存在（静态资源未命中，裸地址/未知路径）：返回真 HTTP 404，同上 WARN + 定位日志。
+     * 这两类框架级异常必须显式处理——兜底 @ExceptionHandler(Exception.class) 会先截住它们，
+     * 不处理就会 ERROR 全堆栈刷屏且语义漂移为 200 + 5000
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResource(
+            NoResourceFoundException e, HttpServletRequest request) {
+        log.warn("Resource not found: {} {}", request.getMethod(), request.getRequestURI());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("code", 404, "message", "资源不存在"));
+    }
+
+    /**
      * 兜底异常：记录完整堆栈后返回 5000 系统错误，避免把内部细节泄露给调用方。
      * <p>两类例外直接放弃写响应体（返回 null）：</p>
      * <ul>
@@ -97,13 +134,14 @@ public class GlobalExceptionHandler {
      * </ul>
      */
     @ExceptionHandler(Exception.class)
-    public ApiResult<Void> handleOther(Exception e, HttpServletResponse response) {
+    public ApiResult<Void> handleOther(Exception e, HttpServletRequest request, HttpServletResponse response) {
         // 客户端断开（关页面/刷新/网络断开导致的 Broken pipe）：预期事件，WARN 无堆栈
         if (ClientDisconnectDetector.isClientDisconnect(e)) {
             log.warn("Client disconnected during response: {}", e.getMessage());
             return null;
         }
-        log.error("Unexpected error", e);
+        // 带请求方法与 URI：未识别异常的来源定位（哪个端点、什么请求触发）
+        log.error("Unexpected error: {} {}", request.getMethod(), request.getRequestURI(), e);
         // 响应已提交（SSE 流式输出已开始）：无法再写错误体，直接放弃
         if (response.isCommitted()) {
             return null;
