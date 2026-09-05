@@ -51,9 +51,10 @@ class AiPropertiesTest {
         assertThat(props.getPostGamePromptFile()).isEqualTo("ai/post-game-prompt.md");
 
         // 采样与输出参数：yml 当前值即意图（与三个 AI 服务共用同一份）
+        // 惩罚参数 2026-09-05 调至 1.0/0.5（抑制思维链重复，实测见 yml 注释）
         assertThat(props.getTemperature()).isEqualTo(1.0);
-        assertThat(props.getFrequencyPenalty()).isEqualTo(0.6);
-        assertThat(props.getPresencePenalty()).isEqualTo(0.3);
+        assertThat(props.getFrequencyPenalty()).isEqualTo(1.0);
+        assertThat(props.getPresencePenalty()).isEqualTo(0.5);
         assertThat(props.getMaxTokens()).isEqualTo(4096);
         assertThat(props.getWeeklyMaxTokens()).isEqualTo(4096);
         assertThat(props.getPostGameMaxTokens()).isEqualTo(2048);
