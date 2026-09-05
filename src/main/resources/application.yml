@@ -77,22 +77,27 @@ riot:
 
 ai:
   # AI 网关的 API（OpenAI 兼容 chat/completions）
-  base-url: https://yt.19851117.xyz/v1
+  # 2026-09-05 自 yt.19851117.xyz 切换（旧网关已无 deepseek-v4-flash；新网关无 gemini-2.5-flash）
+  base-url: https://pianyitoken.gay/v1
   # API Key（环境变量 AI_API_KEY 可覆盖；为空时分析接口返回明确错误）
+  # ⚠️ 换网关后 Key 也须更换（旧 Key 在新网关 401），部署侧 .env / 本地运行配置同步更新
   api-key: ${AI_API_KEY:}
   # 分析模型（单局 AI 分析与周报锐评共用，决策见 docs/adr/0004）：
-  # 曾用 mimo-v2.5 / deepseek-v4-flash，现切至 gemini-2.5-flash
-  model: gemini-2.5-flash
-  # 是否开启模型思考模式（关闭）：
-  # 语义：true = 期望模型先输出长思维链再出正文；false = 直出正文。
+  # 曾用 mimo-v2.5 / deepseek-v4-flash / gemini-2.5-flash，现切回 deepseek-v4-flash
+  #（该网关下思考模式实测可用，见下方 thinking 注释与 docs/adr/0006 更新记录）
+  model: deepseek-v4-flash
+  # 是否开启模型思考模式（开启）：
+  # deepseek-v4-flash 在 pianyitoken 网关下思考参数真实生效（2026-09-05 实测：
+  # chat_template_kwargs.thinking=true 时 reasoning_content 正常流出，
+  # 4096 预算内思维链 + 正文完整，单次锐评级生成约 6s；thinking=false 也能有效压制）。
   # 三个 AI 场景（单局分析/周报锐评/局后锐评）统一读此键，无任何硬编码旁路。
-  # ⚠️ 2026-09-05 网关实测结论（详见 docs/adr/0006）：
-  #   当前模型 gemini-2.5-flash 所在网关会"静默忽略"全部思考参数风格
-  #   （chat_template_kwargs.thinking / reasoning_effort / enable_thinking 均不报错也不生效），
-  #   流式与非流式均不输出 reasoning_content，即 thinking=true/false 行为完全一致（均为直出）。
-  #   故此处固定 false 以如实反映现状；换回支持思考参数的模型（如 deepseek 系）时再改回 true。
-  #   历史参考（deepseek-v4-flash 时期）：开启整流约 90s，关闭约 25s（快 3.6 倍）。
-  thinking: false
+  # 历史轨迹（详见 docs/adr/0006 及其更新记录）：
+  #   - deepseek-v4-flash 时期：开启整流约 90s，关闭约 25s（快 3.6 倍）；
+  #   - gemini-2.5-flash 时期：网关静默忽略全部思考参数，true 为无效配置，曾短暂置 false；
+  #   - 现切回 deepseek-v4-flash（新网关），思考恢复可用，重新开启。
+  # 注意：局后锐评同读本键，开启意味着播报也带思考（延迟增加）；若播报延迟不可接受，
+  # 参考 post-game-model 键的拆分先例，后续可引入独立 thinking 键
+  thinking: true
   # 调用失败后的重试次数（不含首次，0 = 不重试）：
   # 非流式场景对"空正文"（推理模型把预算耗在思维链、finish_reason=length）自动重试；
   # 流式场景（单局分析）在尚未向客户端推送任何增量前失败时按此次数重试。
@@ -117,10 +122,13 @@ ai:
   # 局后锐评提示词与输出上限（车队群视角、正文短，随局后播报发送）
   post-game-prompt-file: ai/post-game-prompt.md
   post-game-max-tokens: 2048
-  # 局后锐评独立模型：播报对延迟敏感，锐评走 thinking=false 直出正文的模型（首 token ~1s）。
-  # 独立键保留：将来 ai.model 换慢推理模型时局后播报不受影响（历史教训：mimo-v2.5 无视
-  # thinking=false 仍先推理 ~60s，实测差 20 倍——正是当初拆分出该键的原因）
-  post-game-model: gemini-2.5-flash
+  # 局后锐评独立模型：播报对延迟敏感，保留独立键以便与 ai.model 分场景（拆分先例见上）。
+  # 2026-09-05 与 ai.model 一同切至 deepseek-v4-flash：新网关（pianyitoken）无
+  # gemini-2.5-flash 通道，且 deepseek-v4-flash 的 thinking=false 压制有效（实测
+  # 短思维链后 ~19s 直出正文，非 mimo 式无视参数）
+  # 注意：局后锐评的 thinking 跟随全局 ai.thinking（当前开启）——若播报延迟不可接受，
+  # 优先考虑引入独立 thinking 键而非换模型
+  post-game-model: deepseek-v4-flash
 
 push:
   # 局后播报（Post-Game Broadcast）：开黑局结束后自动向车队群推送战报

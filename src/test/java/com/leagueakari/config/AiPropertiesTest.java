@@ -37,11 +37,13 @@ class AiPropertiesTest {
     void bindsFullAiSectionFromYml() throws Exception {
         AiProperties props = bindFromApplicationYml();
 
-        // 网关与模型分工（决策见 docs/adr/0004）：
-        // 分析/周报用 model；局后播报独立键 post-game-model 解耦
-        assertThat(props.getBaseUrl()).isEqualTo("https://yt.19851117.xyz/v1");
-        assertThat(props.getModel()).isEqualTo("gemini-2.5-flash");
-        assertThat(props.getPostGameModel()).isEqualTo("gemini-2.5-flash");
+        // 网关与模型分工（决策见 docs/adr/0004、0006 更新记录）：
+        // 分析/周报用 model；局后播报独立键 post-game-model 解耦。
+        // 2026-09-05 切换至 pianyitoken 网关 + deepseek-v4-flash（思考模式实测可用，
+        // 旧网关已无此模型且新网关无 gemini-2.5-flash，两键必须一起换）
+        assertThat(props.getBaseUrl()).isEqualTo("https://pianyitoken.gay/v1");
+        assertThat(props.getModel()).isEqualTo("deepseek-v4-flash");
+        assertThat(props.getPostGameModel()).isEqualTo("deepseek-v4-flash");
 
         // 提示词文件三件套必须齐全（weekly-prompt-file 曾缺失、靠代码默认值兜底，现补入 yml）
         assertThat(props.getPromptFile()).isEqualTo("ai/system-prompt.md");
@@ -55,9 +57,10 @@ class AiPropertiesTest {
         assertThat(props.getMaxTokens()).isEqualTo(4096);
         assertThat(props.getWeeklyMaxTokens()).isEqualTo(4096);
         assertThat(props.getPostGameMaxTokens()).isEqualTo(2048);
-        // 思考模式开关（当前 yml 为关闭——2026-09-05 网关实测 gemini-2.5-flash 通道
-        // 不吐思维链、思考参数被静默忽略，决策见 docs/adr/0006）：三个 AI 场景统一读此键
-        assertThat(props.isThinking()).isFalse();
+        // 思考模式开关（当前 yml 为开启）：deepseek-v4-flash 在 pianyitoken 网关下
+        // 思考参数真实生效（实测 reasoning_content 正常流出、4096 预算内正文完整），
+        // 恢复开启的决策记录见 docs/adr/0006 更新记录；三个 AI 场景统一读此键
+        assertThat(props.isThinking()).isTrue();
         // 重试次数（失败后重试次数，不含首次）：三个 AI 场景统一读此键
         assertThat(props.getRetryCount()).isEqualTo(3);
     }

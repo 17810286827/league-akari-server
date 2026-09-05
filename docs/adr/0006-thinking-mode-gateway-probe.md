@@ -5,6 +5,16 @@
 - 关联：[0004-ai-config-single-source](./0004-ai-config-single-source.md)（ai.thinking 键的由来）、
   [0005-ai-client-unified-invocation](./0005-ai-client-unified-invocation.md)（thinking 参数透传实现）
 
+> **更新记录（2026-09-05 晚）**：同日稍后网关与模型整体切换（`yt.19851117.xyz`/gemini-2.5-flash →
+> `pianyitoken.gay`/deepseek-v4-flash，动因：旧网关已无 deepseek-v4-flash、新网关无
+> gemini-2.5-flash）。新组合实测思考模式**真实可用**（UTF-8 请求体下 reasoning_content
+> 正常流出、4096 预算内正文完整；thinking=false 亦能有效压制），故 `ai.thinking` 重新置
+> **true**，`post-game-model` 一并切至 deepseek-v4-flash。本 ADR 的核心教训不变：
+> **换模型/网关必须先跑思考参数探测（探测矩阵可复用），不能假设参数生效**——本 ADR
+> 主体（gemini 静默忽略思考参数的实证）依然有效，是"配置值必须反映真实行为"的决策依据。
+> 排障提示：curl 内联中文请求体在 Windows Git Bash 下按本地编码发送（模型收到乱码），
+> 会复现"思维链耗尽预算"假象；探测必须用 UTF-8 文件方式发送（`-d @file`）。
+
 ## 背景与问题
 
 `ai.thinking` 配置（ADR-0004 引入）在三个 AI 场景统一控制模型思考模式：
