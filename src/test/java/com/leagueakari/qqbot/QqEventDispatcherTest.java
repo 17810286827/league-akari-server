@@ -24,8 +24,8 @@ class QqEventDispatcherTest {
         QqEventDispatcher.GroupEvent event = dispatcher.parse(payload);
 
         assertThat(event).isNotNull();
-        assertThat(event.type()).isEqualTo("GROUP_ADD_ROBOT");
-        assertThat(event.groupOpenId()).isEqualTo("GROUP_OPEN_ID_123");
+        assertThat(event.getType()).isEqualTo("GROUP_ADD_ROBOT");
+        assertThat(event.getGroupOpenId()).isEqualTo("GROUP_OPEN_ID_123");
     }
 
     /** 用例：机器人被移出群事件 → 解析出群 openid */
@@ -38,8 +38,8 @@ class QqEventDispatcherTest {
         QqEventDispatcher.GroupEvent event = dispatcher.parse(payload);
 
         assertThat(event).isNotNull();
-        assertThat(event.type()).isEqualTo("GROUP_DEL_ROBOT");
-        assertThat(event.groupOpenId()).isEqualTo("GROUP_OPEN_ID_456");
+        assertThat(event.getType()).isEqualTo("GROUP_DEL_ROBOT");
+        assertThat(event.getGroupOpenId()).isEqualTo("GROUP_OPEN_ID_456");
     }
 
     /** 用例：与机器人无关的事件（群 @ 消息等）→ 返回 null（忽略，不打扰） */

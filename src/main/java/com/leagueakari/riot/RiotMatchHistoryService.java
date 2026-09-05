@@ -139,10 +139,10 @@ public class RiotMatchHistoryService {
                 // 回填使用 Riot 全局 puuid（MATCH-V5 按它索引；腾讯 UUID 查不到）
                 int synced = backfillMember(member.backfillPuuid());
                 total += synced;
-                log.info("Backfill member done: {}, synced={}", member.riotId(), synced);
+                log.info("Backfill member done: {}, synced={}", member.getRiotId(), synced);
             } catch (Exception e) {
                 // 单成员失败（改名被回收/Riot 异常）：记录后继续下一个，不阻断整体
-                log.error("Backfill member failed: {}, error={}", member.riotId(), e.getMessage());
+                log.error("Backfill member failed: {}, error={}", member.getRiotId(), e.getMessage());
             }
         }
         log.info("Backfill all members done: total={}", total);

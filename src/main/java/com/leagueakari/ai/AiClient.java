@@ -89,7 +89,7 @@ public class AiClient {
         HttpPost post = buildPost(payload);
         // 请求发出前打日志：若此处之后长时间无日志，说明卡在连接建立/TLS 握手
         log.info("AI API request starting: context={}, url={}, model={}, stream=false, elapsed={}ms",
-                logContext, baseUrl + "/chat/completions", request.model(),
+                logContext, baseUrl + "/chat/completions", request.getModel(),
                 System.currentTimeMillis() - startTime);
         try (CloseableHttpResponse response = httpClient.execute(post)) {
             int status = response.getCode();
@@ -190,7 +190,7 @@ public class AiClient {
         HttpPost post = buildPost(payload);
         // 请求发出前打日志：若此处之后长时间无日志，说明卡在连接建立/TLS 握手
         log.info("AI API request starting: context={}, url={}, model={}, stream=true, elapsed={}ms",
-                logContext, baseUrl + "/chat/completions", request.model(),
+                logContext, baseUrl + "/chat/completions", request.getModel(),
                 System.currentTimeMillis() - startTime);
         try (CloseableHttpResponse response = httpClient.execute(post)) {
             int status = response.getCode();
@@ -282,19 +282,19 @@ public class AiClient {
     private Map<String, Object> buildPayload(AiCompletionRequest request, boolean stream,
             String systemPrompt, String userContent) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("model", request.model());
+        payload.put("model", request.getModel());
         payload.put("stream", stream);
-        payload.put("temperature", request.temperature());
+        payload.put("temperature", request.getTemperature());
         // penalty 为 null 时不进 payload（周报/局后场景保持既有采样行为，避免输出风格漂移）
-        if (request.frequencyPenalty() != null) {
-            payload.put("frequency_penalty", request.frequencyPenalty());
+        if (request.getFrequencyPenalty() != null) {
+            payload.put("frequency_penalty", request.getFrequencyPenalty());
         }
-        if (request.presencePenalty() != null) {
-            payload.put("presence_penalty", request.presencePenalty());
+        if (request.getPresencePenalty() != null) {
+            payload.put("presence_penalty", request.getPresencePenalty());
         }
         // 输出上限：思维链与正文共享预算，限制推理模型的无限思考
-        payload.put("max_tokens", request.maxTokens());
-        if (!request.thinking()) {
+        payload.put("max_tokens", request.getMaxTokens());
+        if (!request.isThinking()) {
             payload.put("chat_template_kwargs", Map.of("thinking", false));
         }
         payload.put("messages", List.of(

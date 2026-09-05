@@ -1,5 +1,6 @@
 package com.leagueakari.team;
 
+import lombok.Value;
 import com.leagueakari.common.stats.ParticipantStatsReader;
 import com.leagueakari.dto.scoring.PlayerScoreView;
 import com.leagueakari.dto.team.WeeklyReportResponse;
@@ -60,11 +61,31 @@ public class BoardEngine {
         final List<Double> damagePerMin = new ArrayList<>();
     }
 
-    /** 七榜单的中间结果容器 */
-    record Boards(List<WeeklyReportResponse.BoardEntry> mvp, List<WeeklyReportResponse.BoardEntry> opScore,
-            List<WeeklyReportResponse.BoardEntry> criminal, List<WeeklyReportResponse.BoardEntry> feeder,
-            List<WeeklyReportResponse.BoardEntry> carry, List<WeeklyReportResponse.BoardEntry> signature,
-            List<WeeklyReportResponse.BoardEntry> attendance) {}
+    /** 七榜单的中间结果容器（Lombok @Value 不可变对象） */
+    @Value
+    static class Boards {
+
+        /** MVP 榜 */
+        List<WeeklyReportResponse.BoardEntry> mvp;
+
+        /** OP Score 榜 */
+        List<WeeklyReportResponse.BoardEntry> opScore;
+
+        /** 打钱榜（criminal：分钟补刀异常低） */
+        List<WeeklyReportResponse.BoardEntry> criminal;
+
+        /** 送头榜 */
+        List<WeeklyReportResponse.BoardEntry> feeder;
+
+        /** Carry 榜（伤害占比最高） */
+        List<WeeklyReportResponse.BoardEntry> carry;
+
+        /** 绝活榜（单英雄高分） */
+        List<WeeklyReportResponse.BoardEntry> signature;
+
+        /** 出勤榜 */
+        List<WeeklyReportResponse.BoardEntry> attendance;
+    }
 
     /** 数值列表均值（空列表返回 0） */
     public static double avgOf(List<Double> values) {
@@ -107,24 +128,24 @@ public class BoardEngine {
         Map<String, TeamRosterService.RosterMember> memberByPuuid = FleetGameLoader.memberIndex(roster);
         // 聚合键是成员的 riotId，榜单输出时经此映射回成员（取主 puuid 展示）
         Map<String, TeamRosterService.RosterMember> memberByRiotId = roster.stream()
-                .collect(Collectors.toMap(TeamRosterService.RosterMember::riotId,
+                .collect(Collectors.toMap(TeamRosterService.RosterMember::getRiotId,
                         m -> m, (a, b) -> a));
         Map<String, MemberAgg> aggByMember = new LinkedHashMap<>();
         for (GameData g : games) {
             // 每局的队伍总击杀与总伤害（Carry 王击杀参与率/伤害占比的分母，含非车队队友）
             Map<Integer, Integer> teamKills = new HashMap<>();
             Map<Integer, Double> teamDamage = new HashMap<>();
-            for (MatchParticipant p : g.participants()) {
+            for (MatchParticipant p : g.getParticipants()) {
                 int teamKey = p.getTeamId() == null ? 0 : p.getTeamId();
                 teamKills.merge(teamKey, p.getKills() == null ? 0 : p.getKills(), Integer::sum);
                 teamDamage.merge(teamKey, totalDamage(p), Double::sum);
             }
-            for (MatchParticipant p : g.participants()) {
+            for (MatchParticipant p : g.getParticipants()) {
                 TeamRosterService.RosterMember member = memberByPuuid.get(p.getPuuid());
                 if (member == null) {
                     continue;
                 }
-                MemberAgg agg = aggByMember.computeIfAbsent(member.riotId(), k -> new MemberAgg());
+                MemberAgg agg = aggByMember.computeIfAbsent(member.getRiotId(), k -> new MemberAgg());
                 agg.games++;
                 if (Boolean.TRUE.equals(p.getWin())) {
                     agg.wins++;
@@ -146,12 +167,12 @@ public class BoardEngine {
                 }
                 // op_score：来自评分引擎的实时计算（缺失时跳过该局评分维度）；
                 // 同时记录最差一局（战犯榜"代表局"）
-                PlayerScoreView score = g.scores().get(p.getPuuid());
+                PlayerScoreView score = g.getScores().get(p.getPuuid());
                 if (score != null && score.getOpScore() != null) {
                     agg.opScores.add(score.getOpScore());
                     if (score.getOpScore() < agg.worstOpScore) {
                         agg.worstOpScore = score.getOpScore();
-                        agg.worstGameId = g.match().getGameId();
+                        agg.worstGameId = g.getMatch().getGameId();
                     }
                 }
                 // 成员×英雄聚合（绝活榜）
@@ -163,14 +184,14 @@ public class BoardEngine {
                 if (score != null && score.getOpScore() != null) {
                     champ.opScores.add(score.getOpScore());
                 }
-                double dmgPerMin = damagePerMin(p, g.match());
+                double dmgPerMin = damagePerMin(p, g.getMatch());
                 if (dmgPerMin >= 0) {
                     champ.damagePerMin.add(dmgPerMin);
                 }
             }
             // MVP/SVP 计数：按 participantId 回溯到参赛者，只统计车队成员
-            for (MatchMvp award : g.awards()) {
-                MatchParticipant owner = g.participants().stream()
+            for (MatchMvp award : g.getAwards()) {
+                MatchParticipant owner = g.getParticipants().stream()
                         .filter(p -> p.getId() != null && p.getId().equals(award.getParticipantId()))
                         .findFirst().orElse(null);
                 TeamRosterService.RosterMember ownerMember =
@@ -178,7 +199,7 @@ public class BoardEngine {
                 if (ownerMember == null) {
                     continue;
                 }
-                MemberAgg agg = aggByMember.computeIfAbsent(ownerMember.riotId(), k -> new MemberAgg());
+                MemberAgg agg = aggByMember.computeIfAbsent(ownerMember.getRiotId(), k -> new MemberAgg());
                 if ("MVP".equals(award.getType())) {
                     agg.mvpCount++;
                 } else if ("ACE".equals(award.getType())) {
@@ -265,14 +286,14 @@ public class BoardEngine {
         // 绝活榜：成员×英雄场次 ≥2，场均 op_score 降序（按 roster 顺序遍历成员）
         List<WeeklyReportResponse.BoardEntry> signatureBoard = new ArrayList<>();
         for (TeamRosterService.RosterMember member : roster) {
-            MemberAgg agg = aggByMember.get(member.riotId());
+            MemberAgg agg = aggByMember.get(member.getRiotId());
             if (agg == null) {
                 continue;
             }
             agg.champs.forEach((champId, champ) -> {
                 if (champ.games >= 2 && !champ.opScores.isEmpty()) {
                     signatureBoard.add(WeeklyReportResponse.BoardEntry.builder()
-                            .puuid(member.primaryPuuid()).riotId(member.riotId())
+                            .puuid(member.primaryPuuid()).riotId(member.getRiotId())
                             .value(round2(avgOf(champ.opScores)))
                             .detail(gameDataService.championName(champId) + " " + champ.games + "场 胜率"
                                     + Math.round(champ.wins * 100.0 / champ.games) + "%")

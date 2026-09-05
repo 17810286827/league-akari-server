@@ -58,7 +58,7 @@ public class MemberStatsService {
             int games = 0;
             int wins = 0;
             for (GameData g : fleetGames) {
-                for (MatchParticipant p : g.participants()) {
+                for (MatchParticipant p : g.getParticipants()) {
                     // 身份集合匹配：同一名成员的腾讯 UUID / Riot puuid 都计入其名下
                     if (member.owns(p.getPuuid())) {
                         games++;
@@ -70,7 +70,7 @@ public class MemberStatsService {
             }
             members.add(TeamMembersResponse.Member.builder()
                     .puuid(member.primaryPuuid())
-                    .riotId(member.riotId())
+                    .riotId(member.getRiotId())
                     .games(games)
                     .wins(wins)
                     .winRate(games == 0 ? null : (double) wins / games)
@@ -92,21 +92,21 @@ public class MemberStatsService {
                 .filter(m -> m.owns(puuid))
                 .findFirst()
                 .orElseThrow(() -> new BizException(ErrorCode.NOT_TEAM_MEMBER, "非车队成员：" + puuid));
-        log.info("Building member card: riotId={}, puuids={}", member.riotId(), member.puuids().size());
+        log.info("Building member card: riotId={}, puuids={}", member.getRiotId(), member.getPuuids().size());
 
         // 成长曲线：近 TREND_WEEKS 周（含当前周），按"个人全部对局"统计（含单人局与回填局）
         FleetGameLoader.WeekRange currentWeek = FleetGameLoader.weekRange(LocalDate.now(clock), FleetGameLoader.ZONE);
-        LocalDate trendFirstMonday = currentWeek.monday().minusWeeks(TREND_WEEKS - 1);
+        LocalDate trendFirstMonday = currentWeek.getMonday().minusWeeks(TREND_WEEKS - 1);
         long trendStartMs = trendFirstMonday.atStartOfDay(FleetGameLoader.ZONE).toInstant().toEpochMilli();
-        List<GameData> trendGames = gameLoader.loadGames(trendStartMs, currentWeek.endMs(), null, true);
+        List<GameData> trendGames = gameLoader.loadGames(trendStartMs, currentWeek.getEndMs(), null, true);
 
         List<MemberCardResponse.TrendPoint> trend = new ArrayList<>();
         for (int i = 0; i < TREND_WEEKS; i++) {
             LocalDate monday = trendFirstMonday.plusWeeks(i);
             FleetGameLoader.WeekRange week = FleetGameLoader.weekRange(monday, FleetGameLoader.ZONE);
             List<GameData> inWeek = trendGames.stream()
-                    .filter(g -> g.match().getGameCreation() >= week.startMs()
-                            && g.match().getGameCreation() < week.endMs())
+                    .filter(g -> g.getMatch().getGameCreation() >= week.getStartMs()
+                            && g.getMatch().getGameCreation() < week.getEndMs())
                     .filter(g -> gameLoader.hasMember(g, member))
                     .toList();
             trend.add(buildTrendPoint(monday, inWeek, member));
@@ -118,7 +118,7 @@ public class MemberStatsService {
 
         return MemberCardResponse.builder()
                 .puuid(member.primaryPuuid())
-                .riotId(member.riotId())
+                .riotId(member.getRiotId())
                 .trend(trend)
                 .champions(champions)
                 .build();
@@ -139,7 +139,7 @@ public class MemberStatsService {
                 wins++;
             }
             // 评分按该局参赛者自己的 puuid 索引（同一成员不同来源局的标识符可能不同）
-            PlayerScoreView score = g.scores().get(p.getPuuid());
+            PlayerScoreView score = g.getScores().get(p.getPuuid());
             if (score != null && score.getOpScore() != null) {
                 opScores.add(score.getOpScore());
             }
@@ -177,11 +177,11 @@ public class MemberStatsService {
             if (Boolean.TRUE.equals(p.getWin())) {
                 champ.wins++;
             }
-            PlayerScoreView score = g.scores().get(p.getPuuid());
+            PlayerScoreView score = g.getScores().get(p.getPuuid());
             if (score != null && score.getOpScore() != null) {
                 champ.opScores.add(score.getOpScore());
             }
-            double dmgPerMin = boardEngine.damagePerMin(p, g.match());
+            double dmgPerMin = boardEngine.damagePerMin(p, g.getMatch());
             if (dmgPerMin >= 0) {
                 champ.damagePerMin.add(dmgPerMin);
             }

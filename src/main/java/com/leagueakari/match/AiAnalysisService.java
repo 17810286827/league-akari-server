@@ -14,6 +14,7 @@ import com.leagueakari.config.AiProperties;
 import com.leagueakari.dto.match.MatchDetailResponse;
 import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.common.web.ClientDisconnectDetector;
+import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -41,11 +42,19 @@ import com.leagueakari.gamedata.GameDataService;
 @Service
 public class AiAnalysisService {
 
-    /** 缓存条目：分析文本 + 写入时间戳（2 分钟过期判定） */
-    private record CacheEntry(String analysis, long timestamp) {}
-
     /** 缓存有效期：2 分钟（毫秒） */
     private static final long CACHE_TTL_MS = 2 * 60 * 1000L;
+
+    /** 缓存条目：分析文本 + 写入时间戳（2 分钟过期判定，Lombok @Value 不可变对象） */
+    @Value
+    private static class CacheEntry {
+
+        /** SSE 完整分析正文 */
+        String analysis;
+
+        /** 缓存写入时间（毫秒时间戳） */
+        long timestamp;
+    }
 
     /** 系统提示词文件路径（classpath，md 格式，可直接编辑） */
     private final String promptFile;
@@ -148,15 +157,15 @@ public class AiAnalysisService {
         try {
             // 缓存命中：2 分钟内重复分析直接推送缓存全文（标记 fromCache，前端提示）
             CacheEntry cached = analysisCache.get(gameId);
-            if (cached != null && System.currentTimeMillis() - cached.timestamp() < CACHE_TTL_MS) {
+            if (cached != null && System.currentTimeMillis() - cached.getTimestamp() < CACHE_TTL_MS) {
                 log.info("AI analysis cache hit: gameId={}, elapsed={}ms",
                         gameId, System.currentTimeMillis() - startTime);
                 send(emitter, "start", Map.of("fromCache", true));
-                send(emitter, "chunk", Map.of("content", cached.analysis()));
+                send(emitter, "chunk", Map.of("content", cached.getAnalysis()));
                 send(emitter, "done", Map.of());
                 emitter.complete();
                 log.info("AI analysis cache served: gameId={}, length={}, elapsed={}ms",
-                        gameId, cached.analysis().length(), System.currentTimeMillis() - startTime);
+                        gameId, cached.getAnalysis().length(), System.currentTimeMillis() - startTime);
                 return;
             }
             // 过期清理：超过 2 分钟视为失效，重新调用 AI

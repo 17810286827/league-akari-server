@@ -1,5 +1,6 @@
 package com.leagueakari.team;
 
+import lombok.Value;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.leagueakari.config.TeamProperties;
 import com.leagueakari.dto.scoring.PlayerScoreView;
@@ -126,7 +127,7 @@ public class FleetGameLoader {
     /** 判断对局是否"车队对局"：同局车队成员数 ≥ 配置阈值（按成员身份集合匹配，跨两种 puuid 体系） */
     public boolean isFleet(GameData game, List<TeamRosterService.RosterMember> roster) {
         Map<String, TeamRosterService.RosterMember> memberByPuuid = memberIndex(roster);
-        long count = game.participants().stream()
+        long count = game.getParticipants().stream()
                 .filter(p -> memberByPuuid.containsKey(p.getPuuid()))
                 .count();
         return count >= Math.max(1, teamProperties.getMinSharedMembers());
@@ -134,12 +135,12 @@ public class FleetGameLoader {
 
     /** 对局中是否有指定成员（身份集合匹配） */
     public boolean hasMember(GameData game, TeamRosterService.RosterMember member) {
-        return game.participants().stream().anyMatch(p -> member.owns(p.getPuuid()));
+        return game.getParticipants().stream().anyMatch(p -> member.owns(p.getPuuid()));
     }
 
     /** 成员在该对局中的参赛记录（找不到返回 null，理论上不发生） */
     public MatchParticipant memberParticipant(GameData game, TeamRosterService.RosterMember member) {
-        return game.participants().stream()
+        return game.getParticipants().stream()
                 .filter(p -> member.owns(p.getPuuid()))
                 .findFirst()
                 .orElse(null);
@@ -154,13 +155,24 @@ public class FleetGameLoader {
     public static Map<String, TeamRosterService.RosterMember> memberIndex(List<TeamRosterService.RosterMember> roster) {
         Map<String, TeamRosterService.RosterMember> index = new HashMap<>();
         for (TeamRosterService.RosterMember member : roster) {
-            for (String puuid : member.puuids()) {
+            for (String puuid : member.getPuuids()) {
                 index.putIfAbsent(puuid, member);
             }
         }
         return index;
     }
 
-    /** 自然周区间：startMs/endMs 为 [startMs, endMs) 开区间毫秒时间戳 */
-    public record WeekRange(long startMs, long endMs, LocalDate monday) {}
+    /** 自然周区间：startMs/endMs 为 [startMs, endMs) 开区间毫秒时间戳（Lombok @Value 不可变对象） */
+    @Value
+    public static class WeekRange {
+
+        /** 周起始毫秒时间戳（周一 00:00，含） */
+        long startMs;
+
+        /** 周结束毫秒时间戳（下周一 00:00，不含） */
+        long endMs;
+
+        /** 该周周一日期（周口径时区） */
+        LocalDate monday;
+    }
 }

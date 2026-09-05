@@ -10,6 +10,7 @@ import com.leagueakari.ai.PromptLoader;
 import com.leagueakari.ai.AiCompletionRequest;
 import com.leagueakari.config.AiProperties;
 import com.leagueakari.dto.team.WeeklyReportResponse;
+import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -32,11 +33,19 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class WeeklyAiCommentService {
 
-    /** 缓存条目：锐评文本 + 写入时间戳 */
-    private record CacheEntry(String comment, long timestamp) {}
-
     /** 缓存有效期：10 分钟（毫秒）。周报数据一周一变，10 分钟足够覆盖页内反复刷新 */
     private static final long CACHE_TTL_MS = 10 * 60 * 1000L;
+
+    /** 缓存条目：锐评文本 + 写入时间戳（Lombok @Value 不可变对象） */
+    @Value
+    private static class CacheEntry {
+
+        /** 周报锐评正文 */
+        String comment;
+
+        /** 缓存写入时间（毫秒时间戳） */
+        long timestamp;
+    }
 
     /** 提示词加载器：文件读取 + 内置默认回退（全项目唯一实现，架构清理 T7） */
     private final PromptLoader promptLoader;
@@ -80,9 +89,9 @@ public class WeeklyAiCommentService {
         // apiKey 前置校验收敛到 AiClient 重载（架构清理 T7）；缓存命中（历史成功产物）不受 Key 状态影响
         // 缓存命中：同一周直接复用（10 分钟内）
         CacheEntry cached = cache.get(report.getWeekLabel());
-        if (cached != null && System.currentTimeMillis() - cached.timestamp() < CACHE_TTL_MS) {
+        if (cached != null && System.currentTimeMillis() - cached.getTimestamp() < CACHE_TTL_MS) {
             log.info("Weekly AI comment cache hit: week={}", report.getWeekLabel());
-            return cached.comment();
+            return cached.getComment();
         }
         cache.remove(report.getWeekLabel());
 

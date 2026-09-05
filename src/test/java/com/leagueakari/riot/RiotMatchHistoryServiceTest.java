@@ -42,23 +42,6 @@ import com.leagueakari.team.TeamRosterService;
  */
 class RiotMatchHistoryServiceTest {
 
-    private CloseableHttpClient httpClient;
-    private MatchIngestService matchIngestService;
-    private MatchMapper matchMapper;
-    private TeamRosterService rosterService;
-    private RiotMatchHistoryService service;
-
-    /** 模拟 Riot 接口响应（getContent 每次返回新流） */
-    private CloseableHttpResponse mockResponse(int status, String body) throws Exception {
-        CloseableHttpResponse response = mock(CloseableHttpResponse.class);
-        when(response.getCode()).thenReturn(status);
-        HttpEntity entity = mock(HttpEntity.class);
-        when(entity.getContent()).thenAnswer(inv ->
-                new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
-        when(response.getEntity()).thenReturn(entity);
-        return response;
-    }
-
     /** MATCH-V5 单场对局详情 JSON（1 名参与者 + 1 支队伍，字段与 Riot 契约一致） */
     private static final String MATCH_DETAIL = """
             {"metadata":{"matchId":"TW2_1"},"info":{
@@ -76,6 +59,23 @@ class RiotMatchHistoryServiceTest {
                 "objectives":{"champion":{"first":true},"tower":{"kills":9,"first":false},
                   "inhibitor":{"kills":2},"baron":{"kills":1},"dragon":{"kills":2},"riftHerald":{"kills":1}}}]}}
             """;
+
+    private CloseableHttpClient httpClient;
+    private MatchIngestService matchIngestService;
+    private MatchMapper matchMapper;
+    private TeamRosterService rosterService;
+    private RiotMatchHistoryService service;
+
+    /** 模拟 Riot 接口响应（getContent 每次返回新流） */
+    private CloseableHttpResponse mockResponse(int status, String body) throws Exception {
+        CloseableHttpResponse response = mock(CloseableHttpResponse.class);
+        when(response.getCode()).thenReturn(status);
+        HttpEntity entity = mock(HttpEntity.class);
+        when(entity.getContent()).thenAnswer(inv ->
+                new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
+        when(response.getEntity()).thenReturn(entity);
+        return response;
+    }
 
     @BeforeEach
     void setUp() {

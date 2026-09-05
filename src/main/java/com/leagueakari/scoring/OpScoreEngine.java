@@ -181,7 +181,7 @@ public class OpScoreEngine {
         if (baselineOfChampion == null || baselineOfChampion.meanOf(dim) == null) {
             return 0.0;
         }
-        double n = baselineOfChampion.sampleCount();
+        double n = baselineOfChampion.getSampleCount();
         int min = config.getBaselineThresholdMin();
         int max = config.getBaselineThresholdMax();
         double mixMax = config.getBaselineMixMax();

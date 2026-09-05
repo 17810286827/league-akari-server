@@ -110,7 +110,7 @@ class BaselineServiceTest {
         when(baselineMapper.selectById(2)).thenReturn(rec);
 
         ChampionBaseline baseline = service.loadBaselineByChampion(2);
-        assertThat(baseline.sampleCount()).isEqualTo(10);
+        assertThat(baseline.getSampleCount()).isEqualTo(10);
         assertThat(baseline.meanOf("damage")).isEqualTo(300.0);
         assertThat(baseline.meanOf("kda")).isEqualTo(5.0);
         assertThat(baseline.meanOf("gold")).isEqualTo(400.0);
@@ -136,7 +136,7 @@ class BaselineServiceTest {
 
         Map<Integer, ChampionBaseline> all = service.loadBaseline();
         assertThat(all).containsKey(1);
-        assertThat(all.get(1).sampleCount()).isEqualTo(5);
+        assertThat(all.get(1).getSampleCount()).isEqualTo(5);
         assertThat(all.get(1).meanOf("damage")).isEqualTo(300.0);
     }
 

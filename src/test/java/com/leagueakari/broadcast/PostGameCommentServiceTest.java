@@ -84,8 +84,8 @@ class PostGameCommentServiceTest {
         // 参数归属：局后锐评必须用自己的独立模型键（与 ai.model 解耦，播报对延迟敏感）
         ArgumentCaptor<AiCompletionRequest> captor = ArgumentCaptor.forClass(AiCompletionRequest.class);
         verify(aiClient, times(1)).call(captor.capture(), anyString(), anyString(), anyString(), anyInt());
-        assertThat(captor.getValue().model()).isEqualTo("test-model");
-        assertThat(captor.getValue().maxTokens()).isEqualTo(1024);
+        assertThat(captor.getValue().getModel()).isEqualTo("test-model");
+        assertThat(captor.getValue().getMaxTokens()).isEqualTo(1024);
     }
 
     /** 用例：重试耗尽仍空正文 → 抛 BizException(AI_API_ERROR)（由编排层降级为缺席提示）。

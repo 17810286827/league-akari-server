@@ -26,8 +26,8 @@ class FleetGameLoaderTest {
         // 独立真值：直接用 ZonedDateTime 计算期望边界
         long expectedStart = ZonedDateTime.of(2026, 8, 24, 0, 0, 0, 0, ZONE).toInstant().toEpochMilli();
         long expectedEnd = ZonedDateTime.of(2026, 8, 31, 0, 0, 0, 0, ZONE).toInstant().toEpochMilli();
-        assertThat(range.startMs()).isEqualTo(expectedStart);
-        assertThat(range.endMs()).isEqualTo(expectedEnd);
-        assertThat(range.monday()).isEqualTo(LocalDate.of(2026, 8, 24));
+        assertThat(range.getStartMs()).isEqualTo(expectedStart);
+        assertThat(range.getEndMs()).isEqualTo(expectedEnd);
+        assertThat(range.getMonday()).isEqualTo(LocalDate.of(2026, 8, 24));
     }
 }

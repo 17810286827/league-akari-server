@@ -2,6 +2,7 @@ package com.leagueakari.qqbot;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -21,8 +22,16 @@ public class QqEventDispatcher {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /** 解析后的事件：类型 + 群 openid */
-    public record GroupEvent(String type, String groupOpenId) {}
+    /** 解析后的事件：类型 + 群 openid（Lombok {@code @Value} 不可变对象） */
+    @Value
+    public static class GroupEvent {
+
+        /** 事件类型（GROUP_ADD_ROBOT / GROUP_DEL_ROBOT） */
+        String type;
+
+        /** 群 openid（入群/退群事件载荷中的标识） */
+        String groupOpenId;
+    }
 
     /**
      * 解析一帧 WS payload：

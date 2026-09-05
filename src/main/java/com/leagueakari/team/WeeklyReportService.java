@@ -52,28 +52,28 @@ public class WeeklyReportService {
         // 默认周：今天回退 7 天所在周（无论今天是周几，都落在上一个自然周）
         LocalDate targetDay = anyDayOfWeek != null ? anyDayOfWeek : LocalDate.now(clock).minusDays(7);
         FleetGameLoader.WeekRange range = FleetGameLoader.weekRange(targetDay, FleetGameLoader.ZONE);
-        log.info("Building weekly report: week={} ~ {}", range.monday(), range.monday().plusDays(6));
+        log.info("Building weekly report: week={} ~ {}", range.getMonday(), range.getMonday().plusDays(6));
 
         List<TeamRosterService.RosterMember> roster = rosterService.requireMembers();
         // 周报只看"车队对局"：过滤掉成员的单人局/路人局
-        List<GameData> fleetGames = gameLoader.loadGames(range.startMs(), range.endMs(), null, true).stream()
+        List<GameData> fleetGames = gameLoader.loadGames(range.getStartMs(), range.getEndMs(), null, true).stream()
                 .filter(g -> gameLoader.isFleet(g, roster)).toList();
-        log.info("Weekly report games: weekOf={}, fleetGames={}", range.monday(), fleetGames.size());
+        log.info("Weekly report games: weekOf={}, fleetGames={}", range.getMonday(), fleetGames.size());
 
         BoardEngine.Boards boards = boardEngine.computeBoards(fleetGames, roster);
         WeeklyReportResponse report = WeeklyReportResponse.builder()
-                .weekStartMs(range.startMs())
-                .weekEndMs(range.endMs())
-                .weekLabel(range.monday() + " ~ " + range.monday().plusDays(6))
+                .weekStartMs(range.getStartMs())
+                .weekEndMs(range.getEndMs())
+                .weekLabel(range.getMonday() + " ~ " + range.getMonday().plusDays(6))
                 .teamName(teamProperties.getName())
                 .overview(buildOverview(fleetGames, roster))
-                .mvpBoard(boards.mvp())
-                .opScoreBoard(boards.opScore())
-                .criminalBoard(boards.criminal())
-                .feederBoard(boards.feeder())
-                .carryBoard(boards.carry())
-                .signatureBoard(boards.signature())
-                .attendanceBoard(boards.attendance())
+                .mvpBoard(boards.getMvp())
+                .opScoreBoard(boards.getOpScore())
+                .criminalBoard(boards.getCriminal())
+                .feederBoard(boards.getFeeder())
+                .carryBoard(boards.getCarry())
+                .signatureBoard(boards.getSignature())
+                .attendanceBoard(boards.getAttendance())
                 .highlights(extractHighlights(fleetGames, roster))
                 .build();
         // AI 锐评为增强信息：失败降级为 null，不影响周报主体（关键容错点，记 warn）
@@ -97,10 +97,10 @@ public class WeeklyReportService {
         long totalDuration = 0;
         Map<String, Integer> gamesByDay = new HashMap<>();
         for (GameData g : games) {
-            totalDuration += g.match().getGameDuration() == null ? 0 : g.match().getGameDuration();
-            String day = gameLoader.dayLabel(g.match().getGameCreation());
+            totalDuration += g.getMatch().getGameDuration() == null ? 0 : g.getMatch().getGameDuration();
+            String day = gameLoader.dayLabel(g.getMatch().getGameCreation());
             gamesByDay.merge(day, 1, Integer::sum);
-            for (MatchParticipant p : g.participants()) {
+            for (MatchParticipant p : g.getParticipants()) {
                 if (p.getPuuid() == null || !memberByPuuid.containsKey(p.getPuuid())) {
                     continue;
                 }
@@ -113,7 +113,7 @@ public class WeeklyReportService {
         // 出勤成员（按配置顺序）：有 ≥1 次参与的成员
         List<String> activeMembers = roster.stream()
                 .filter(m -> games.stream().anyMatch(g -> gameLoader.hasMember(g, m)))
-                .map(TeamRosterService.RosterMember::riotId)
+                .map(TeamRosterService.RosterMember::getRiotId)
                 .toList();
         // 最密集的一天
         String busiestDay = null;
@@ -154,7 +154,7 @@ public class WeeklyReportService {
 
         // 单局最高击杀：不依赖时间线
         for (GameData g : games) {
-            for (MatchParticipant p : g.participants()) {
+            for (MatchParticipant p : g.getParticipants()) {
                 TeamRosterService.RosterMember member = memberByPuuid.get(p.getPuuid());
                 if (member == null) {
                     continue;
@@ -162,9 +162,9 @@ public class WeeklyReportService {
                 int kills = p.getKills() == null ? 0 : p.getKills();
                 if (mostKills == null || kills > mostKills.getValue()) {
                     mostKills = WeeklyReportResponse.HighlightItem.builder()
-                            .gameId(g.match().getGameId())
+                            .gameId(g.getMatch().getGameId())
                             .title("单局最高击杀")
-                            .detail(member.riotId() + " 单局 " + kills + " 杀（"
+                            .detail(member.getRiotId() + " 单局 " + kills + " 杀（"
                                     + gameDataService.championName(p.getChampionId()) + "）")
                             .value((double) kills)
                             .build();
@@ -176,21 +176,21 @@ public class WeeklyReportService {
         String bestStreakMember = null;
         Long bestStreakEndGame = null;
         for (GameData g : games) {
-            for (MatchParticipant p : g.participants()) {
+            for (MatchParticipant p : g.getParticipants()) {
                 TeamRosterService.RosterMember member = memberByPuuid.get(p.getPuuid());
                 if (member == null) {
                     continue;
                 }
                 if (Boolean.TRUE.equals(p.getWin())) {
                     // 胜场重置连败计数
-                    currentStreak.put(member.riotId(), 0);
+                    currentStreak.put(member.getRiotId(), 0);
                 } else {
-                    int streak = currentStreak.merge(member.riotId(), 1, Integer::sum);
+                    int streak = currentStreak.merge(member.getRiotId(), 1, Integer::sum);
                     // 实时记录最长连败的归属者与终结局（并列时保留先出现者）
                     if (streak > bestStreak) {
                         bestStreak = streak;
-                        bestStreakMember = member.riotId();
-                        bestStreakEndGame = g.match().getGameId();
+                        bestStreakMember = member.getRiotId();
+                        bestStreakEndGame = g.getMatch().getGameId();
                     }
                 }
             }
@@ -207,7 +207,7 @@ public class WeeklyReportService {
         // 时间线类名场面：翻盘 + 多杀（时间线缺失的局跳过并计数标注）
         int missingTimelineCount = 0;
         for (GameData g : games) {
-            Object timeline = timelineService.getTimeline(g.match().getGameId());
+            Object timeline = timelineService.getTimeline(g.getMatch().getGameId());
             if (timeline == null) {
                 missingTimelineCount++;
                 continue;
@@ -218,8 +218,8 @@ public class WeeklyReportService {
             // 是数据库自增主键（两者完全不同）——按"上报数组顺序 = 局内序号"映射
             // （客户端按 LCU/SGP 原始 participants 顺序推送，MATCH-V5 亦按 1..N 排列）
             Map<Integer, MatchParticipant> byGameSlot = new HashMap<>();
-            for (int i = 0; i < g.participants().size(); i++) {
-                byGameSlot.put(i + 1, g.participants().get(i));
+            for (int i = 0; i < g.getParticipants().size(); i++) {
+                byGameSlot.put(i + 1, g.getParticipants().get(i));
             }
             // 局内 participantId → 队伍 ID（队伍金币聚合需要）
             Map<Integer, Integer> teamById = new HashMap<>();
@@ -228,7 +228,7 @@ public class WeeklyReportService {
                     teamById.put(slot, p.getTeamId());
                 }
             });
-            Integer winnerTeamId = g.match().getWinnerTeamId();
+            Integer winnerTeamId = g.getMatch().getWinnerTeamId();
             // 逐帧聚合双方金币，找胜方最大落后值
             if (winnerTeamId != null) {
                 Integer loserTeamId = winnerTeamId == 100 ? 200 : 100;
@@ -255,7 +255,7 @@ public class WeeklyReportService {
                 if (maxDeficit > bestDeficit && maxDeficit > 0) {
                     bestDeficit = maxDeficit;
                     comeback = WeeklyReportResponse.HighlightItem.builder()
-                            .gameId(g.match().getGameId())
+                            .gameId(g.getMatch().getGameId())
                             .title("绝地翻盘")
                             .detail("胜方最大落后 " + Math.round(maxDeficit) + " 金币完成翻盘")
                             .value(maxDeficit)
@@ -286,9 +286,9 @@ public class WeeklyReportService {
                             default -> "三杀时刻";
                         };
                         multiKill = WeeklyReportResponse.HighlightItem.builder()
-                                .gameId(g.match().getGameId())
+                                .gameId(g.getMatch().getGameId())
                                 .title(streakName)
-                                .detail(killerMember.riotId() + " 用 "
+                                .detail(killerMember.getRiotId() + " 用 "
                                         + gameDataService.championName(killer.getChampionId())
                                         + " 拿下" + streakName.replace("时刻", ""))
                                 .value((double) streakLength)

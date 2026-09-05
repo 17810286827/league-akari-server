@@ -49,13 +49,13 @@ public class LeaderboardService {
                 .filter(g -> gameLoader.isFleet(g, roster)).toList();
         BoardEngine.Boards boards = boardEngine.computeBoards(fleetGames, roster);
         List<WeeklyReportResponse.BoardEntry> entries = switch (dimension) {
-            case "mvp" -> boards.mvp();
-            case "opscore" -> boards.opScore();
-            case "criminal" -> boards.criminal();
-            case "feeder" -> boards.feeder();
-            case "carry" -> boards.carry();
-            case "signature" -> boards.signature();
-            case "attendance" -> boards.attendance();
+            case "mvp" -> boards.getMvp();
+            case "opscore" -> boards.getOpScore();
+            case "criminal" -> boards.getCriminal();
+            case "feeder" -> boards.getFeeder();
+            case "carry" -> boards.getCarry();
+            case "signature" -> boards.getSignature();
+            case "attendance" -> boards.getAttendance();
             default -> List.of();
         };
         return LeaderboardResponse.builder()

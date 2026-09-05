@@ -36,6 +36,13 @@ import com.leagueakari.common.stats.ParticipantStatsReader;
 @RequiredArgsConstructor
 public class MatchMvpService {
 
+    /**
+     * 大乱斗系队列 ID（极地大乱斗 450 / 海克斯乱斗 2400、2410、2450）——大乱斗修正的判定依据。
+     * <p>必须按 queueId 判定而不能用 gameMode 字符串：LCU 的 CHERRY 实为斗魂竞技场，
+     * 旧评分引擎曾因此误判（该分支从未命中）。理由只在此处说一次，其余引用点见本注释。</p>
+     */
+    private static final Set<Integer> ARAM_QUEUE_IDS = Set.of(450, 2400, 2410, 2450);
+
     private final MatchMvpMapper matchMvpMapper;
     private final OpScoreEngine opScoreEngine;
     private final ScoringConfig scoringConfig;
@@ -149,13 +156,6 @@ public class MatchMvpService {
         return record != null && record.getScoringVersion() != null
                 && record.getScoringVersion() == scoringVersion();
     }
-
-    /**
-     * 大乱斗系队列 ID（极地大乱斗 450 / 海克斯乱斗 2400、2410、2450）——大乱斗修正的判定依据。
-     * <p>必须按 queueId 判定而不能用 gameMode 字符串：LCU 的 CHERRY 实为斗魂竞技场，
-     * 旧评分引擎曾因此误判（该分支从未命中）。理由只在此处说一次，其余引用点见本注释。</p>
-     */
-    private static final Set<Integer> ARAM_QUEUE_IDS = Set.of(450, 2400, 2410, 2450);
 
     private MvpScoringInput toScoringInput(MatchParticipant p, Match match) {
         boolean aramMode = match.getQueueId() != null && ARAM_QUEUE_IDS.contains(match.getQueueId());

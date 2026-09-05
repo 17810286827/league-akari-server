@@ -84,11 +84,16 @@ public class ReportImageRenderer {
             0xcf7a3a, 0x2f8f6f, 0xb04d5a
     };
 
-    /** 内置思源黑体（classpath），懒加载一次 */
-    private static volatile Font baseFont;
+    // ---------- 文本对齐 ----------
+    private static final int LEFT = 0;
+    private static final int CENTER = 1;
+    private static final int RIGHT = 2;
 
     /** 阵容行高：主行两行文字（46）+ 指标行（24）+ 行间距（8），原型 C v3 */
     private static final int ROW_H = 78;
+
+    /** 内置思源黑体（classpath），懒加载一次 */
+    private static volatile Font baseFont;
 
     /** 头像服务（可为 null：无服务时全部降级色块圆盘，供单测/降级路径） */
     private final ChampionIconService iconService;
@@ -577,11 +582,6 @@ public class ReportImageRenderer {
         }
         return titleTag;
     }
-
-    // ---------- 文本对齐 ----------
-    private static final int LEFT = 0;
-    private static final int CENTER = 1;
-    private static final int RIGHT = 2;
 
     /** 绘制文本（x 为锚点，按对齐方式计算） */
     private void drawText(Graphics2D g, String text, float x, float y, Font f, Color c, int align) {

@@ -93,9 +93,9 @@ class TeamRosterServiceTest {
 
         assertThat(members).hasSize(1);
         TeamRosterService.RosterMember member = members.get(0);
-        assertThat(member.riotId()).isEqualTo("赌书消得泼茶香#iKun");
+        assertThat(member.getRiotId()).isEqualTo("赌书消得泼茶香#iKun");
         // 两套标识符都在身份集合里，主标识取集合首项（库内命中的腾讯 UUID）
-        assertThat(member.puuids()).containsExactly(
+        assertThat(member.getPuuids()).containsExactly(
                 "3e242ccb-b520-5f29-8551-a7ad71b8f629", "IZOp3JUS-global-riots-puuid");
         assertThat(member.primaryPuuid()).isEqualTo("3e242ccb-b520-5f29-8551-a7ad71b8f629");
         assertThat(member.owns("IZOp3JUS-global-riots-puuid")).isTrue();
@@ -112,7 +112,7 @@ class TeamRosterServiceTest {
 
         TeamRosterService.RosterMember member = teamRosterService.requireMembers().get(0);
 
-        assertThat(member.puuids()).containsExactly("riot-puuid-b");
+        assertThat(member.getPuuids()).containsExactly("riot-puuid-b");
         assertThat(member.primaryPuuid()).isEqualTo("riot-puuid-b");
     }
 
@@ -127,7 +127,7 @@ class TeamRosterServiceTest {
 
         TeamRosterService.RosterMember member = teamRosterService.requireMembers().get(0);
 
-        assertThat(member.puuids()).containsExactly("tencent-uuid-b");
+        assertThat(member.getPuuids()).containsExactly("tencent-uuid-b");
     }
 
     /** 用例：库内与 Riot 两套来源都查不到 → 整体抛业务异常（1102）并带成员名定位 */

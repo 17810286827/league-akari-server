@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.common.exception.QqPushException;
 import com.leagueakari.config.PushProperties;
+import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
 import org.apache.hc.client5.http.classic.methods.HttpPut;
@@ -41,8 +42,19 @@ public class QqBotClient {
     /** 官方 OpenAPI 统一域名（2026-08 起） */
     private static final String API_BASE = "https://api.bot.qq.com";
 
-    /** 缓存条目：token + 过期毫秒时间戳 */
-    private record TokenCache(String token, long expiresAtMs) {}
+    /** md5_10m 口径：前 10_002_432 字节的 MD5（官方分片规则，非整 10MB；与 AstrBot 对齐） */
+    private static final int MD5_10M_BYTES = 10_002_432;
+
+    /** 缓存条目：token + 过期毫秒时间戳（Lombok @Value 不可变对象） */
+    @Value
+    private static class TokenCache {
+
+        /** 访问凭证 */
+        String token;
+
+        /** 过期时间（毫秒时间戳） */
+        long expiresAtMs;
+    }
 
     /** 进程内 token 缓存：过期前 60 秒视为失效提前刷新 */
     private volatile TokenCache tokenCache;
@@ -134,14 +146,30 @@ public class QqBotClient {
         sendMediaMessage(token, groupOpenId, fileInfo);
     }
 
-    /** 单个待传分片：服务端下发的序号与预签名 URL */
-    private record UploadPart(int index, String presignedUrl) {}
+    /** 单个待传分片：服务端下发的序号与预签名 URL（Lombok @Value 不可变对象） */
+    @Value
+    private static class UploadPart {
 
-    /** 上传会话：prepare 响应的一次性状态 */
-    private record UploadSession(String uploadId, int blockSize, List<UploadPart> parts) {}
+        /** 分片序号（服务端从 0 或 1 起发，按实际下发值回传） */
+        int index;
 
-    /** md5_10m 口径：前 10_002_432 字节的 MD5（官方分片规则，非整 10MB；与 AstrBot 对齐） */
-    private static final int MD5_10M_BYTES = 10_002_432;
+        /** 该分片的 COS 预签名上传 URL */
+        String presignedUrl;
+    }
+
+    /** 上传会话：prepare 响应的一次性状态（Lombok @Value 不可变对象） */
+    @Value
+    private static class UploadSession {
+
+        /** 会话 ID（合并接口回传用） */
+        String uploadId;
+
+        /** 分片块大小（字节，服务端下发） */
+        int blockSize;
+
+        /** 待传分片列表（序号 + 预签名 URL） */
+        List<UploadPart> parts;
+    }
 
     /**
      * 第 1 步：预上传申请。请求体含 file_type（1=图片）与 file_size（字符串），
@@ -189,16 +217,16 @@ public class QqBotClient {
      * 分片序号可能从 0 或 1 起（服务端下发为准），偏移按最小序号归一
      */
     private void uploadParts(String token, String groupOpenId, UploadSession session, byte[] bytes) {
-        int minIndex = session.parts().stream().mapToInt(UploadPart::index).min().orElse(0);
-        for (UploadPart part : session.parts()) {
-            int offset = (part.index() - minIndex) * session.blockSize();
-            int length = Math.min(session.blockSize(), bytes.length - offset);
+        int minIndex = session.getParts().stream().mapToInt(UploadPart::getIndex).min().orElse(0);
+        for (UploadPart part : session.getParts()) {
+            int offset = (part.getIndex() - minIndex) * session.getBlockSize();
+            int length = Math.min(session.getBlockSize(), bytes.length - offset);
             if (length <= 0) {
-                throw new QqPushException("QQ 上传分片越界: index=" + part.index());
+                throw new QqPushException("QQ 上传分片越界: index=" + part.getIndex());
             }
             byte[] partBytes = java.util.Arrays.copyOfRange(bytes, offset, offset + length);
-            putBytes(part.presignedUrl(), partBytes);
-            finishPart(token, groupOpenId, session.uploadId(), part.index(), length, partBytes);
+            putBytes(part.getPresignedUrl(), partBytes);
+            finishPart(token, groupOpenId, session.getUploadId(), part.getIndex(), length, partBytes);
         }
     }
 
@@ -242,7 +270,7 @@ public class QqBotClient {
         payload.put("file_type", 1); // 1=图片
         payload.put("srv_send_msg", false); // 仅注册不直接发送（消息由 msg_type=7 单独发）
         payload.put("file_name", "report.png");
-        payload.put("upload_id", session.uploadId());
+        payload.put("upload_id", session.getUploadId());
         JsonNode resp = postJson(API_BASE + "/v2/groups/" + groupOpenId + "/files",
                 token, payload, "图片合并注册");
         JsonNode body = resp.has("data") && resp.get("data").isObject() ? resp.get("data") : resp;
@@ -343,8 +371,8 @@ public class QqBotClient {
             throw new QqPushException("QQ 机器人凭证未配置（push.app-id / push.client-secret）");
         }
         TokenCache cached = tokenCache;
-        if (cached != null && cached.expiresAtMs() - 60_000 > System.currentTimeMillis()) {
-            return cached.token();
+        if (cached != null && cached.getExpiresAtMs() - 60_000 > System.currentTimeMillis()) {
+            return cached.getToken();
         }
 
         Map<String, Object> payload = new LinkedHashMap<>();

@@ -103,7 +103,7 @@ public class BroadcastCoordinator {
      */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onMatchSaved(MatchSavedEvent event) {
-        Long gameId = event.gameId();
+        Long gameId = event.getGameId();
         if (gameId == null) {
             return;
         }
@@ -302,7 +302,7 @@ public class BroadcastCoordinator {
             List<TeamRosterService.RosterMember> roster) {
         Map<String, TeamRosterService.RosterMember> index = new HashMap<>();
         for (TeamRosterService.RosterMember member : roster) {
-            for (String puuid : member.puuids()) {
+            for (String puuid : member.getPuuids()) {
                 index.put(puuid, member);
             }
         }

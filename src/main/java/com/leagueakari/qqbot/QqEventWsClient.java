@@ -208,12 +208,12 @@ public class QqEventWsClient {
                 if (event == null) {
                     return; // 非关注事件（群消息等）：不打扰
                 }
-                if ("GROUP_ADD_ROBOT".equals(event.type())) {
+                if ("GROUP_ADD_ROBOT".equals(event.getType())) {
                     log.info("机器人已加入群 group_openid={}，请将 push.group-open-id 配置为该值",
-                            event.groupOpenId());
+                            event.getGroupOpenId());
                 } else {
                     log.warn("机器人被移出群 group_openid={}，局后播报将无法送达",
-                            event.groupOpenId());
+                            event.getGroupOpenId());
                 }
             }
             // op 1（心跳回执）/ op 7（要求重连，断开机制自然处理）：无需额外动作

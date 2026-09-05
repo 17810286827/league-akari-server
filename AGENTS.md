@@ -28,6 +28,8 @@ league-akari-server：英雄联盟对局同步后端。接收 LCU 客户端推�
 - **幂等键是 gameId**：重复推送同一 gameId 不得产生重复数据或覆盖首次写入；时间线接口要求 path 与 body 的 gameId 一致，不一致抛 `BizException(GAME_ID_MISMATCH)` 返回业务码 1002
 - **数据库变更走 Flyway**：迁移文件在 `src/main/resources/db/migration/`（现有 V1~V7，最新为 V7__match_push_status.sql）；已执行的迁移不可修改，新增表/字段必须新建 `V{n}__xxx.sql`；实体字段需加中文注释；配置已开 `map-underscore-to-camel-case`
 - **注释与日志**：代码注释率不低于 20%（中文注释）；关键业务节点、异常处理、数据变更处用 `@Slf4j` 打印日志
+- **禁用 record，统一 Lombok**：不使用 Java `record` 语法；不可变值对象用 `@Value`（private final 字段 + 全参构造 + getter），可变对象用 `@Data`；注意 `@Value` 在类已有显式构造器时不再生成全参构造器，需显式补 `@AllArgsConstructor`
+- **成员声明顺序**：`static final` 常量放类体最前部（位于实例字段、静态字段、静态方法、嵌套类之前），之后依次为实例字段 → 构造器 → 实例方法 → 静态方法
 - **提交风格**：Conventional Commits 中文描述，如 `feat(matches): ...`、`fix(timeline): ...`
 
 ## 新增：Docker 部署配置

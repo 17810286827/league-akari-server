@@ -1,5 +1,7 @@
 package com.leagueakari.team;
 
+import lombok.AllArgsConstructor;
+import lombok.Value;
 import com.leagueakari.common.exception.ErrorCode;
 
 import com.leagueakari.common.exception.BizException;
@@ -44,11 +46,22 @@ import java.util.Set;
 public class TeamRosterService {
 
     /**
-     * 车队成员：riotId 为配置原样（展示与聚合键），puuids 为该成员的全部已知标识符。
-     * riotPuuid 为 Riot 全局标识（Account-V1 解析所得，MATCH-V5 历史回填专用；
-     * 库内命中但 Riot 未命中时为 null，此时回填能力缺失）。primaryPuuid 约定取集合首项
+     * 车队成员（Lombok @Value 不可变对象）：riotId 为配置原样（展示与聚合键），
+     * puuids 为该成员的全部已知标识符，riotPuuid 为 Riot 全局标识（MATCH-V5 历史回填专用）。
      */
-    public record RosterMember(String riotId, LinkedHashSet<String> puuids, String riotPuuid) {
+    @Value
+    @AllArgsConstructor
+    public static class RosterMember {
+
+        /** 配置原样的 riotId（展示与聚合键） */
+        String riotId;
+
+        /** 该成员的全部已知标识符（同一人可能同时有腾讯 UUID 与 Riot puuid） */
+        LinkedHashSet<String> puuids;
+
+        /** Riot 全局标识（Account-V1 解析所得；库内命中但 Riot 未命中时为 null） */
+        String riotPuuid;
+
         /** 便捷构造：未记录 Riot 全局 puuid 的场景（测试/库内单来源） */
         public RosterMember(String riotId, LinkedHashSet<String> puuids) {
             this(riotId, puuids, null);
@@ -111,11 +124,11 @@ public class TeamRosterService {
             }
             RosterMember member = resolveMember(riotId.trim());
             // 按 riotId 去重（配置重复项只保留先出现的）
-            resolved.putIfAbsent(member.riotId(), member);
+            resolved.putIfAbsent(member.getRiotId(), member);
         }
         List<RosterMember> members = List.copyOf(resolved.values());
         log.info("Team roster resolved: {} members: {}", members.size(),
-                members.stream().map(m -> m.riotId() + "(puuid×" + m.puuids().size() + ")").toList());
+                members.stream().map(m -> m.getRiotId() + "(puuid×" + m.getPuuids().size() + ")").toList());
         cache = members;
         return members;
     }
