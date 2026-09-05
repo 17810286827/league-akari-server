@@ -28,7 +28,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-import com.leagueakari.team.TeamStatsService;
 
 /**
  * TeamController 集成测试：真实写入虚拟机 MySQL，覆盖周报/榜单/成员/成员卡的

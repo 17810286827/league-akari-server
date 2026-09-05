@@ -1,187 +1,29 @@
 package com.leagueakari.team;
 
-import com.leagueakari.common.exception.ErrorCode;
-
-import com.leagueakari.common.exception.BizException;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.leagueakari.config.TeamProperties;
-import com.leagueakari.dto.team.LeaderboardResponse;
-import com.leagueakari.dto.team.MemberCardResponse;
-import com.leagueakari.dto.scoring.PlayerScoreView;
-import com.leagueakari.dto.team.TeamMembersResponse;
 import com.leagueakari.dto.team.WeeklyReportResponse;
 import com.leagueakari.entity.Match;
-import com.leagueakari.entity.MatchMvp;
 import com.leagueakari.entity.MatchParticipant;
-import com.leagueakari.mapper.MatchMapper;
-import com.leagueakari.mapper.MatchMvpMapper;
-import com.leagueakari.mapper.MatchParticipantMapper;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
-import com.leagueakari.gamedata.GameDataService;
-import com.leagueakari.match.MatchTimelineService;
-import com.leagueakari.common.stats.ParticipantStatsReader;
-import com.leagueakari.scoring.BaselineService;
-import com.leagueakari.scoring.ChampionBaseline;
-import com.leagueakari.scoring.MatchMvpService;
-import com.leagueakari.scoring.OpScoreEngine;
 
 /**
- * TeamStatsService 单元测试（核心接缝）：车队周报与榜单的全部业务口径
- * <p>通过 mock 的 mapper 返回"仿佛按条件查出的"对局数据，只断言公开方法的输出——
- * 榜单排序、车队对局过滤（同局成员数阈值）、名场面抽取、成员卡趋势与基线对比、
- * AI 锐评降级、周边界归属。时间范围 SQL 过滤由集成测试覆盖真实 WHERE 语义。</p>
+ * WeeklyReportService 单元测试：车队周报的全部业务口径
+ * <p>覆盖默认周边界、总览人次统计、MVP/战犯/送头王/Carry/绝活各榜单排序、
+ * 名场面抽取与 AI 锐评优雅降级。断言数值与拆分前 TeamStatsServiceTest 逐字一致。</p>
  */
-class TeamStatsServiceTest {
-
-    /** 测试时区与周口径一致：Asia/Shanghai */
-    private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
-
-    private final MatchMapper matchMapper = mock(MatchMapper.class);
-    private final MatchParticipantMapper participantMapper = mock(MatchParticipantMapper.class);
-    private final MatchMvpMapper mvpMapper = mock(MatchMvpMapper.class);
-    private final MatchTimelineService timelineService = mock(MatchTimelineService.class);
-    private final MatchMvpService mvpService = mock(MatchMvpService.class);
-    private final TeamRosterService rosterService = mock(TeamRosterService.class);
-    private final GameDataService gameDataService = mock(GameDataService.class);
-    private final WeeklyAiCommentService aiCommentService = mock(WeeklyAiCommentService.class);
-    private final BaselineService baselineService = mock(BaselineService.class);
-
-    /** 固定时钟：2026-09-06（周日）10:00 +08:00，当前周 = 08-31 ~ 09-06，默认周 = 上一周（08-30 ~ 09-05） */
-    private final Clock clock = Clock.fixed(
-            ZonedDateTime.of(2026, 9, 6, 10, 0, 0, 0, ZONE).toInstant(), ZONE);
-
-    /** 两名车队成员：A=赌书消得泼茶香（puuid-a）、B=手裂鬼子（puuid-b）；身份集合为单元素（单标识符场景） */
-    private final TeamRosterService.RosterMember memberA =
-            member("赌书消得泼茶香#iKun", "puuid-a");
-    private final TeamRosterService.RosterMember memberB =
-            member("手裂鬼子#tw2", "puuid-b");
-
-    /** 构造成员：身份集合按可变参数顺序（首项为主标识符） */
-    private TeamRosterService.RosterMember member(String riotId, String... puuids) {
-        return new TeamRosterService.RosterMember(riotId, new java.util.LinkedHashSet<>(List.of(puuids)));
-    }
-
-    // ---------- 测试夹具构造 ----------
-
-    /** 构造被测服务：roster=[A,B]，阈值 2（单人与路人局不算车队对局） */
-    private TeamStatsService service() {
-        TeamProperties props = new TeamProperties();
-        props.setMinSharedMembers(2);
-        when(rosterService.requireMembers()).thenReturn(List.of(memberA, memberB));
-        return new TeamStatsService(props, rosterService, matchMapper, participantMapper,
-                mvpMapper, timelineService, mvpService, gameDataService, aiCommentService,
-                baselineService, new ObjectMapper(), new ParticipantStatsReader(new ObjectMapper()), clock);
-    }
-
-    /** 测试周：2026-08-24（周一）~ 2026-08-30（周日） */
-    private LocalDate weekDay() {
-        return LocalDate.of(2026, 8, 26);
-    }
-
-    /** 把北京时间映射为 epoch 毫秒（夹具时间统一用这个） */
-    private long ms(int month, int day, int hour) {
-        return ZonedDateTime.of(2026, month, day, hour, 0, 0, 0, ZONE).toInstant().toEpochMilli();
-    }
-
-    /** 构造对局主表记录 */
-    private Match match(long id, long gameId, long creation, int duration, String mode, int winnerTeamId) {
-        Match m = new Match();
-        m.setId(id);
-        m.setGameId(gameId);
-        m.setGameCreation(creation);
-        m.setGameDuration(duration);
-        m.setGameMode(mode);
-        m.setGameType("MATCHED_GAME");
-        m.setQueueId(2400);
-        m.setWinnerTeamId(winnerTeamId);
-        return m;
-    }
-
-    /** 构造参赛者：stats 快照默认带伤害字段（可覆盖） */
-    private MatchParticipant participant(long id, long matchId, String puuid, String name,
-                                         int champId, int teamId, int k, int d, int a,
-                                         boolean win, int damage) {
-        MatchParticipant p = new MatchParticipant();
-        p.setId(id);
-        p.setMatchId(matchId);
-        p.setPuuid(puuid);
-        p.setSummonerName(name);
-        p.setChampionId(champId);
-        p.setTeamId(teamId);
-        p.setKills(k);
-        p.setDeaths(d);
-        p.setAssists(a);
-        p.setWin(win);
-        p.setGoldEarned(10000);
-        p.setCs(200);
-        p.setStatsJson("{\"totalDamageDealtToChampions\":" + damage + "}");
-        return p;
-    }
-
-    /** 构造评选记录 */
-    private MatchMvp award(long matchId, long participantId, String type, double opScore) {
-        MatchMvp m = new MatchMvp();
-        m.setMatchId(matchId);
-        m.setParticipantId(participantId);
-        m.setType(type);
-        m.setScoringVersion(2);
-        m.setScore(BigDecimal.valueOf(opScore * 10));
-        m.setOpScore(BigDecimal.valueOf(opScore));
-        m.setGrade("优秀");
-        return m;
-    }
-
-    /** 让 computeScores 按 gameId 返回预设的 puuid → opScore 映射 */
-    private void stubScoresByGame(Map<Long, Map<String, Double>> scoresByGame) {
-        when(mvpService.computeScores(any(Match.class), anyList())).thenAnswer(inv -> {
-            Match m = inv.getArgument(0);
-            Map<String, Double> byPuuid = scoresByGame.getOrDefault(m.getGameId(), Map.of());
-            Map<String, PlayerScoreView> out = new java.util.LinkedHashMap<>();
-            byPuuid.forEach((puuid, score) -> out.put(puuid, PlayerScoreView.builder()
-                    .opScore(score).grade("良好").dimensions(Map.of()).build()));
-            return out;
-        });
-    }
-
-    // ---------- 周边界（纯函数） ----------
-
-    /** 用例：周三入参返回该自然周（周一 00:00 ~ 次周一 00:00，+08:00）的 epoch 毫秒 */
-    @Test
-    void weekRange_coversMondayToSunday() {
-        TeamStatsService.WeekRange range = TeamStatsService.weekRange(weekDay(), ZONE);
-
-        // 独立真值：直接用 ZonedDateTime 计算期望边界
-        long expectedStart = ZonedDateTime.of(2026, 8, 24, 0, 0, 0, 0, ZONE).toInstant().toEpochMilli();
-        long expectedEnd = ZonedDateTime.of(2026, 8, 31, 0, 0, 0, 0, ZONE).toInstant().toEpochMilli();
-        assertThat(range.startMs()).isEqualTo(expectedStart);
-        assertThat(range.endMs()).isEqualTo(expectedEnd);
-        assertThat(range.monday()).isEqualTo(LocalDate.of(2026, 8, 24));
-    }
+class WeeklyReportServiceTest extends TeamStatsTestBase {
 
     /** 用例：不传日期时默认统计"上一周"（今天回退 7 天所在周，按固定时钟） */
     @Test
     void weeklyReport_defaultsToLastWeek() {
-        TeamStatsService svc = service();
+        WeeklyReportService svc = weeklyService();
         when(matchMapper.selectList(any())).thenReturn(List.of());
 
         WeeklyReportResponse report = svc.weeklyReport(null);
@@ -191,15 +33,13 @@ class TeamStatsServiceTest {
         assertThat(report.getOverview().getGameCount()).isZero();
     }
 
-    // ---------- 总览 ----------
-
     /**
      * 用例：总览只统计"车队对局"（同局 ≥2 名成员）——
      * 两场车队局 + 一场仅单人出现的路人局；胜负按成员人次计
      */
     @Test
     void weeklyReport_overviewCountsOnlyFleetGames() {
-        TeamStatsService svc = service();
+        WeeklyReportService svc = weeklyService();
         Match g1 = match(1, 100L, ms(8, 26, 14), 1200, "KIWI", 100);
         Match g2 = match(2, 200L, ms(8, 26, 16), 1800, "KIWI", 200);
         Match solo = match(3, 300L, ms(8, 27, 20), 900, "KIWI", 100);
@@ -234,12 +74,10 @@ class TeamStatsServiceTest {
         assertThat(report.getAiComment()).isEqualTo("锐评");
     }
 
-    // ---------- MVP 榜 ----------
-
     /** 用例：MVP 榜统计 MVP+SVP（落库为 ACE）次数，非车队成员不入榜 */
     @Test
     void weeklyReport_mvpBoardCountsAwardsForRosterOnly() {
-        TeamStatsService svc = service();
+        WeeklyReportService svc = weeklyService();
         Match g1 = match(1, 100L, ms(8, 26, 14), 1200, "KIWI", 100);
         Match g2 = match(2, 200L, ms(8, 27, 14), 1200, "KIWI", 200);
         when(matchMapper.selectList(any())).thenReturn(List.of(g1, g2));
@@ -267,12 +105,10 @@ class TeamStatsServiceTest {
         assertThat(report.getMvpBoard().get(1).getDetail()).contains("SVP×1");
     }
 
-    // ---------- 战犯榜 / 送头王 / Carry 王 ----------
-
     /** 用例：战犯榜按车队对局的场均 op_score 升序（最低分最"战犯"），detail 带场次数 */
     @Test
     void weeklyReport_criminalBoard_sortedByAvgOpScoreAsc() {
-        TeamStatsService svc = service();
+        WeeklyReportService svc = weeklyService();
         Match g1 = match(1, 100L, ms(8, 26, 14), 1200, "KIWI", 100);
         Match g2 = match(2, 200L, ms(8, 27, 14), 1200, "KIWI", 200);
         when(matchMapper.selectList(any())).thenReturn(List.of(g1, g2));
@@ -304,7 +140,7 @@ class TeamStatsServiceTest {
     /** 用例：送头王按场均死亡降序，且只统计车队对局（路人局死亡不计） */
     @Test
     void weeklyReport_feederBoard_avgDeathsDesc() {
-        TeamStatsService svc = service();
+        WeeklyReportService svc = weeklyService();
         Match g1 = match(1, 100L, ms(8, 26, 14), 1200, "KIWI", 100);
         Match g2 = match(2, 200L, ms(8, 27, 14), 1200, "KIWI", 200);
         Match solo = match(3, 300L, ms(8, 27, 20), 900, "KIWI", 100);
@@ -333,7 +169,7 @@ class TeamStatsServiceTest {
     /** 用例：Carry 王按场均击杀参与率 (k+a)/队伍总击杀 降序 */
     @Test
     void weeklyReport_carryBoard_byKillParticipation() {
-        TeamStatsService svc = service();
+        WeeklyReportService svc = weeklyService();
         Match g1 = match(1, 100L, ms(8, 26, 14), 1200, "KIWI", 100);
         when(matchMapper.selectList(any())).thenReturn(List.of(g1));
         // 队伍 100 总击杀 = 5+3+2 = 10；A 参与率 (5+5)/10=1.0，B (3+4)/10=0.7
@@ -353,12 +189,10 @@ class TeamStatsServiceTest {
         assertThat(report.getCarryBoard().get(1).getValue()).isEqualTo(0.7);
     }
 
-    // ---------- 绝活榜 ----------
-
     /** 用例：绝活榜只收录"成员×英雄"场次 ≥2 的组合，按场均 op_score 降序 */
     @Test
     void weeklyReport_signatureBoard_requiresTwoGamesSameChampion() {
-        TeamStatsService svc = service();
+        WeeklyReportService svc = weeklyService();
         Match g1 = match(1, 100L, ms(8, 26, 14), 1200, "KIWI", 100);
         Match g2 = match(2, 200L, ms(8, 27, 14), 1200, "KIWI", 200);
         when(matchMapper.selectList(any())).thenReturn(List.of(g1, g2));
@@ -389,15 +223,13 @@ class TeamStatsServiceTest {
         assertThat(report.getSignatureBoard().get(1).getDetail()).contains("盲僧");
     }
 
-    // ---------- 名场面 ----------
-
     /**
      * 用例：名场面从时间线抽取——五杀时刻、最大翻盘（胜方最大落后金币）、
      * 单局最高击杀、最惨连败；无时间线的对局优雅跳过
      */
     @Test
     void weeklyReport_highlights_extractedFromTimeline() {
-        TeamStatsService svc = service();
+        WeeklyReportService svc = weeklyService();
         Match g1 = match(1, 100L, ms(8, 26, 14), 1200, "KIWI", 200);
         Match g2 = match(2, 200L, ms(8, 27, 14), 1200, "KIWI", 100);
         when(matchMapper.selectList(any())).thenReturn(List.of(g1, g2));
@@ -452,7 +284,7 @@ class TeamStatsServiceTest {
     /** 用例：AI 锐评失败时周报主体照常返回，aiComment 为 null（优雅降级） */
     @Test
     void weeklyReport_gracefulWhenAiCommentFails() {
-        TeamStatsService svc = service();
+        WeeklyReportService svc = weeklyService();
         Match g1 = match(1, 100L, ms(8, 26, 14), 1200, "KIWI", 100);
         when(matchMapper.selectList(any())).thenReturn(List.of(g1));
         when(participantMapper.selectList(any())).thenReturn(List.of(
@@ -467,136 +299,5 @@ class TeamStatsServiceTest {
 
         assertThat(report.getOverview().getGameCount()).isEqualTo(1);
         assertThat(report.getAiComment()).isNull();
-    }
-
-    // ---------- 榜单中心 ----------
-
-    /** 用例：榜单按维度路由（与周报共享口径），未知维度抛参数异常 */
-    @Test
-    void leaderboard_routesDimensionAndRejectsUnknown() {
-        TeamStatsService svc = service();
-        Match g1 = match(1, 100L, ms(8, 26, 14), 1200, "KIWI", 100);
-        when(matchMapper.selectList(any())).thenReturn(List.of(g1));
-        when(participantMapper.selectList(any())).thenReturn(List.of(
-                participant(1, 1, "puuid-a", "赌书消得泼茶香", 103, 100, 5, 2, 5, true, 20000),
-                participant(2, 1, "puuid-b", "手裂鬼子", 117, 100, 3, 4, 4, true, 15000)));
-        when(mvpMapper.selectList(any())).thenReturn(List.of());
-        stubScoresByGame(Map.of());
-
-        LeaderboardResponse board = svc.leaderboard("attendance", null, null, null);
-
-        assertThat(board.getDimension()).isEqualTo("attendance");
-        assertThat(board.getEntries()).hasSize(2);
-        assertThat(board.getEntries().get(0).getValue()).isEqualTo(1.0);
-
-        assertThatThrownBy(() -> svc.leaderboard("no-such-dim", null, null, null))
-                .isInstanceOf(BizException.class)
-                .hasMessageContaining("维度");
-    }
-
-    // ---------- 成员与成员卡 ----------
-
-    /** 用例：成员列表带全时段车队对局出勤与胜率，非车队成员不出现 */
-    @Test
-    void members_listsRosterWithAttendance() {
-        TeamStatsService svc = service();
-        Match g1 = match(1, 100L, ms(8, 26, 14), 1200, "KIWI", 100);
-        Match g2 = match(2, 200L, ms(8, 27, 14), 1200, "KIWI", 200);
-        when(matchMapper.selectList(any())).thenReturn(List.of(g1, g2));
-        when(participantMapper.selectList(any())).thenReturn(List.of(
-                participant(1, 1, "puuid-a", "赌书消得泼茶香", 103, 100, 5, 2, 5, true, 20000),
-                participant(2, 1, "puuid-b", "手裂鬼子", 117, 100, 3, 4, 4, true, 15000),
-                participant(3, 2, "puuid-a", "赌书消得泼茶香", 266, 200, 8, 3, 2, true, 30000),
-                participant(4, 2, "puuid-b", "手裂鬼子", 84, 100, 4, 6, 3, false, 12000)));
-
-        TeamMembersResponse members = svc.members();
-
-        assertThat(members.getMembers()).hasSize(2);
-        TeamMembersResponse.Member first = members.getMembers().get(0);
-        assertThat(first.getPuuid()).isEqualTo("puuid-a");
-        assertThat(first.getGames()).isEqualTo(2);
-        assertThat(first.getWins()).isEqualTo(2);
-        assertThat(first.getWinRate()).isEqualTo(1.0);
-    }
-
-    /** 用例：成员卡——逐周成长曲线（近 8 周）+ 英雄基线对比（基线=全库分均伤害） */
-    @Test
-    void memberCard_trendAndChampionBaseline() {
-        TeamStatsService svc = service();
-        // 第 1 周（08-24 周）：A 阿狸胜场；第 2 周（08-31 周）：阿狸负 + 锐雯胜
-        Match g1 = match(1, 100L, ms(8, 26, 14), 600, "KIWI", 100);
-        Match g2 = match(2, 200L, ms(9, 1, 14), 900, "KIWI", 200);
-        Match g3 = match(3, 300L, ms(9, 1, 16), 1200, "KIWI", 100);
-        when(matchMapper.selectList(any())).thenReturn(List.of(g1, g2, g3));
-        when(participantMapper.selectList(any())).thenReturn(List.of(
-                participant(1, 1, "puuid-a", "赌书消得泼茶香", 103, 100, 5, 2, 5, true, 12000),
-                participant(2, 2, "puuid-a", "赌书消得泼茶香", 103, 100, 2, 6, 1, false, 9000),
-                participant(3, 3, "puuid-a", "赌书消得泼茶香", 266, 100, 8, 2, 3, true, 24000)));
-        when(mvpMapper.selectList(any())).thenReturn(List.of());
-        stubScoresByGame(Map.of(
-                100L, Map.of("puuid-a", 8.0),
-                200L, Map.of("puuid-a", 4.0),
-                300L, Map.of("puuid-a", 6.0)));
-        when(gameDataService.championName(103)).thenReturn("阿狸");
-        when(gameDataService.championName(266)).thenReturn("锐雯");
-        // 全库基线：阿狸样本 120 场、分均伤害合计 2400 → 基线 20.0；锐雯无样本
-        when(baselineService.getBaselineMap()).thenReturn(Map.of(103, new ChampionBaseline(103, Map.of(OpScoreEngine.DIM_DAMAGE, 20.0), 120)));
-
-        MemberCardResponse card = svc.memberCard("puuid-a");
-
-        assertThat(card.getRiotId()).isEqualTo("赌书消得泼茶香#iKun");
-        // 成长曲线：近 8 周，最早周在前；08-24 周 1 场全胜 opScore 8.0；08-31 周 2 场 1 胜场均 5.0
-        assertThat(card.getTrend()).hasSize(8);
-        MemberCardResponse.TrendPoint week1 = card.getTrend().get(6);
-        assertThat(week1.getWeekLabel()).isEqualTo("2026-08-24");
-        assertThat(week1.getGames()).isEqualTo(1);
-        assertThat(week1.getWinRate()).isEqualTo(1.0);
-        assertThat(week1.getAvgOpScore()).isEqualTo(8.0);
-        MemberCardResponse.TrendPoint week2 = card.getTrend().get(7);
-        assertThat(week2.getWeekLabel()).isEqualTo("2026-08-31");
-        assertThat(week2.getGames()).isEqualTo(2);
-        assertThat(week2.getWinRate()).isEqualTo(0.5);
-        assertThat(week2.getAvgOpScore()).isEqualTo(5.0);
-        // 英雄对比：阿狸 2 场 1 胜场均 6.0、分均伤害 (12000/10min + 9000/15min)/2 = (1200+600)/2=900；
-        // 基线 20.0（全库样本）；锐雯 1 场无基线
-        assertThat(card.getChampions()).hasSize(2);
-        MemberCardResponse.ChampionStat ahr = card.getChampions().get(0);
-        assertThat(ahr.getChampionName()).isEqualTo("阿狸");
-        assertThat(ahr.getGames()).isEqualTo(2);
-        assertThat(ahr.getAvgOpScore()).isEqualTo(6.0);
-        assertThat(ahr.getAvgDamagePerMin()).isEqualTo(900.0);
-        assertThat(ahr.getBaselineDamagePerMin()).isEqualTo(20.0);
-        assertThat(card.getChampions().get(1).getBaselineDamagePerMin()).isNull();
-    }
-
-    /** 用例：成员卡只允许查车队成员，陌生 puuid 抛参数异常 */
-    @Test
-    void memberCard_rejectsNonRosterPuuid() {
-        TeamStatsService svc = service();
-
-        assertThatThrownBy(() -> svc.memberCard("puuid-stranger"))
-                .isInstanceOf(BizException.class)
-                .hasMessageContaining("车队成员");
-    }
-
-    /** 用例：成员卡/成长曲线按成员过滤——B 的成员卡不含 A 的对局数据 */
-    @Test
-    void memberCard_onlyCountsOwnGames() {
-        TeamStatsService svc = service();
-        Match g1 = match(1, 100L, ms(9, 1, 14), 1200, "KIWI", 100);
-        when(matchMapper.selectList(any())).thenReturn(List.of(g1));
-        when(participantMapper.selectList(any())).thenReturn(List.of(
-                participant(1, 1, "puuid-a", "赌书消得泼茶香", 103, 100, 5, 2, 5, true, 20000),
-                participant(2, 1, "puuid-b", "手裂鬼子", 117, 200, 1, 5, 1, false, 6000)));
-        when(mvpMapper.selectList(any())).thenReturn(List.of());
-        stubScoresByGame(Map.of(100L, Map.of("puuid-a", 8.0, "puuid-b", 3.0)));
-        when(baselineService.getBaselineMap()).thenReturn(Map.of());
-
-        MemberCardResponse card = svc.memberCard("puuid-b");
-
-        assertThat(card.getTrend().get(7).getGames()).isEqualTo(1);
-        assertThat(card.getTrend().get(7).getWinRate()).isEqualTo(0.0);
-        assertThat(card.getChampions()).hasSize(1);
-        assertThat(card.getChampions().get(0).getAvgOpScore()).isEqualTo(3.0);
     }
 }

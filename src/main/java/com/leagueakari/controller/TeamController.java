@@ -16,10 +16,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
 import java.util.Map;
-import com.leagueakari.team.TeamStatsService;
+import com.leagueakari.team.LeaderboardService;
+import com.leagueakari.team.MemberStatsService;
+import com.leagueakari.team.WeeklyReportService;
 
 /**
- * 车队数据路由（路由层职责：参数校验与返回值封装，业务在 TeamStatsService）：
+ * 车队数据路由（路由层职责：参数校验与返回值封装，业务在按场景拆分的聚合服务）：
  * <ul>
  *   <li>GET /api/team/weekly?date= —— 车队周报（date 为该周任意一天，缺省=上一周）</li>
  *   <li>GET /api/team/leaderboards?dimension=&mode=&start=&end= —— 榜单中心单维度榜单</li>
@@ -34,11 +36,16 @@ import com.leagueakari.team.TeamStatsService;
 @RequestMapping("/api/team")
 public class TeamController {
 
-    private final TeamStatsService teamStatsService;
+    private final WeeklyReportService weeklyReportService;
+    private final LeaderboardService leaderboardService;
+    private final MemberStatsService memberStatsService;
     private final RiotMatchHistoryService backfillService;
 
-    public TeamController(TeamStatsService teamStatsService, RiotMatchHistoryService backfillService) {
-        this.teamStatsService = teamStatsService;
+    public TeamController(WeeklyReportService weeklyReportService, LeaderboardService leaderboardService,
+            MemberStatsService memberStatsService, RiotMatchHistoryService backfillService) {
+        this.weeklyReportService = weeklyReportService;
+        this.leaderboardService = leaderboardService;
+        this.memberStatsService = memberStatsService;
         this.backfillService = backfillService;
     }
 
@@ -48,7 +55,7 @@ public class TeamController {
     @GetMapping("/weekly")
     public ApiResult<WeeklyReportResponse> weekly(@RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        return ApiResult.success(teamStatsService.weeklyReport(date));
+        return ApiResult.success(weeklyReportService.weeklyReport(date));
     }
 
     /**
@@ -61,7 +68,7 @@ public class TeamController {
             @RequestParam(required = false) String mode,
             @RequestParam(required = false) Long start,
             @RequestParam(required = false) Long end) {
-        return ApiResult.success(teamStatsService.leaderboard(dimension, mode, start, end));
+        return ApiResult.success(leaderboardService.leaderboard(dimension, mode, start, end));
     }
 
     /**
@@ -69,7 +76,7 @@ public class TeamController {
      */
     @GetMapping("/members")
     public ApiResult<TeamMembersResponse> members() {
-        return ApiResult.success(teamStatsService.members());
+        return ApiResult.success(memberStatsService.members());
     }
 
     /**
@@ -77,7 +84,7 @@ public class TeamController {
      */
     @GetMapping("/members/{puuid}")
     public ApiResult<MemberCardResponse> memberCard(@PathVariable String puuid) {
-        return ApiResult.success(teamStatsService.memberCard(puuid));
+        return ApiResult.success(memberStatsService.memberCard(puuid));
     }
 
     /**
