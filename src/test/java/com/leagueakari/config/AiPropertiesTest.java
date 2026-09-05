@@ -58,7 +58,7 @@ class AiPropertiesTest {
         // 思考模式开关（当前 yml 为开启）：三个 AI 场景统一读此键，不再有硬编码旁路
         assertThat(props.isThinking()).isTrue();
         // 重试次数（失败后重试次数，不含首次）：三个 AI 场景统一读此键
-        assertThat(props.getRetryCount()).isEqualTo(1);
+        assertThat(props.getRetryCount()).isEqualTo(3);
     }
 
     /** 用例：分析/周报与局后锐评共用基础参数（base-url、temperature），仅模型与上限分场景 */
