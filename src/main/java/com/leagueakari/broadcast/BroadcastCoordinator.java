@@ -11,6 +11,7 @@ import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.mapper.MatchMapper;
 import com.leagueakari.mapper.MatchMvpMapper;
 import com.leagueakari.mapper.MatchParticipantMapper;
+import com.leagueakari.match.MatchSavedEvent;
 import com.leagueakari.qqbot.QqBotClient;
 import com.leagueakari.common.exception.QqPushException;
 import com.leagueakari.reportimage.ReportImageRenderer;
@@ -19,6 +20,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -30,7 +33,7 @@ import com.leagueakari.team.TeamStatsService;
 
 /**
  * 局后播报编排（Post-Game Broadcast）：纯推送状态机。
- * 对局数据入库后由 controller 触发 {@link #maybeBroadcast}，内部判定
+ * 对局数据入库事务提交后由 MatchSavedEvent 事件触发 {@link #onMatchSaved}，内部判定
  * "是否刚结束的车队对局"（状态门控 + 车队成员数 + 时间窗 + 开关），
  * 通过后组装战报并向车队群发送，全程落库推送状态。
  * <p>状态机（match.push_status）：
@@ -94,17 +97,21 @@ public class BroadcastCoordinator {
     }
 
     /**
-     * 局后播报入口（同步执行，由对局同步接口在落库后调用）：
-     * 全部判定不通过时零副作用；判定通过则发送并落库状态
+     * 局后播报入口：监听"对局已同步"事件，事务提交后执行（AFTER_COMMIT）——
+     * 播报永远基于已提交数据，发送期间不占用落库事务的数据库连接。
+     * <p>发布方（MatchIngestService）每次同步都发布（含幂等跳过），是否播报由本类
+     * 内部门控判定；全部判定不通过时零副作用，判定通过则发送并落库状态。</p>
      */
-    public void maybeBroadcast(Long gameId) {
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onMatchSaved(MatchSavedEvent event) {
+        Long gameId = event.gameId();
         if (gameId == null) {
             return;
         }
         try {
             doBroadcast(gameId);
         } catch (Exception e) {
-            // 兜底：编排异常（如状态更新失败）不向同步接口传播，落库失败原因等待补推
+            // 兜底：编排异常（如状态更新失败）不影响已提交的落库事务，落库失败原因等待补推
             log.error("Broadcast orchestration failed: gameId={}", gameId, e);
             markFailed(gameId, e.getMessage());
         }

@@ -10,7 +10,6 @@ import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.dto.PageResponse;
 import com.leagueakari.dto.TimelineSyncRequest;
 import com.leagueakari.match.AiAnalysisService;
-import com.leagueakari.broadcast.BroadcastCoordinator;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,17 +46,13 @@ public class MatchController {
     private final MatchQueryService matchQueryService;
     private final MatchTimelineService matchTimelineService;
     private final AiAnalysisService aiAnalysisService;
-    /** 局后播报编排：对局落库后触发判定（内部状态门控，失败只落库不阻塞同步） */
-    private final BroadcastCoordinator broadcastCoordinator;
 
     /** 接收对局同步推送，幂等写入 */
     @PostMapping
     public ApiResult<Void> syncMatch(@Valid @RequestBody MatchSyncRequest request) {
-        // 幂等保存：重复推送同一 gameId 不会产生重复数据
+        // 幂等保存：重复推送同一 gameId 不会产生重复数据；
+        // 局后播报由落库事务提交后的"对局已同步"事件触发（控制器不再承载编排）
         matchIngestService.saveMatch(request);
-        // 局后播报触发点：是否播报由 coordinator 内部判定（车队局/时间窗/开关/状态），
-        // 判定不通过零副作用，发送失败仅落库 push_status=FAILED 等待桌面端补推重试
-        broadcastCoordinator.maybeBroadcast(request.getGameId());
         // 同步接口契约：成功即返回 code=0（无业务数据，data 缺省）
         return ApiResult.success();
     }

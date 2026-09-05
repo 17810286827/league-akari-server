@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.leagueakari.dto.MatchSyncRequest;
 import com.leagueakari.dto.ParticipantSyncRequest;
 import com.leagueakari.entity.Match;
+import com.leagueakari.entity.MatchParticipant;
 import com.leagueakari.mapper.MatchMapper;
 import com.leagueakari.qqbot.QqBotClient;
 import com.leagueakari.broadcast.PostGameCommentService;
@@ -22,6 +23,8 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.test.context.transaction.TestTransaction;
+import org.junit.jupiter.api.AfterEach;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -40,10 +43,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.leagueakari.team.TeamRosterService;
 
 /**
- * 局后播报集成测试（T2 主 seam）：真实走 POST /api/matches → 落库 → 判定 → 发送 全链路。
+ * 局后播报集成测试（T2 主 seam）：真实走 POST /api/matches → 落库 → 提交 → 事件监听 →
+ * 判定 → 发送 全链路。
  * <p>机器人客户端与车队名单解析为外部 I/O 用 @MockBean 隔离；
  * push.enabled=true 仅在本类生效。测试数据 gameCreation 取当前时刻（时间窗内），
  * 参与者含两名车队成员（≥ min-shared-members=2）构成车队对局。</p>
+ * <p>事件化语义：播报监听在<b>事务提交后</b>（AFTER_COMMIT）触发——测试事务默认回滚
+ * 永不提交，因此每个用例在 POST 后用 TestTransaction 显式提交以触发监听，
+ * 并在 @AfterEach 清理已落库数据保证可重复执行。</p>
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -65,6 +72,9 @@ class PushBroadcastIntegrationTest {
     @Autowired
     private MatchMapper matchMapper;
 
+    @Autowired
+    private com.leagueakari.mapper.MatchParticipantMapper matchParticipantMapper;
+
     /** 机器人发送端口：mock 掉真实 HTTP 调用 */
     @MockBean
     private QqBotClient qqBotClient;
@@ -76,6 +86,23 @@ class PushBroadcastIntegrationTest {
     /** 车队名单解析依赖 Riot API（网络），mock 返回两名测试成员 */
     @MockBean
     private TeamRosterService rosterService;
+
+    /**
+     * 用例后清理：本类用例显式提交了测试事务（触发 AFTER_COMMIT 播报监听），
+     * 落库数据会真实写入——按测试 gameId 段删除，保证用例可重复执行
+     */
+    @AfterEach
+    void cleanupPersistedMatches() {
+        // 先删参赛者明细再删主表（外键 fk_participant_match 约束），保证用例可重复执行
+        List<Match> persisted = matchMapper.selectList(
+                new QueryWrapper<Match>().ge("game_id", 9100000000L));
+        for (Match m : persisted) {
+            matchParticipantMapper.delete(
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<MatchParticipant>()
+                            .eq("match_id", m.getId()));
+        }
+        matchMapper.delete(new QueryWrapper<Match>().ge("game_id", 9100000000L));
+    }
 
     /**
      * 构造刚结束的车队对局（gameCreation=now-30min、duration=1800 → 结束时刻≈now）：
@@ -153,6 +180,10 @@ class PushBroadcastIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
 
+        // 显式提交测试事务：触发 AFTER_COMMIT 播报监听（测试事务默认永不提交）
+        TestTransaction.flagForCommit();
+        TestTransaction.end();
+
         // 消息序列：先图（PNG magic 校验）后锐评 Markdown
         ArgumentCaptor<byte[]> png = ArgumentCaptor.forClass(byte[].class);
         verify(qqBotClient).sendGroupImageMessage(eq("GROUP-IT"), png.capture());
@@ -184,6 +215,10 @@ class PushBroadcastIntegrationTest {
                         .content(objectMapper.writeValueAsString(fleetRequest(9100000005L))))
                 .andExpect(status().isOk());
 
+        // 显式提交测试事务：触发 AFTER_COMMIT 播报监听
+        TestTransaction.flagForCommit();
+        TestTransaction.end();
+
         // 图照发；文本是缺席提示
         verify(qqBotClient).sendGroupImageMessage(eq("GROUP-IT"), any(byte[].class));
         ArgumentCaptor<String> tip = ArgumentCaptor.forClass(String.class);
@@ -211,6 +246,10 @@ class PushBroadcastIntegrationTest {
         mockMvc.perform(post("/api/matches").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk());
 
+        // 显式提交测试事务：触发 AFTER_COMMIT 播报监听（两次同步各发一次事件，状态门控保证只播一次）
+        TestTransaction.flagForCommit();
+        TestTransaction.end();
+
         // 只发送一次
         verify(qqBotClient, org.mockito.Mockito.times(1))
                 .sendGroupImageMessage(eq("GROUP-IT"), any(byte[].class));
@@ -233,6 +272,10 @@ class PushBroadcastIntegrationTest {
                         .content(objectMapper.writeValueAsString(fleetRequest(9100000003L))))
                 .andExpect(status().isOk());
 
+        // 显式提交测试事务：触发 AFTER_COMMIT 播报监听（个人局置 SENT，不发送）
+        TestTransaction.flagForCommit();
+        TestTransaction.end();
+
         verify(qqBotClient, never()).sendGroupImageMessage(any(), any());
         Match saved = matchMapper.selectOne(new QueryWrapper<Match>().eq("game_id", 9100000003L));
         assertThat(saved.getPushStatus()).isEqualTo("SENT");
@@ -252,6 +295,10 @@ class PushBroadcastIntegrationTest {
                         .content(objectMapper.writeValueAsString(fleetRequest(9100000004L))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
+
+        // 显式提交测试事务：触发 AFTER_COMMIT 播报监听（发送失败落 FAILED）
+        TestTransaction.flagForCommit();
+        TestTransaction.end();
 
         Match saved = matchMapper.selectOne(new QueryWrapper<Match>().eq("game_id", 9100000004L));
         assertThat(saved.getPushStatus()).isEqualTo("FAILED");

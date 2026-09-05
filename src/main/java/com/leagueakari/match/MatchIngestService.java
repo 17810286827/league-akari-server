@@ -10,6 +10,7 @@ import com.leagueakari.mapper.MatchMapper;
 import com.leagueakari.mapper.MatchParticipantMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +36,8 @@ public class MatchIngestService {
     private final ObjectMapper objectMapper;
     /** MVP/SVP 评选编排：参与者落库后触发评选落库与基线累积 */
     private final MatchMvpService matchMvpService;
+    /** 事件发布器：落库事务内发布"对局已同步"事件，提交后由局后播报协调器消费 */
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * 幂等保存对局（先查后插）：
@@ -45,6 +48,9 @@ public class MatchIngestService {
      */
     @Transactional
     public void saveMatch(MatchSyncRequest request) {
+        // 对局已同步事件：在事务内发布、提交后（AFTER_COMMIT）投递——每次同步都发布
+        //（含幂等跳过），是否播报由推送状态机判定；事务回滚时事件自动丢弃
+        eventPublisher.publishEvent(new MatchSavedEvent(request.getGameId()));
         // 幂等检查：先查后插，以 game_id 为唯一键判断该对局是否已同步
         Long gameId = request.getGameId();
         Long exists = matchMapper.selectCount(

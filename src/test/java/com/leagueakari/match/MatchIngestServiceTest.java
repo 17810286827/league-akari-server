@@ -47,6 +47,10 @@ class MatchIngestServiceTest {
     @Spy
     private ObjectMapper objectMapper = new ObjectMapper();
 
+    /** 事件发布器 mock：事件化后 saveMatch 会在事务内发布"对局已同步"事件 */
+    @Mock
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
+
     @InjectMocks
     private MatchIngestService matchIngestService;
 

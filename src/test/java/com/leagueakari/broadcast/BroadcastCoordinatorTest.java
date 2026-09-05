@@ -202,7 +202,7 @@ class BroadcastCoordinatorTest {
         when(gameDataService.championName(11)).thenReturn("大师");
         when(postGameCommentService.generateComment(any())).thenReturn("这把养鱼人把对面野区当自己家");
 
-        coordinator.maybeBroadcast(2000000001L);
+        coordinator.onMatchSaved(new com.leagueakari.match.MatchSavedEvent(2000000001L));
 
         // 第一条：PNG 战报图（PNG magic 头校验）
         ArgumentCaptor<byte[]> png = ArgumentCaptor.forClass(byte[].class);
@@ -233,7 +233,7 @@ class BroadcastCoordinatorTest {
                 reportImageProjector, new PostGameSummaryBuilder(), qqBotClient,
                 mockRenderer, postGameCommentService, FIXED_CLOCK);
 
-        c.maybeBroadcast(2000000001L);
+        c.onMatchSaved(new com.leagueakari.match.MatchSavedEvent(2000000001L));
 
         ArgumentCaptor<ReportImageData> data = ArgumentCaptor.forClass(ReportImageData.class);
         verify(mockRenderer).renderPng(data.capture());
@@ -253,7 +253,7 @@ class BroadcastCoordinatorTest {
         when(rosterService.requireMembers()).thenReturn(rosterOfTwo());
         when(matchMapper.update(isNull(), any(Wrapper.class))).thenReturn(1);
 
-        coordinator.maybeBroadcast(2000000001L);
+        coordinator.onMatchSaved(new com.leagueakari.match.MatchSavedEvent(2000000001L));
 
         // 不发送；为免补推反复检查置 SENT（一次 update）
         verify(qqBotClient, never()).sendGroupImageMessage(any(), any());
@@ -271,7 +271,7 @@ class BroadcastCoordinatorTest {
         when(matchMapper.selectOne(any(QueryWrapper.class))).thenReturn(stale);
         when(matchMapper.update(isNull(), any(Wrapper.class))).thenReturn(1);
 
-        coordinator.maybeBroadcast(2000000001L);
+        coordinator.onMatchSaved(new com.leagueakari.match.MatchSavedEvent(2000000001L));
 
         verify(qqBotClient, never()).sendGroupImageMessage(any(), any());
         verify(matchMapper, org.mockito.Mockito.times(1)).update(isNull(), any(Wrapper.class));
@@ -285,7 +285,7 @@ class BroadcastCoordinatorTest {
         pushProperties.setEnabled(false);
         when(matchMapper.selectOne(any(QueryWrapper.class))).thenReturn(freshFleetMatch());
 
-        coordinator.maybeBroadcast(2000000001L);
+        coordinator.onMatchSaved(new com.leagueakari.match.MatchSavedEvent(2000000001L));
 
         verify(qqBotClient, never()).sendGroupImageMessage(any(), any());
         verify(matchMapper, never()).update(any(), any());
@@ -300,7 +300,7 @@ class BroadcastCoordinatorTest {
         sent.setPushStatus("SENT");
         when(matchMapper.selectOne(any(QueryWrapper.class))).thenReturn(sent);
 
-        coordinator.maybeBroadcast(2000000001L);
+        coordinator.onMatchSaved(new com.leagueakari.match.MatchSavedEvent(2000000001L));
 
         verify(qqBotClient, never()).sendGroupImageMessage(any(), any());
         verify(matchMapper, never()).update(any(), any());
@@ -316,7 +316,7 @@ class BroadcastCoordinatorTest {
         org.mockito.Mockito.doThrow(new QqPushException("QQ 图片消息发送失败（HTTP 401）"))
                 .when(qqBotClient).sendGroupImageMessage(any(), any());
 
-        coordinator.maybeBroadcast(2000000001L);
+        coordinator.onMatchSaved(new com.leagueakari.match.MatchSavedEvent(2000000001L));
 
         // 失败后第二次 update 落 FAILED + push_error（set 参数以占位键存储，按值断言）
         @SuppressWarnings({"unchecked", "rawtypes"})
@@ -340,7 +340,7 @@ class BroadcastCoordinatorTest {
         when(postGameCommentService.generateComment(any()))
                 .thenThrow(new BizException(ErrorCode.AI_API_ERROR, "AI 返回内容为空"));
 
-        coordinator.maybeBroadcast(2000000001L);
+        coordinator.onMatchSaved(new com.leagueakari.match.MatchSavedEvent(2000000001L));
 
         // 图正常发送；文本改为缺席提示
         verify(qqBotClient).sendGroupImageMessage(eq("GROUP-1"), any(byte[].class));
@@ -360,7 +360,7 @@ class BroadcastCoordinatorTest {
         stubCommon();
         stubNoAwards();
 
-        coordinator.maybeBroadcast(2000000001L);
+        coordinator.onMatchSaved(new com.leagueakari.match.MatchSavedEvent(2000000001L));
 
         verify(qqBotClient).sendGroupImageMessage(eq("GROUP-1"), any(byte[].class));
         verify(qqBotClient, never()).sendGroupMarkdownMessage(any(), any());
@@ -384,7 +384,7 @@ class BroadcastCoordinatorTest {
         when(mvpMapper.selectList(any(QueryWrapper.class))).thenReturn(List.of(mvp));
         when(postGameCommentService.generateComment(any())).thenReturn("锐评正文");
 
-        coordinator.maybeBroadcast(2000000001L);
+        coordinator.onMatchSaved(new com.leagueakari.match.MatchSavedEvent(2000000001L));
 
         ArgumentCaptor<byte[]> png = ArgumentCaptor.forClass(byte[].class);
         verify(qqBotClient).sendGroupImageMessage(eq("GROUP-1"), png.capture());
