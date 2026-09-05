@@ -46,8 +46,7 @@ public class WeeklyReportService {
      *
      * @param anyDayOfWeek 该周内任意一天；null 表示上一周
      * @return 完整周报
-     * @throws IllegalArgumentException 车队名单未配置
-     * @throws IllegalStateException    任一成员解析失败
+     * @throws BizException 车队名单未配置（1101），任一成员解析失败（1102）
      */
     public WeeklyReportResponse weeklyReport(LocalDate anyDayOfWeek) {
         // 默认周：今天回退 7 天所在周（无论今天是周几，都落在上一个自然周）

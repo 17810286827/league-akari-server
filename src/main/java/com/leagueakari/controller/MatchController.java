@@ -86,7 +86,7 @@ public class MatchController {
      * AI 对局表现分析（SSE 流式）：取本局详情组装数据摘要，流式调用 opencode go 模型，
      * 增量推送分析文本（前端打字机效果；结果 JVM 缓存 2 分钟，命中时 start 事件 fromCache=true）。
      * 事件协议见 AiAnalysisService.analyzeStream；校验失败（无 API Key / 对局不存在）
-     * 由全局异常处理器在 HTTP 响应阶段返回 503/404。
+     * 由全局异常处理器在 HTTP 响应阶段返回统一响应（业务码 4101/2001）。
      * SseEmitter 生命周期回调打日志：连接完成/超时/异常是"无响应"排查的关键边界
      */
     @PostMapping(value = "/{gameId}/ai-analysis", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

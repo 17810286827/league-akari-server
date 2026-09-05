@@ -38,7 +38,7 @@ public class LeaderboardService {
      * @param startMs   范围起始（含）；null 表示不限
      * @param endMs     范围结束（不含）；null 表示不限
      * @return 榜单数据（已排序）
-     * @throws IllegalArgumentException 维度未知或车队名单未配置
+     * @throws BizException 维度未知（1104）或车队名单未配置（1101）
      */
     public LeaderboardResponse leaderboard(String dimension, String gameMode, Long startMs, Long endMs) {
         if (dimension == null || !DIMENSIONS.contains(dimension)) {

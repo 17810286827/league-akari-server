@@ -83,7 +83,7 @@ public class MemberStatsService {
      * 成员卡：个人成长曲线（近 {@value TREND_WEEKS} 周）+ 英雄基线对比（全时段）
      *
      * @param puuid 成员 puuid（主标识或任一别名均可）
-     * @throws IllegalArgumentException 非车队成员
+     * @throws BizException 非车队成员（1103）
      */
     public MemberCardResponse memberCard(String puuid) {
         List<TeamRosterService.RosterMember> roster = rosterService.requireMembers();
