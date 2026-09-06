@@ -60,10 +60,23 @@ class RiotMatchHistoryServiceTest {
                   "inhibitor":{"kills":2},"baron":{"kills":1},"dragon":{"kills":2},"riftHerald":{"kills":1}}}]}}
             """;
 
+    /** MATCH-V5 timeline JSON：frames 包裹在 info 下（与 LCU 裸数组格式的主要差异），帧内字段一致 */
+    private static final String TIMELINE = """
+            {"metadata":{"matchId":"TW2_111222333"},"info":{"gameId":111222333,"frames":[
+              {"timestamp":60000,
+               "participantFrames":{"1":{"participantId":1,"totalGold":6000,"position":{"x":1000,"y":2000}}},
+               "events":[]},
+              {"timestamp":120000,
+               "participantFrames":{"1":{"participantId":1,"totalGold":7000,"position":{"x":1100,"y":2100}}},
+               "events":[{"type":"CHAMPION_KILL","timestamp":65000,"killerId":1,"victimId":2,
+                 "assistingParticipantIds":[],"position":{"x":3000,"y":4000}}]}]}}
+            """;
+
     private CloseableHttpClient httpClient;
     private MatchIngestService matchIngestService;
     private MatchMapper matchMapper;
     private TeamRosterService rosterService;
+    private com.leagueakari.match.MatchTimelineService timelineService;
     private RiotMatchHistoryService service;
 
     /** 模拟 Riot 接口响应（getContent 每次返回新流） */
@@ -88,10 +101,12 @@ class RiotMatchHistoryServiceTest {
                 "test-key", httpClient, new ObjectMapper(),
                 new com.leagueakari.riot.RiotRateLimiter(1000, 120_000,
                         System::currentTimeMillis, ms -> { throw new AssertionError("不应触发限流"); }));
+        timelineService = mock(com.leagueakari.match.MatchTimelineService.class);
+        when(timelineService.getTimeline(any())).thenReturn(null);
         service = new RiotMatchHistoryService(
                 "test-key", "https://sea.api.riotgames.com", "TW2",
                 100, 200, new ObjectMapper(),
-                matchIngestService, matchMapper, rosterService, riotHttpClient,
+                matchIngestService, matchMapper, rosterService, timelineService, riotHttpClient,
                 // 直通执行器：startBackfill 在当前线程同步执行，便于断言
                 Runnable::run);
     }
@@ -180,5 +195,54 @@ class RiotMatchHistoryServiceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.runBackfillSync())
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("车队名单未配置");
+    }
+
+    /** 用例（工单 #34）：新入库对局顺带拉取时间线——帧从 info.frames 解包后存储（与 LCU 裸数组格式统一） */
+    @Test
+    void backfillMember_fetchesTimelineForNewMatch() throws Exception {
+        CloseableHttpResponse idsPage1 = mockResponse(200, "[\"TW2_111222333\"]");
+        CloseableHttpResponse detail = mockResponse(200, MATCH_DETAIL);
+        CloseableHttpResponse timeline = mockResponse(200, TIMELINE);
+        when(httpClient.execute(any(HttpGet.class))).thenReturn(idsPage1, detail, timeline);
+        when(matchMapper.selectCount(any())).thenReturn(0L);
+
+        service.backfillMember("puuid-a");
+
+        // 时间线解包 info.frames 存入（下游 replay 引擎按裸帧数组消费，与 LCU 路径格式统一）
+        ArgumentCaptor<Object> framesCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(timelineService).saveTimeline(org.mockito.ArgumentMatchers.eq(111222333L), framesCaptor.capture());
+        assertThat(framesCaptor.getValue().toString()).contains("participantFrames").doesNotContain("\"info\"");
+        // 存的是 List（帧数组），长度 2
+        assertThat((java.util.List<?>) framesCaptor.getValue()).hasSize(2);
+    }
+
+    /** 用例（工单 #34）：对局已入库但缺时间线 → 补拉 timeline（不重复拉详情，省配额） */
+    @Test
+    void backfillMember_backfillsTimelineForStoredMatchWithoutTimeline() throws Exception {
+        CloseableHttpResponse idsPage1 = mockResponse(200, "[\"TW2_111222333\"]");
+        CloseableHttpResponse timeline = mockResponse(200, TIMELINE);
+        when(httpClient.execute(any(HttpGet.class))).thenReturn(idsPage1, timeline);
+        // 对局已在库（幂等预检查命中），时间线缺失（getTimeline 返回 null）
+        when(matchMapper.selectCount(any())).thenReturn(1L);
+
+        service.backfillMember("puuid-a");
+
+        // 不拉详情（省配额），只补拉时间线
+        verify(matchIngestService, never()).saveMatch(any());
+        verify(timelineService).saveTimeline(org.mockito.ArgumentMatchers.eq(111222333L), any());
+    }
+
+    /** 用例（工单 #34）：对局已入库且时间线已存在 → 零时间线调用（双条件幂等，跨成员不重复拉） */
+    @Test
+    void backfillMember_skipsTimelineWhenAlreadyStored() throws Exception {
+        CloseableHttpResponse idsPage1 = mockResponse(200, "[\"TW2_111222333\"]");
+        when(httpClient.execute(any(HttpGet.class))).thenReturn(idsPage1);
+        when(matchMapper.selectCount(any())).thenReturn(1L);
+        // 时间线已存在
+        when(timelineService.getTimeline(111222333L)).thenReturn(java.util.List.of(java.util.Map.of()));
+
+        service.backfillMember("puuid-a");
+
+        verify(timelineService, never()).saveTimeline(any(), any());
     }
 }

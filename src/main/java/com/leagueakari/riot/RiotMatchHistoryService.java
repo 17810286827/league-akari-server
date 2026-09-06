@@ -24,12 +24,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import com.leagueakari.match.MatchIngestService;
+import com.leagueakari.match.MatchTimelineService;
 import com.leagueakari.team.TeamRosterService;
 
 /**
  * Riot 对局历史回填服务（外部 I/O 接缝）：
  * 按 roster 成员逐人拉取 MATCH-V5 历史对局 → 转换为同步请求 → 复用 saveMatch 幂等入库
  * （入库时自动触发 MVP 评分与基线累计，与客户端同步路径完全一致）。
+ * <p>时间线补拉（工单 #34）：对局入库后拉取 MATCH-V5 timeline 并解包 info.frames 存储
+ * （与 LCU/SGP 裸帧数组格式统一，下游复盘引擎无感）；已入库但缺时间线的对局在幂等
+ * 预检查命中时补拉（不重复拉详情，省配额）；时间线已存在的跳过（跨成员共享对局不重复拉）。
+ * 时间线拉取失败只记 warn 不阻断回填（时间线是增强数据，缺了详情仍在）。</p>
  * <p>限流：所有 Riot 请求经 {@link RiotRateLimiter}（个人 Key 约 100 请求/2 分钟，留余量）。
  * <p>幂等：入库前先查 game_id 是否存在，已入库直接跳过详情拉取，省 Riot 配额；
  * 重复触发回填无副作用。</p>
@@ -57,6 +62,8 @@ public class RiotMatchHistoryService {
     private final MatchIngestService matchIngestService;
     private final MatchMapper matchMapper;
     private final TeamRosterService rosterService;
+    /** 时间线补拉出口（工单 #34）：存在性检查与帧存储 */
+    private final MatchTimelineService matchTimelineService;
     /** Riot API 统一出口：token + 限流 + 状态码语义三合一（架构清理 T6） */
     private final RiotHttpClient riotHttpClient;
     private final Executor backfillExecutor;
@@ -71,6 +78,7 @@ public class RiotMatchHistoryService {
             MatchIngestService matchIngestService,
             MatchMapper matchMapper,
             TeamRosterService rosterService,
+            MatchTimelineService matchTimelineService,
             RiotHttpClient riotHttpClient,
             Executor backfillExecutor) {
         this.apiKey = apiKey;
@@ -82,6 +90,7 @@ public class RiotMatchHistoryService {
         this.matchIngestService = matchIngestService;
         this.matchMapper = matchMapper;
         this.rosterService = rosterService;
+        this.matchTimelineService = matchTimelineService;
         this.riotHttpClient = riotHttpClient;
         this.backfillExecutor = backfillExecutor;
     }
@@ -169,10 +178,18 @@ public class RiotMatchHistoryService {
                 // saveMatch 的最终幂等；这里预检查针对已精确入库的 gameId）
                 if (gameId != null && existsByGameId(gameId)) {
                     log.info("Backfill skip (already stored): puuid={}, gameId={}", puuid, gameId);
+                    // 时间线补拉（工单 #34）：对局在库但时间线缺失 → 只补拉 timeline（不重复拉详情）；
+                    // 跨成员共享对局由时间线存在性检查去重（第二个成员经过时已存在，零调用）
+                    fetchTimelineIfMissing(matchId, gameId);
                     continue;
                 }
                 MatchSyncRequest request = fetchAndConvert(matchId, puuid);
                 matchIngestService.saveMatch(request);
+                // 新入库对局顺带拉时间线：让回填的局立即支持复盘（时间线是增强数据，
+                // 拉取失败不阻断回填——记 warn，详情已在库）
+                if (request.getGameId() != null) {
+                    fetchTimelineIfMissing(matchId, request.getGameId());
+                }
                 synced++;
             }
             if (ids.size() < pageSize) {
@@ -180,6 +197,41 @@ public class RiotMatchHistoryService {
             }
         }
         return synced;
+    }
+
+    /**
+     * 补拉对局时间线（工单 #34）：时间线已存在则跳过（幂等）；缺失时拉取
+     * MATCH-V5 /match/v5/matches/{matchId}/timeline，解包 info.frames 后存储——
+     * 与 LCU/SGP 推送的裸帧数组格式统一，下游（复盘引擎/名场面抽取）无感适配。
+     * 拉取失败只记 warn 不上抛（时间线缺失可接受，不阻断回填主流程）
+     */
+    private void fetchTimelineIfMissing(String matchId, Long gameId) {
+        try {
+            // 幂等：时间线已存在直接跳过（跨成员共享对局的天然去重）
+            if (matchTimelineService.getTimeline(gameId) != null) {
+                return;
+            }
+            URI uri = new URIBuilder(matchDomain)
+                    .setPathSegments("match", "v5", "matches", matchId, "timeline")
+                    .build();
+            String body = riotHttpClient.get(uri);
+            // 帧格式适配：MATCH-V5 把帧数组包裹在 info 下，LCU/SGP 是裸数组——
+            // 这里解包后以统一形态入库（存储层只认裸帧数组）
+            JsonNode frames = objectMapper.readTree(body).path("info").path("frames");
+            if (!frames.isArray() || frames.isEmpty()) {
+                log.warn("Backfill timeline empty: matchId={}, gameId={}", matchId, gameId);
+                return;
+            }
+            List<Map<String, Object>> framesList = objectMapper.convertValue(frames,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
+            matchTimelineService.saveTimeline(gameId, framesList);
+            log.info("Backfill timeline stored: matchId={}, gameId={}, frames={}",
+                    matchId, gameId, framesList.size());
+        } catch (Exception e) {
+            // 时间线是增强数据：拉取失败（部分区服/队列无 timeline 权限）不阻断回填
+            log.warn("Backfill timeline failed (match kept without timeline): matchId={}, gameId={}, error={}",
+                    matchId, gameId, e.getMessage());
+        }
     }
 
     /** game_id 是否已入库（幂等预检查，避免重复消耗 Riot 配额） */
