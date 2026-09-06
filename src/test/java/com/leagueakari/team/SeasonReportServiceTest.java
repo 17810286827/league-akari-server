@@ -102,6 +102,35 @@ class SeasonReportServiceTest extends TeamStatsTestBase {
         assertThat(driftB.getVersions().get(1).getChampions().get(0).getChampion()).isEqualTo("盲僧");
     }
 
+    /**
+     * 用例：英雄池漂移补 championId（头像 spec #44 用户故事 1）——
+     * ChampionCount 携带英雄 ID，前端渲染 Data Dragon 头像（缺失回退文字）。
+     */
+    @Test
+    void seasonReport_championDriftCarriesChampionId() {
+        SeasonReportService service = seasonService();
+        Match g1 = match(1, 100L, ms(6, 10, 14), 1200, "KIWI", 100);
+        g1.setGameVersion("16.14.801.9999");
+        when(matchMapper.selectList(any())).thenReturn(List.of(g1));
+        when(participantMapper.selectList(any())).thenReturn(List.of(
+                participant(1, 1, "puuid-a", "赌书消得泼茶香", 103, 100, 5, 2, 5, true, 20000),
+                participant(2, 1, "puuid-b", "手裂鬼子", 117, 100, 3, 4, 4, true, 15000)));
+        when(gameDataService.championName(103)).thenReturn("阿狸");
+        when(gameDataService.championName(117)).thenReturn("盲僧");
+
+        SeasonReportResponse report = service.seasonReport(ms(6, 1, 0), ms(8, 1, 0));
+
+        // 每个英雄分布条目携带 championId（前端头像渲染依据）
+        report.getMemberDrifts().forEach(drift ->
+                drift.getVersions().forEach(vc ->
+                        vc.getChampions().forEach(c ->
+                                assertThat(c.getChampionId()).isNotNull())));
+        // 抽查：赌书消得泼茶香 16.14 的阿狸 = 103
+        SeasonReportResponse.MemberDrift driftA = report.getMemberDrifts().stream()
+                .filter(d -> d.getRiotId().equals("赌书消得泼茶香#iKun")).findFirst().orElseThrow();
+        assertThat(driftA.getVersions().get(0).getChampions().get(0).getChampionId()).isEqualTo(103);
+    }
+
     /** 用例：高光时刻——单局最高击杀（复用名场面口径） */
     @Test
     void seasonReport_highlights() {

@@ -115,7 +115,7 @@ class BroadcastCoordinatorTest {
         reportImageProjector = new ReportImageProjector();
 
         // AI 投影（PostGameSummaryBuilder）为无状态纯函数，直接构造
-        PostGameSummaryBuilder postGameSummaryBuilder = new PostGameSummaryBuilder();
+        PostGameSummaryBuilder postGameSummaryBuilder = new PostGameSummaryBuilder(gameDataService);
         coordinator = new BroadcastCoordinator(matchMapper, participantMapper, mvpMapper,
                 pushProperties, teamProperties, rosterService, summaryService,
                 reportImageProjector, postGameSummaryBuilder, qqBotClient,
@@ -230,7 +230,7 @@ class BroadcastCoordinatorTest {
         when(mockRenderer.renderPng(any())).thenReturn(new byte[]{1});
         BroadcastCoordinator c = new BroadcastCoordinator(matchMapper, participantMapper, mvpMapper,
                 pushProperties, teamProperties, rosterService, summaryService,
-                reportImageProjector, new PostGameSummaryBuilder(), qqBotClient,
+                reportImageProjector, new PostGameSummaryBuilder(gameDataService), qqBotClient,
                 mockRenderer, postGameCommentService, FIXED_CLOCK);
 
         c.onMatchSaved(new com.leagueakari.match.MatchSavedEvent(2000000001L));

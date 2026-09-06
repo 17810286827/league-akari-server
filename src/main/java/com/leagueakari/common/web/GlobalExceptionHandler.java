@@ -111,14 +111,24 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 路径不存在（静态资源未命中，裸地址/未知路径）：返回真 HTTP 404，同上 WARN + 定位日志。
+     * 路径不存在（静态资源未命中，裸地址/未知路径）：返回真 HTTP 404。
+     * 日志降噪（头像 spec #44）：公网扫描器的密钥探测（key.pem/.ssh/config 等）
+     * 全部落在这里，是常态噪音——非 /api/** 前缀的 404 降为 DEBUG 不刷 WARN；
+     * 仅 /api/** 前缀保持 WARN（API 404 是真 bug 信号，不能漏）。
      * 这两类框架级异常必须显式处理——兜底 @ExceptionHandler(Exception.class) 会先截住它们，
      * 不处理就会 ERROR 全堆栈刷屏且语义漂移为 200 + 5000
      */
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<Map<String, Object>> handleNoResource(
             NoResourceFoundException e, HttpServletRequest request) {
-        log.warn("Resource not found: {} {}", request.getMethod(), request.getRequestURI());
+        String uri = request.getRequestURI();
+        if (uri != null && uri.startsWith("/api/")) {
+            // API 层 404：路由拼写错误/前端调了不存在的接口——真 bug 信号，保持 WARN
+            log.warn("Resource not found: {} {}", request.getMethod(), uri);
+        } else {
+            // 静态资源 404：扫描器探测常态（无入侵迹象），DEBUG 级别不再淹没有用 WARN
+            log.debug("Resource not found: {} {}", request.getMethod(), uri);
+        }
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(Map.of("code", 404, "message", "资源不存在"));
     }

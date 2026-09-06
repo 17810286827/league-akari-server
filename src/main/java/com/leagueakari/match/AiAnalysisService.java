@@ -284,38 +284,46 @@ public class AiAnalysisService {
     }
 
     /**
-     * 组装对局数据摘要：只提取 **self 所在队伍 5 人** 的精选字段（分析目标是"我方"，
-     * 战犯/战神/奉献队友都来自本队），输出紧凑 JSON 字符串作为 user 消息。
-     * 字段名刻意用短键（kda/dmg/taken/gold/cs…），含义已在系统提示词的"数据字段说明"中约定——
-     * 实测推理模型的首 token 耗时与输入 token 数正相关，精简摘要可缩短思考前的处理时间
+     * 组装对局数据摘要（AI 加厚 spec #43）：**全 10 人**（self 队 5 人 + 敌方 5 人——
+     * 敌方是"对位对比"的基准，缺了它"我打得怎么样"就没有参照系），
+     * 输出紧凑 JSON 字符串作为 user 消息。
+     * 字段名刻意用短键（kda/dmg/taken/gold/cs/heal/shield/objDmg…），含义已在系统
+     * 提示词的"数据字段说明"中约定——首 token 耗时与输入 token 数正相关，精简摘要
+     * 可缩短思考前的处理时间；新增字段必须同步提示词的字段说明段（模型不瞎猜键义）
      */
     private String buildMatchSummary(MatchDetailResponse detail) {
         List<Map<String, Object>> players = new ArrayList<>();
-        // self 队伍 ID：以 selfPuuid 对应参与者所在队为准
+        // self 队伍 ID：以 selfPuuid 对应参与者所在队为准（敌方 = 另一队）
         Integer selfTeamId = detail.getParticipants().stream()
                 .filter(p -> p.getPuuid() != null && p.getPuuid().equals(detail.getSelfPuuid()))
                 .map(MatchParticipant::getTeamId)
                 .findFirst()
                 .orElse(null);
         for (MatchParticipant p : detail.getParticipants()) {
-            // 只保留 self 所在队伍（我方）5 人
-            if (selfTeamId != null && !selfTeamId.equals(p.getTeamId())) {
-                continue;
-            }
+            // 我方在前敌方在后：分析主对象（self 队）优先出现在摘要前部
+            boolean selfTeam = selfTeamId != null && selfTeamId.equals(p.getTeamId());
             Map<String, Object> player = new LinkedHashMap<>();
             player.put("name", p.getSummonerName());
             // 英雄 ID 在调用前经 GameDataService 转换为中文名（如 103 → 阿狸）：
             // 模型按 ID 猜英雄在非思考模式下会出错（103 猜成瑞兹），转换后不再依赖模型记忆；
             // 数据源不可用时回退 ID 字符串，由提示词的 ID 对照表兜底
-            player.put("champ", gameDataService.championName(p.getChampionId()));
+            player.put("champ", gameDataService.championName(p.getChampionId() == null ? 0 : p.getChampionId()));
             player.put("win", p.getWin());
-            // KDA 合并为数组，减少 JSON 体积（[击杀, 死亡, 助攻]）
-            player.put("kda", List.of(p.getKills(), p.getDeaths(), p.getAssists()));
+            // KDA 合并为数组，减少 JSON 体积（[击杀, 死亡, 助攻]；null 补 0 防御脏数据）
+            player.put("kda", List.of(p.getKills() == null ? 0 : p.getKills(),
+                    p.getDeaths() == null ? 0 : p.getDeaths(),
+                    p.getAssists() == null ? 0 : p.getAssists()));
             player.put("self", p.getPuuid() != null && p.getPuuid().equals(detail.getSelfPuuid()));
-            // 从 statsJson 提取关键统计（缺失字段跳过，由 AI 侧自行处理）
+            // 敌我标记（spec #43）：敌方在场才能做对位对比（"伤害/经济转化 vs 对手"）
+            player.put("ally", selfTeam);
+            // 从 statsJson 提取关键统计（缺失字段跳过——LCU/SGP 局字段较少，
+            // Riot 回填局是 MATCH-V5 全量，两类局并存按"缺失跳过"口径）。
+            // 敌方按 spec 体积控制只给"对位对比必需"字段（伤害/经济/KDA），
+            // 出装/视野/控制等纵深字段只给我方（战犯出列的颁奖对象都在我方）
+            boolean ally = selfTeam;
             try {
                 JsonNode stats = objectMapper.readTree(p.getStatsJson());
-                if (stats != null) {
+                if (stats != null && ally) {
                     // 出装 7 槽（item0-6，出装平衡评分修正用）：同样转换为中文名（收集者/巨蛇之牙…）
                     List<String> items = new ArrayList<>();
                     for (int i = 0; i < 7; i++) {
@@ -334,19 +342,24 @@ public class AiAnalysisService {
                     extract(stats, player, "wards", "wardsPlaced");
                     extract(stats, player, "vision", "visionScore");
                     extract(stats, player, "cc", "timeCCingOthers");
-                    // 最大连杀：doubleKills 计 2、tripleKills 计 3……取最大值（连杀体现爆发）
-                    int multiKill = 0;
-                    multiKill = Math.max(multiKill, stats.path("doubleKills").asInt() > 0 ? 2 : 0);
-                    multiKill = Math.max(multiKill, stats.path("tripleKills").asInt() > 0 ? 3 : 0);
-                    multiKill = Math.max(multiKill, stats.path("quadraKills").asInt() > 0 ? 4 : 0);
-                    multiKill = Math.max(multiKill, stats.path("pentaKills").asInt() > 0 ? 5 : 0);
-                    if (multiKill > 0) {
-                        player.put("multiKill", multiKill);
+                    // 加厚字段（spec #43）：治疗/护盾（辅助奉献量化）、资源伤害（"拿了经济
+                    // 有没有做事"的数据背书）、推塔伤害
+                    extract(stats, player, "heal", "totalHeal");
+                    extract(stats, player, "shield", "totalDamageShieldedOnTeammates");
+                    extract(stats, player, "objDmg", "damageDealtToObjectives");
+                    extract(stats, player, "turretDmg", "damageDealtToTurrets");
+                    // 最大多杀直读（spec #43：替代 doubleKills/tripleKills 组合推导）
+                    if (stats.has("largestMultiKill") && stats.get("largestMultiKill").asInt() > 1) {
+                        player.put("multiKill", stats.get("largestMultiKill").asInt());
                     }
                     // 击杀参与率（challenges 独有，SGP 数据）
                     if (stats.has("challenges") && stats.get("challenges").has("killParticipation")) {
                         player.put("kp", stats.get("challenges").get("killParticipation").asDouble());
                     }
+                } else if (stats != null) {
+                    // 敌方精简投影：对位对比基准只需伤害/经济（体积控制，spec #43）
+                    extract(stats, player, "dmg", "totalDamageDealtToChampions");
+                    extract(stats, player, "gold", "goldEarned");
                 }
             } catch (Exception e) {
                 // 单名参与者 statsJson 解析失败不影响整体（缺失字段由 AI 侧跳过）

@@ -307,12 +307,14 @@ public class WeeklyAiCommentService {
                     "activeMembers", report.getOverview().getActiveMembers() == null
                             ? List.of() : report.getOverview().getActiveMembers()));
         }
-        // 各榜单只取前 3 条：锐评点名的素材足够了
+        // 各榜单只取前 3 条：锐评点名的素材足够了；
+        // attendanceBoard（出勤榜）v2 起补投影（AI 加厚 spec #43：提示词承诺的六榜终于齐了）
         summary.put("mvpBoard", topOfBoard(report.getMvpBoard()));
         summary.put("criminalBoard", topOfBoard(report.getCriminalBoard()));
         summary.put("feederBoard", topOfBoard(report.getFeederBoard()));
         summary.put("carryBoard", topOfBoard(report.getCarryBoard()));
         summary.put("signatureBoard", topOfBoard(report.getSignatureBoard()));
+        summary.put("attendanceBoard", topOfBoard(report.getAttendanceBoard()));
         if (report.getHighlights() != null) {
             List<Map<String, Object>> highlights = new ArrayList<>();
             collectHighlight(highlights, report.getHighlights().getBiggestComeback());

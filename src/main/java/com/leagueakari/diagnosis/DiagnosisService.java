@@ -169,6 +169,7 @@ public class DiagnosisService {
                     .name(p.getSummonerName() == null ? "" : p.getSummonerName())
                     .championName(gameDataService.championName(
                             p.getChampionId() == null ? 0 : p.getChampionId()))
+                    .championId(p.getChampionId())
                     .championClass(championClass)
                     .teamId(p.getTeamId())
                     .dimensions(dimensions)

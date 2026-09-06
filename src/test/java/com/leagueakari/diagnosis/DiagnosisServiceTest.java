@@ -124,6 +124,19 @@ class DiagnosisServiceTest {
         assertThat(dimensionOf(response.getPlayers().get(2), "vision").getTeamRank()).isEqualTo(1);
     }
 
+    /** 用例：玩家行补 championId（头像 spec #44 用户故事 5）——前端渲染英雄头像 */
+    @Test
+    void diagnose_carriesChampionIdForAvatar() {
+        stubLostTeam();
+
+        DiagnosisResponse response = service.diagnose(100L);
+
+        // 每名玩家携带英雄 ID（103/117/84 来自夹具）
+        assertThat(response.getPlayers())
+                .extracting(DiagnosisResponse.PlayerDiagnosis::getChampionId)
+                .containsExactly(103, 117, 84);
+    }
+
     /** 用例：败局短板判定——败局且队内末位且显著低于队均 → weak=true 高亮 */
     @Test
     void diagnose_marksWeakDimensionInLoss() {

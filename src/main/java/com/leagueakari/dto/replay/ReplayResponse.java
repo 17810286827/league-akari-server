@@ -20,6 +20,9 @@ import java.util.List;
 @AllArgsConstructor
 public class ReplayResponse {
 
+    /** 对局 ID（AI 摘要组装时回查玩家 stats 用；响应透传供前端关联） */
+    private Long gameId;
+
     /** 时间线数据是否可用（无时间线/快照损坏时 false，其余字段为空集合） */
     private boolean available;
 
@@ -65,11 +68,17 @@ public class ReplayResponse {
         /** 击杀者英雄中文名 */
         private String killerChampion;
 
+        /** 击杀者英雄 ID（头像 spec #44：前端头像渲染依据） */
+        private Integer killerChampionId;
+
         /** 被击杀者召唤师名 */
         private String victimName;
 
         /** 被击杀者英雄中文名 */
         private String victimChampion;
+
+        /** 被击杀者英雄 ID（头像 spec #44：前端头像渲染依据） */
+        private Integer victimChampionId;
 
         /** 击杀者是否属于我方（标记颜色区分敌我） */
         private boolean killerIsPerspective;
@@ -117,6 +126,9 @@ public class ReplayResponse {
 
         /** 英雄中文名 */
         private String championName;
+
+        /** 英雄 ID（头像 spec #44：前端头像渲染依据） */
+        private Integer championId;
 
         /** 是否属于我方 */
         private boolean perspective;

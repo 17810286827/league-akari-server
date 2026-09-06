@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -31,11 +32,19 @@ import com.leagueakari.team.TeamRosterService;
 class PostGameSummaryBuilderTest {
 
     private final GameDataService gameData = mock(GameDataService.class);
+
+    /** 队列名转换 mock 兜底：未打桩的队列 ID 回退数字串（与 GameDataService 口径一致） */
+    {
+        when(gameData.queueName(any())).thenAnswer(inv -> {
+            Integer q = inv.getArgument(0);
+            return q == null ? "对局" : String.valueOf(q);
+        });
+    }
     private final TeamProperties teamProps = mock(TeamProperties.class);
     /** 真实组装器：投影测试喂真实摘要（口径唯一实现） */
     private final FleetGameSummaryService summaryService =
             new FleetGameSummaryService(gameData, new ObjectMapper(), teamProps, new ParticipantStatsReader(new ObjectMapper()));
-    private final PostGameSummaryBuilder builder = new PostGameSummaryBuilder();
+    private final PostGameSummaryBuilder builder = new PostGameSummaryBuilder(gameData);
 
     /** stats_json 片段：伤害/承伤/金币（Riot v5 键名） */
     private static String stats(int dmg, int taken, int gold) {
@@ -104,6 +113,8 @@ class PostGameSummaryBuilderTest {
     @SuppressWarnings("unchecked")
     void build_winGame_keepsAiJsonContract() {
         when(gameData.championName(anyInt())).thenAnswer(inv -> "英雄" + inv.getArgument(0));
+        // 队列名经 GameDataService 统一出口（spec #43 收编）：meta 行断言用
+        when(gameData.queueName(440)).thenReturn("灵活组排");
         when(teamProps.getName()).thenReturn("舰队");
         FleetGameSummary summary = summaryService.build(match(), participants(), roster(),
                 List.of(award(1L, "MVP"), award(8L, "ACE")));
@@ -183,5 +194,53 @@ class PostGameSummaryBuilderTest {
         assertThat(main.get(0).get("dmg")).isEqualTo(0);
         assertThat(main.get(0).get("taken")).isEqualTo(0);
         assertThat(main.get(0).get("member")).isEqualTo(false);
+    }
+
+    /**
+     * 用例：投影补全（AI 加厚 spec #43）——一局摘要里现成但被丢弃的字段全部投影：
+     * 资源对比（塔/龙/大龙/一血）、各人 opScore、占比分母（全 10 人伤害/承伤合计）。
+     * 点名依据更立体：AI 能引用"塔 7:3 龙我们多两条"与"伤害占比 28%"式素材。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void build_includesResourcesOpScoreAndDamageTotals() {
+        when(gameData.championName(anyInt())).thenReturn("阿狸");
+        when(teamProps.getName()).thenReturn("舰队");
+        Match m = match();
+        // teams_json 资源快照：主队(100) 塔7/龙3/大龙1/一血，对方(200) 塔3/龙1/大龙0
+        m.setTeamsJson("[{\"teamId\":100,\"towerKills\":7,\"dragonKills\":3,\"baronKills\":1,\"firstBlood\":true},"
+                + "{\"teamId\":200,\"towerKills\":3,\"dragonKills\":1,\"baronKills\":0}]");
+        MatchMvp mvp = award(1L, "MVP");
+        mvp.setOpScore(java.math.BigDecimal.valueOf(8.5));
+        FleetGameSummary summary = summaryService.build(m, participants(), roster(), List.of(mvp));
+
+        Map<String, Object> s = builder.build(summary);
+
+        // 资源对比：塔/龙/大龙/一血（投影为可读文案，AI 引用有据）
+        assertThat(s.get("resources")).isEqualTo("塔 7:3 · 小龙 3:1 · 大龙 1:0 · 一血我方");
+        // 占比分母：全 10 人伤害/承伤合计（行内 dmg 与它相除即占比）
+        assertThat(s.get("totalDmg")).isEqualTo(121300);
+        assertThat(s.get("totalTaken")).isEqualTo(139300);
+        // 各人 opScore（评分与锐评不再脱节，spec #43 用户故事 5）
+        List<Map<String, Object>> main = (List<Map<String, Object>>) s.get("mainTeam");
+        Map<String, Object> first = main.get(0);
+        assertThat(first.get("name")).isEqualTo("峡谷养鱼人");
+        assertThat(first.get("opScore")).isEqualTo(8.5);
+        // 无评选记录的行不携带 opScore 键（缺失跳过口径，不输出 null）
+        Map<String, Object> second = main.get(1);
+        assertThat(second).doesNotContainKey("opScore");
+    }
+
+    /** 用例：资源无数据（teams_json 缺失/-1）时不投影 resources 键，不输出误导性 0:0 */
+    @Test
+    void build_missingResources_omitsResourceKey() {
+        when(gameData.championName(anyInt())).thenReturn("阿狸");
+        FleetGameSummary summary = summaryService.build(match(), participants(), roster(), List.of());
+
+        Map<String, Object> s = builder.build(summary);
+
+        assertThat(s).doesNotContainKey("resources");
+        // 分母恒在（stats 缺失补 0 也不影响合计语义）
+        assertThat(s).containsKey("totalDmg").containsKey("totalTaken");
     }
 }

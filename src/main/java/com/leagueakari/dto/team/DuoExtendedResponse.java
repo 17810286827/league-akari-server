@@ -74,5 +74,28 @@ public class DuoExtendedResponse {
 
         /** 胜率（0-1）；局数为 0 不出现 */
         private Double winRate;
+
+        /** 成员×英雄（头像 spec #44：各成员在该阵容局中最常使用的英雄，前端头像渲染） */
+        private List<MemberChampion> memberChampions;
+    }
+
+    /** 阵容成员与其常用英雄（聚合时按出现次数取众数） */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class MemberChampion {
+
+        /** 成员 riotId */
+        private String riotId;
+
+        /** 英雄 ID（前端 Data Dragon 头像渲染依据） */
+        private Integer championId;
+
+        /** 英雄中文名 */
+        private String championName;
+
+        /** 该英雄局数（众数依据） */
+        private int games;
     }
 }

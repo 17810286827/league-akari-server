@@ -193,8 +193,9 @@ public class ReplayAiService {
     }
 
     /**
-     * 组装备盘摘要（user 消息）：视角 + 经济差走势概要 + 击杀列表 + 转折点明细。
-     * 只给 AI 真实数据背书的素材（转折点由规则引擎确定性提取），不给原始 frames
+     * 组装备盘摘要（user 消息）：视角 + 经济差走势概要 + 击杀列表 + 玩家概要 + 转折点明细。
+     * 只给 AI 真实数据背书的素材（转折点由规则引擎确定性提取、玩家 stats 从库里读取），
+     * 不给原始 frames
      */
     private String buildSummary(ReplayResponse replay) {
         Map<String, Object> summary = new LinkedHashMap<>();
@@ -210,16 +211,20 @@ public class ReplayAiService {
                     "start", first, "end", last, "max", max, "min", min,
                     "durationMin", series.get(series.size() - 1).getTimestampMs() / 60000));
         }
-        // 击杀事件（压缩为时刻 + 敌我 + 击杀者→被击杀者）
+        // 击杀事件（压缩为时刻 + 敌我 + 击杀者玩家名/英雄 → 被击杀者；spec #43 补玩家名，
+        // AI 点名"谁杀了谁"有据——只有英雄名时同名英雄无法区分玩家）
         List<Map<String, Object>> kills = new ArrayList<>();
         for (ReplayResponse.KillEvent kill : replay.getKillEvents()) {
             Map<String, Object> k = new LinkedHashMap<>();
             k.put("min", kill.getTimestampMs() / 60000);
-            k.put("by", (kill.isKillerIsPerspective() ? "我方" : "敌方") + kill.getKillerChampion());
-            k.put("victim", kill.getVictimChampion());
+            k.put("by", (kill.isKillerIsPerspective() ? "我方" : "敌方")
+                    + kill.getKillerName() + "（" + kill.getKillerChampion() + "）");
+            k.put("victim", kill.getVictimName() + "（" + kill.getVictimChampion() + "）");
             kills.add(k);
         }
         summary.put("kills", kills);
+        // 玩家概要（spec #43 加厚）：双方 KDA/伤害/经济/装备——评价转折点中个人表现的素材
+        summary.put("players", replayService.playerStats(replay.getGameId()));
         // 转折点明细（AI 叙述的主素材——每个点都有真实数据背书）
         List<Map<String, Object>> points = new ArrayList<>();
         for (ReplayResponse.TurningPoint point : replay.getTurningPoints()) {

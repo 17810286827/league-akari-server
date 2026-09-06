@@ -95,6 +95,9 @@ public class SeasonReportResponse {
         /** 英雄中文名 */
         private String champion;
 
+        /** 英雄 ID（头像 spec #44：前端 Data Dragon 头像渲染依据） */
+        private Integer championId;
+
         /** 局数 */
         private int games;
     }

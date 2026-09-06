@@ -104,4 +104,46 @@ class GameDataServiceTest {
 
         assertThat(service.championName(103)).isEqualTo("阿狸");
     }
+
+    @Test
+    void queueNameMapsKnownQueuesWithoutNetwork() throws Exception {
+        // 队列名转换：常用队列静态映射（AI 加厚 spec #43——原 PostGameSummaryBuilder
+        // 内硬编码 switch 收编进 GameDataService 统一出口，新增队列只改一处）；
+        // 纯内存表，零网络调用（不触发英雄/装备的懒加载）
+        assertThat(service.queueName(420)).isEqualTo("单双排");
+        assertThat(service.queueName(430)).isEqualTo("匹配");
+        assertThat(service.queueName(440)).isEqualTo("灵活组排");
+        assertThat(service.queueName(450)).isEqualTo("极地大乱斗");
+        assertThat(service.queueName(1700)).isEqualTo("斗魂竞技场");
+        assertThat(service.queueName(2400)).isEqualTo("海克斯乱斗");
+        // 未知队列回退数字串；null 队列回退"对局"（缺省口径）
+        assertThat(service.queueName(999)).isEqualTo("999");
+        assertThat(service.queueName(null)).isEqualTo("对局");
+        // 零网络：静态映射不拉取任何 CDN 资源
+        verify(httpClient, times(0)).execute(any());
+    }
+
+    @Test
+    void summonerSpellNameParsesFromCdn() throws Exception {
+        // 召唤师技能名转换：summoner-spells.json（[{id,name}]，同英雄/装备解析口径）；
+        // 未知 ID 回退数字串（模型按提示词兜底）；缓存命中不重复拉取
+        CloseableHttpResponse resp = mockResponse(200,
+                "[{\"id\":4,\"name\":\"闪现\"},{\"id\":14,\"name\":\"点燃\"}]");
+        when(httpClient.execute(any())).thenReturn(resp);
+
+        assertThat(service.summonerSpellName(4)).isEqualTo("闪现");
+        assertThat(service.summonerSpellName(14)).isEqualTo("点燃");
+        assertThat(service.summonerSpellName(9999)).isEqualTo("9999");
+        // 缓存命中：再次调用不重新拉取
+        assertThat(service.summonerSpellName(4)).isEqualTo("闪现");
+        verify(httpClient, times(1)).execute(any());
+    }
+
+    @Test
+    void summonerSpellNameFallsBackToIdWhenAllLocalesFail() throws Exception {
+        // 网络异常：回退 ID 字符串不抛异常（AI 摘要主流程不受影响）
+        when(httpClient.execute(any())).thenThrow(new IOException("network down"));
+
+        assertThat(service.summonerSpellName(4)).isEqualTo("4");
+    }
 }

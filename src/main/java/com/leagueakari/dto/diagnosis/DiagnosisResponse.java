@@ -41,6 +41,9 @@ public class DiagnosisResponse {
         /** 英雄中文名 */
         private String championName;
 
+        /** 英雄 ID（头像 spec #44：前端头像渲染依据） */
+        private Integer championId;
+
         /** 英雄职业（SUPPORT 等六职业，决定维度豁免） */
         private String championClass;
 

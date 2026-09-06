@@ -196,6 +196,26 @@ class WeeklyAiCommentServiceTest {
                 .contains("2026-08-24 ~ 2026-08-30").contains("MVP").contains("手裂鬼子");
     }
 
+    /**
+     * 用例：摘要补出勤榜投影（AI 加厚 spec #43 用户故事 9）——
+     * 提示词承诺的六个榜单终于齐了（原 buildSummary 漏投影 attendanceBoard）。
+     */
+    @Test
+    void streamComment_sendsAttendanceBoardToAi() throws Exception {
+        WeeklyReportResponse report = report("2026-08-24 ~ 2026-08-30");
+        report.setAttendanceBoard(List.of(WeeklyReportResponse.BoardEntry.builder()
+                .riotId("赌书消得泼茶香#iKun").value(3.0).detail("3场").build()));
+        when(weeklyReportService.weeklyReport(any(LocalDate.class))).thenReturn(report);
+        mockAiStream("stop");
+
+        service.streamComment(WeekFixture.AUG_26, mockEmitter());
+
+        ArgumentCaptor<String> userContent = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).callStream(any(), anyString(), userContent.capture(), any(), anyString());
+        // 出勤榜前 3 在摘要内（键名与既有榜单命名一致：attendanceBoard）
+        assertThat(userContent.getValue()).contains("attendanceBoard").contains("3场");
+    }
+
     /** 用例：周报请求的 thinking 跟随 yaml（ai.thinking）——三个 AI 场景统一读配置 */
     @Test
     void streamComment_requestThinkingFollowsYaml() throws Exception {

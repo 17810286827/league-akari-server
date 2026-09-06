@@ -23,7 +23,7 @@ class DuoStatsServiceTest extends TeamStatsTestBase {
 
     /** 构造被测服务 */
     private DuoStatsService duoService() {
-        return new DuoStatsService(rosterService, loader());
+        return new DuoStatsService(rosterService, loader(), gameDataService);
     }
 
     /** 用例：矩阵聚合——同局搭档的胜负按人次累计，格子带局数与胜率 */
@@ -171,5 +171,34 @@ class DuoStatsServiceTest extends TeamStatsTestBase {
                 .filter(s -> s.getKey().equals(key))
                 .findFirst()
                 .orElseThrow();
+    }
+
+    /**
+     * 用例：阵容补成员×英雄（头像 spec #44 用户故事 3）——
+     * LineupStats 携带每位成员在该阵容局中最常使用的英雄（championId + 中文名），
+     * 前端在成员名旁渲染英雄头像。
+     */
+    @Test
+    void lineups_carryMemberChampions() {
+        DuoStatsService service = duoService();
+        // A 两局都玩阿狸（103），B 第一局盲僧（117）/第二局阿卡丽（84）→ B 众数 = 各 1 局取先到者
+        Match g1 = match(1, 100L, ms(8, 26, 14), 1200, "KIWI", 100);
+        Match g2 = match(2, 200L, ms(8, 26, 16), 1200, "KIWI", 100);
+        when(matchMapper.selectList(any())).thenReturn(List.of(g1, g2));
+        when(participantMapper.selectList(any())).thenReturn(List.of(
+                participant(1, 1, "puuid-a", "赌书消得泼茶香", 103, 100, 5, 2, 5, true, 20000),
+                participant(2, 1, "puuid-b", "手裂鬼子", 117, 100, 3, 4, 4, true, 15000),
+                participant(3, 2, "puuid-a", "赌书消得泼茶香", 103, 100, 4, 1, 4, false, 12000),
+                participant(4, 2, "puuid-b", "手裂鬼子", 84, 100, 2, 6, 3, false, 9000)));
+
+        var response = service.lineups(null, null, null);
+
+        assertThat(response).hasSize(1);
+        var lineup = response.get(0);
+        // 每位成员携带英雄（championId + 中文名）
+        assertThat(lineup.getMemberChampions()).hasSize(2);
+        var champA = lineup.getMemberChampions().stream()
+                .filter(mc -> mc.getRiotId().equals("赌书消得泼茶香#iKun")).findFirst().orElseThrow();
+        assertThat(champA.getChampionId()).isEqualTo(103);
     }
 }

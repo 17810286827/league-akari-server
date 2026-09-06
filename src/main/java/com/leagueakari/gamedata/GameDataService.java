@@ -37,6 +37,21 @@ public class GameDataService {
     /** 装备文件：数组 [{id, name}] */
     private static final String ITEMS_FILE = "items.json";
 
+    /** 召唤师技能文件：数组 [{id, name}]（AI 加厚 spec #43） */
+    private static final String SPELLS_FILE = "summoner-spells.json";
+
+    /** 常用队列中文名静态映射（spec #43：原 PostGameSummaryBuilder 硬编码 switch 收编至此，
+     * 全站唯一出口，新增队列只改一处）；多队列 ID 共用名（如海克斯乱斗 2400/2410/2450） */
+    private static final Map<Integer, String> QUEUE_NAMES = Map.ofEntries(
+            Map.entry(420, "单双排"),
+            Map.entry(430, "匹配"),
+            Map.entry(440, "灵活组排"),
+            Map.entry(450, "极地大乱斗"),
+            Map.entry(1700, "斗魂竞技场"),
+            Map.entry(2400, "海克斯乱斗"),
+            Map.entry(2410, "海克斯乱斗"),
+            Map.entry(2450, "海克斯乱斗"));
+
     private final CloseableHttpClient httpClient;
     private final ObjectMapper objectMapper;
 
@@ -46,9 +61,15 @@ public class GameDataService {
     /** 装备名缓存：ID → 中文名（懒加载；空 Map 表示未加载或加载失败） */
     private volatile Map<Integer, String> itemNames = Map.of();
 
+    /** 召唤师技能名缓存：ID → 中文名（懒加载；空 Map 表示未加载或加载失败） */
+    private volatile Map<Integer, String> spellNames = Map.of();
+
     /** 加载中标记：double-check 防止并发请求重复拉取同一文件 */
     private final AtomicBoolean championLoading = new AtomicBoolean(false);
     private final AtomicBoolean itemLoading = new AtomicBoolean(false);
+
+    /** 召唤师技能加载中标记（double-check 防并发重复拉取） */
+    private final AtomicBoolean spellLoading = new AtomicBoolean(false);
 
     /**
      * 构造注入 HTTP 客户端与 JSON 解析器
@@ -79,6 +100,31 @@ public class GameDataService {
     public String itemName(int itemId) {
         ensureLoaded(ITEMS_FILE, () -> itemNames, itemLoading, v -> itemNames = v);
         return itemNames.getOrDefault(itemId, String.valueOf(itemId));
+    }
+
+    /**
+     * 取召唤师技能中文名（AI 加厚 spec #43）；数据未加载/未命中时回退 ID 字符串
+     *
+     * @param spellId 召唤师技能 ID（statsJson 的 spell1Id/spell2Id）
+     * @return 技能名（如"闪现"），未知 ID 返回 ID 字符串
+     */
+    public String summonerSpellName(int spellId) {
+        ensureLoaded(SPELLS_FILE, () -> spellNames, spellLoading, v -> spellNames = v);
+        return spellNames.getOrDefault(spellId, String.valueOf(spellId));
+    }
+
+    /**
+     * 取队列中文名（AI 加厚 spec #43）：常用队列静态映射，全站唯一出口
+     * （战报 meta 行与 AI 摘要共用文案）；不触发任何网络加载
+     *
+     * @param queueId 队列 ID（如 420 单双排 / 450 极地大乱斗）
+     * @return 队列中文名；未知队列返回 ID 字符串，null 返回"对局"
+     */
+    public String queueName(Integer queueId) {
+        if (queueId == null) {
+            return "对局";
+        }
+        return QUEUE_NAMES.getOrDefault(queueId, String.valueOf(queueId));
     }
 
     /**

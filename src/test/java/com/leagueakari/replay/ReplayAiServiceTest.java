@@ -70,6 +70,7 @@ class ReplayAiServiceTest {
     /** 构造可用复盘（含一血 + 反超两个转折点） */
     private ReplayResponse replayFixture() {
         return ReplayResponse.builder()
+                .gameId(100L)
                 .available(true)
                 .perspectiveTeamId(100)
                 .goldDiffSeries(List.of(
@@ -204,5 +205,32 @@ class ReplayAiServiceTest {
         service.streamComment(100L, mockEmitter());
 
         assertThat(eventTypes()).containsExactly("start", "error");
+    }
+
+    /**
+     * 用例：摘要加厚（AI 加厚 spec #43）——复盘摘要补双方 10 人的
+     * KDA/伤害/经济/装备概要与击杀事件的玩家名（评价"谁在转折点里干了什么"有据）。
+     */
+    @Test
+    void streamComment_summaryIncludesPlayerStatsAndKillNames() throws Exception {
+        when(replayService.replay(100L)).thenReturn(replayFixture());
+        when(replayService.playerStats(100L)).thenReturn(List.of(
+                Map.of("name", "玩家一", "champ", "阿狸", "ally", true,
+                        "kda", List.of(10, 2, 5), "dmg", 25000, "gold", 15000,
+                        "items", List.of("收集者", "无尽之刃")),
+                Map.of("name", "玩家二", "champ", "锐雯", "ally", false,
+                        "kda", List.of(3, 8, 2), "dmg", 12000, "gold", 11000)));
+        mockAiStream("stop");
+
+        service.streamComment(100L, mockEmitter());
+
+        ArgumentCaptor<String> userContent = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).callStream(any(), anyString(), userContent.capture(), any(), anyString());
+        String payload = userContent.getValue();
+        // 双方个人 stats 摘要在内（与转折点数据并列，AI 可评价转折点中的个人表现）
+        assertThat(payload).contains("\"players\"").contains("收集者")
+                .contains("25000").contains("玩家二");
+        // 击杀事件带玩家名（spec #43：原只有"我方阿狸"，补玩家名后 AI 点名有据）
+        assertThat(payload).contains("玩家一");
     }
 }

@@ -1,6 +1,7 @@
 package com.leagueakari.team;
 
 import com.leagueakari.dto.team.DuoExtendedResponse;
+import com.leagueakari.gamedata.GameDataService;
 import com.leagueakari.dto.team.DuoMatrixResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,6 +29,8 @@ public class DuoStatsService {
 
     private final TeamRosterService rosterService;
     private final FleetGameLoader gameLoader;
+    /** 英雄名转换（头像 spec #44：阵容成员常用英雄的中文名） */
+    private final GameDataService gameDataService;
 
     /**
      * 搭档胜率矩阵
@@ -153,7 +156,9 @@ public class DuoStatsService {
 
     /**
      * 常用阵容（工单 #41）：同局出战的成员组合（≥2 人）聚合，按局数降序。
-     * 只统计车队对局，胜负按成员人次计
+     * 只统计车队对局，胜负按成员人次计。
+     * <p>头像 spec #44：聚合时同步记录成员×英雄出现次数，组装时取众数
+     * （该阵容局中最常使用的英雄）透出 championId 供前端渲染头像。</p>
      */
     public List<DuoExtendedResponse.LineupStats> lineups(String gameMode, Long startMs, Long endMs) {
         List<TeamRosterService.RosterMember> roster = rosterService.requireMembers();
@@ -161,6 +166,9 @@ public class DuoStatsService {
                 .filter(g -> gameLoader.isFleet(g, roster)).toList();
         // 阵容键：出战成员的 roster 下标集合（LinkedHash 保持顺序）
         Map<java.util.Set<Integer>, int[]> byLineup = new java.util.LinkedHashMap<>();
+        // 成员×英雄累计（阵容键 → roster 下标 → [championId, 次数…]众数原料）
+        Map<java.util.Set<Integer>, Map<Integer, Map<Integer, Integer>>> champCountByLineup =
+                new java.util.LinkedHashMap<>();
         for (GameData game : fleetGames) {
             java.util.Set<Integer> playing = new java.util.LinkedHashSet<>();
             int w = 0;
@@ -179,6 +187,16 @@ public class DuoStatsService {
             int[] acc = byLineup.computeIfAbsent(playing, k -> new int[3]);
             acc[0]++;      // games
             acc[1] += w;   // wins（人次）
+            // 成员×英雄累计（spec #44：众数原料）
+            Map<Integer, Map<Integer, Integer>> champCount =
+                    champCountByLineup.computeIfAbsent(playing, k -> new java.util.HashMap<>());
+            for (int i : playing) {
+                var participant = gameLoader.memberParticipant(game, roster.get(i));
+                if (participant != null && participant.getChampionId() != null) {
+                    champCount.computeIfAbsent(i, k -> new java.util.LinkedHashMap<>())
+                            .merge(participant.getChampionId(), 1, Integer::sum);
+                }
+            }
         }
         // 组装并按局数降序
         List<DuoExtendedResponse.LineupStats> out = new ArrayList<>();
@@ -189,11 +207,56 @@ public class DuoStatsService {
                     .members(playing.stream().map(i -> roster.get(i).getRiotId()).toList())
                     .games(acc[0]).wins(acc[1]).losses(l)
                     .winRate(totalPlayed > 0 ? (double) acc[1] / totalPlayed : null)
+                    .memberChampions(memberChampionsOf(playing,
+                            champCountByLineup.getOrDefault(playing, Map.of()), roster))
                     .build());
         });
         out.sort((a, b) -> Integer.compare(b.getGames(), a.getGames()));
         log.info("Lineups computed: fleetGames={}, lineups={}", fleetGames.size(), out.size());
         return out;
+    }
+
+    /**
+     * 阵容成员的常用英雄（众数）：每个 roster 下标取出现次数最多的英雄；
+     * 并列取先达到该次数者（LinkedHashMap 插入序），无英雄数据（championId 全缺失）的成员跳过
+     */
+    private List<DuoExtendedResponse.MemberChampion> memberChampionsOf(
+            java.util.Set<Integer> playing, Map<Integer, Map<Integer, Integer>> champCount,
+            List<TeamRosterService.RosterMember> roster) {
+        List<DuoExtendedResponse.MemberChampion> out = new ArrayList<>();
+        for (int i : playing) {
+            Map<Integer, Integer> counts = champCount.get(i);
+            if (counts == null || counts.isEmpty()) {
+                continue;
+            }
+            // 众数：次数最多；并列取先插入（首次出现）者
+            var best = counts.entrySet().stream()
+                    .max(Map.Entry.<Integer, Integer>comparingByValue()
+                            .thenComparing(e -> -firstSeenOrder(counts, e.getKey())))
+                    .orElse(null);
+            if (best == null) {
+                continue;
+            }
+            out.add(DuoExtendedResponse.MemberChampion.builder()
+                    .riotId(roster.get(i).getRiotId())
+                    .championId(best.getKey())
+                    .championName(gameDataService.championName(best.getKey()))
+                    .games(best.getValue())
+                    .build());
+        }
+        return out;
+    }
+
+    /** 众数并列时的稳定决胜：按 Map 插入序取序号（先出现者优先） */
+    private int firstSeenOrder(Map<Integer, Integer> counts, int key) {
+        int order = 0;
+        for (int k : counts.keySet()) {
+            if (k == key) {
+                return order;
+            }
+            order++;
+        }
+        return Integer.MAX_VALUE;
     }
 
     /**

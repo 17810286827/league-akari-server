@@ -466,4 +466,65 @@ class AiAnalysisServiceTest {
         assertThat(events).extracting(e -> e.get("type")).endsWith("error");
         assertThat(events).noneSatisfy(e -> assertThat(e.get("type")).isEqualTo("done"));
     }
+
+    /**
+     * 用例：摘要加厚（AI 加厚 spec #43）——敌方 5 人加入（对位对比基准），
+     * 每人补治疗/护盾/资源伤害/推塔伤害，多杀改 largestMultiKill 直读。
+     * <p>既有 buildDetail 只有我方 1 人 + 敌方 1 人；本用例构造带全量字段的
+     * 对局，经 ArgumentCaptor 捕获 userContent 断言新字段与敌我双方都在。</p>
+     */
+    @Test
+    void summaryIncludesEnemiesAndEnrichedFields() throws Exception {
+        // 我方（self）：补治疗/护盾/资源伤害/推塔伤害/最大多杀直读字段
+        MatchParticipant self = new MatchParticipant();
+        self.setPuuid("p1");
+        self.setSummonerName("玩家一");
+        self.setChampionId(1);
+        self.setTeamId(100);
+        self.setWin(true);
+        self.setKills(10);
+        self.setDeaths(2);
+        self.setAssists(5);
+        self.setStatsJson("{\"totalDamageDealtToChampions\": 20000, \"totalHeal\": 8000,"
+                + " \"totalDamageShieldedOnTeammates\": 5000, \"damageDealtToObjectives\": 12000,"
+                + " \"damageDealtToTurrets\": 3000, \"largestMultiKill\": 3, \"goldEarned\": 15000}");
+
+        // 敌方（对位对比基准，spec #43 用户故事 1）：伤害/经济与 self 可对比
+        MatchParticipant enemy = new MatchParticipant();
+        enemy.setPuuid("p2");
+        enemy.setSummonerName("玩家二");
+        enemy.setChampionId(2);
+        enemy.setTeamId(200);
+        enemy.setWin(false);
+        enemy.setKills(4);
+        enemy.setDeaths(6);
+        enemy.setAssists(3);
+        enemy.setStatsJson("{\"totalDamageDealtToChampions\": 15000, \"goldEarned\": 13000}");
+
+        MatchDetailResponse detail = new MatchDetailResponse();
+        detail.setGameId(123L);
+        detail.setGameMode("CLASSIC");
+        detail.setGameDuration(1800);
+        detail.setSelfPuuid("p1");
+        detail.setParticipants(List.of(self, enemy));
+
+        when(gameDataService.championName(1)).thenReturn("黑暗之女");
+        when(gameDataService.championName(2)).thenReturn("阿狸");
+        mockAiStream(null);
+        when(matchQueryService.getMatchDetail(123L)).thenReturn(detail);
+
+        service.analyzeStream(123L, mockEmitter());
+
+        ArgumentCaptor<String> userContent = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).callStream(any(AiCompletionRequest.class), anyString(),
+                userContent.capture(), any(), anyString());
+        String summary = userContent.getValue();
+        // 敌方在场：对位对比基准（用户故事 1）
+        assertThat(summary).contains("阿狸").contains("玩家二");
+        // 加厚字段：治疗/护盾（辅助奉献量化，用户故事 2）、资源伤害/推塔伤害（用户故事 3）
+        assertThat(summary).contains("\"heal\"").contains("\"shield\"")
+                .contains("\"objDmg\"").contains("\"turretDmg\"");
+        // 多杀改 largestMultiKill 直读（原 doubleKills/tripleKills 组合推导废除）
+        assertThat(summary).contains("\"multiKill\":3");
+    }
 }

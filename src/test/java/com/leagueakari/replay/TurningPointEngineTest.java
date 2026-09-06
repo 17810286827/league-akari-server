@@ -40,9 +40,9 @@ class TurningPointEngineTest {
         slotInfo.put(4, participant("玩家四", "泰达米尔", 200));
     }
 
-    /** 构造参与者信息（@Value 不可变对象） */
+    /** 构造参与者信息（@Value 不可变对象）；championId 用序号占位（引擎仅透传不使用） */
     private TurningPointEngine.ParticipantInfo participant(String name, String champion, int teamId) {
-        return new TurningPointEngine.ParticipantInfo(name, champion, teamId);
+        return new TurningPointEngine.ParticipantInfo(name, champion, name.hashCode(), teamId);
     }
 
     /** 构造一帧：时间戳 + 参与者金币（序号→totalGold）+ 事件列表 */

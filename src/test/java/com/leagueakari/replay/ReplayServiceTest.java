@@ -149,6 +149,30 @@ class ReplayServiceTest {
         assertThat(result.isAvailable()).isTrue();
     }
 
+    /**
+     * 用例：击杀事件与转折点涉及成员补 championId（头像 spec #44 用户故事 4）——
+     * 前端在复盘面板的击杀标记与转折点成员旁渲染英雄头像。
+     */
+    @Test
+    void replay_carriesChampionIdsForAvatars() {
+        when(matchMapper.selectOne(any())).thenReturn(match);
+        when(participantMapper.selectList(any())).thenReturn(List.of(
+                participant(1, "puuid-self", "玩家一", 103, 100),
+                participant(2, "puuid-enemy", "玩家二", 84, 200)));
+        when(timelineService.getTimeline(100L)).thenReturn(frames());
+
+        ReplayResponse result = service.replay(100L);
+
+        // 击杀事件：击杀者/被击杀者各带英雄 ID
+        assertThat(result.getKillEvents().get(0).getKillerChampionId()).isEqualTo(103);
+        assertThat(result.getKillEvents().get(0).getVictimChampionId()).isEqualTo(84);
+        // 转折点涉及成员（一血 involved）：带英雄 ID
+        ReplayResponse.TurningPoint firstBlood = result.getTurningPoints().stream()
+                .filter(p -> p.getType().equals(TurningPointEngine.TYPE_FIRST_BLOOD))
+                .findFirst().orElseThrow();
+        assertThat(firstBlood.getInvolved().get(0).getChampionId()).isEqualTo(103);
+    }
+
     /** 用例：无时间线 → available=false 优雅降级（不抛 2002，前端显示提示） */
     @Test
     void replay_degradesWhenTimelineMissing() {

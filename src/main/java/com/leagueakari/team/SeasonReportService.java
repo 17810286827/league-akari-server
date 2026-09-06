@@ -50,8 +50,8 @@ public class SeasonReportService {
         int totalPlayed = 0;
         int totalWins = 0;
         Map<String, int[]> byVersion = new TreeMap<>();   // version → [games, wins, played]
-        // ---- 英雄池漂移原料：成员 → 版本 → 英雄 → 局数 ----
-        Map<String, Map<String, Map<String, Integer>>> drift = new LinkedHashMap<>();
+        // ---- 英雄池漂移原料：成员 → 版本 → 英雄名 → [局数, championId] ----
+        Map<String, Map<String, Map<String, int[]>>> drift = new LinkedHashMap<>();
         // ---- 高光时刻：单局最高击杀（复用名场面口径）----
         SeasonReportResponse.Highlight mostKills = null;
         int bestKills = 0;
@@ -74,12 +74,15 @@ public class SeasonReportService {
                     acc[1]++;
                     totalWins++;
                 }
-                // 英雄池漂移
-                drift.computeIfAbsent(member.getRiotId(), k -> new LinkedHashMap<>())
+                // 英雄池漂移（championId 随中文名一起记录，头像 spec #44）
+                int championId = participant.getChampionId() == null ? 0 : participant.getChampionId();
+                String championName = gameDataService.championName(championId);
+                // int[]{局数, 英雄ID}：同名英雄聚合（ID 一致的正常数据不会分叉）
+                int[] champAcc = drift
+                        .computeIfAbsent(member.getRiotId(), k -> new LinkedHashMap<>())
                         .computeIfAbsent(version, k -> new LinkedHashMap<>())
-                        .merge(gameDataService.championName(
-                                participant.getChampionId() == null ? 0 : participant.getChampionId()),
-                                1, Integer::sum);
+                        .computeIfAbsent(championName, k -> new int[]{0, championId});
+                champAcc[0]++;
                 // 单局最高击杀
                 int kills = participant.getKills() == null ? 0 : participant.getKills();
                 if (kills > bestKills) {
@@ -110,15 +113,17 @@ public class SeasonReportService {
         // 英雄池漂移（roster 顺序；每版本英雄按局数降序）
         List<SeasonReportResponse.MemberDrift> memberDrifts = new ArrayList<>();
         for (TeamRosterService.RosterMember member : roster) {
-            Map<String, Map<String, Integer>> byVersionMap = drift.getOrDefault(member.getRiotId(), Map.of());
+            Map<String, Map<String, int[]>> byVersionMap = drift.getOrDefault(member.getRiotId(), Map.of());
             List<SeasonReportResponse.VersionChampions> versions = byVersionMap.entrySet().stream()
                     .sorted(Map.Entry.comparingByKey())
                     .map(e -> SeasonReportResponse.VersionChampions.builder()
                             .version(e.getKey())
                             .champions(e.getValue().entrySet().stream()
-                                    .sorted(Map.Entry.<String, Integer>comparingByValue(Comparator.reverseOrder()))
+                                    .sorted((a, b) -> Integer.compare(b.getValue()[0], a.getValue()[0]))
                                     .map(entry -> SeasonReportResponse.ChampionCount.builder()
-                                            .champion(entry.getKey()).games(entry.getValue()).build())
+                                            .champion(entry.getKey())
+                                            .championId(entry.getValue()[1])
+                                            .games(entry.getValue()[0]).build())
                                     .toList())
                             .build())
                     .toList();

@@ -66,6 +66,9 @@ public class TurningPointEngine {
         /** 英雄中文名 */
         String championName;
 
+        /** 英雄 ID（头像 spec #44：响应透传给前端渲染头像） */
+        int championId;
+
         /** 队伍 ID（100/200） */
         int teamId;
     }
@@ -145,8 +148,10 @@ public class TurningPointEngine {
                                     .timestampMs(eventTs)
                                     .killerName(killer == null ? "" : killer.getName())
                                     .killerChampion(killer == null ? "" : killer.getChampionName())
+                                    .killerChampionId(killer == null ? null : killer.getChampionId())
                                     .victimName(victim == null ? "" : victim.getName())
                                     .victimChampion(victim == null ? "" : victim.getChampionName())
+                                    .victimChampionId(victim == null ? null : victim.getChampionId())
                                     .killerIsPerspective(killer != null && killer.getTeamId() == perspective)
                                     .build());
                             // 一血：首个英雄击杀
@@ -285,6 +290,7 @@ public class TurningPointEngine {
                         .filter(java.util.Objects::nonNull)
                         .map(p -> ReplayResponse.InvolvedPlayer.builder()
                                 .name(p.getName()).championName(p.getChampionName())
+                                .championId(p.getChampionId())
                                 .perspective(p.getTeamId() == perspective)
                                 .build())
                         .toList();
@@ -332,6 +338,7 @@ public class TurningPointEngine {
             if (p != null) {
                 out.add(ReplayResponse.InvolvedPlayer.builder()
                         .name(p.getName()).championName(p.getChampionName())
+                        .championId(p.getChampionId())
                         .perspective(p.getTeamId() == perspective)
                         .build());
             }

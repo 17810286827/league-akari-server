@@ -68,6 +68,13 @@ class GlobalExceptionHandlerTest {
             throw new org.springframework.web.servlet.resource.NoResourceFoundException(
                     org.springframework.http.HttpMethod.GET, "missing-resource");
         }
+
+        /** 显式抛 NoResourceFoundException（API 前缀路径）：真 bug 信号场景的 404 形态 */
+        @GetMapping("/api/boom-no-resource")
+        public String boomApiNoResource() throws org.springframework.web.servlet.resource.NoResourceFoundException {
+            throw new org.springframework.web.servlet.resource.NoResourceFoundException(
+                    org.springframework.http.HttpMethod.GET, "api/missing-endpoint");
+        }
     }
 
     @BeforeEach
@@ -195,5 +202,43 @@ class GlobalExceptionHandlerTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(404))
                 .andExpect(jsonPath("$.message").value("资源不存在"));
+    }
+
+    /**
+     * 用例：日志降噪（头像 spec #44 用户故事 6/7）——
+     * 静态资源 404（公网扫描器密钥探测的常态）降为 DEBUG，不再刷 WARN；
+     * /api/** 前缀的 404 保持 WARN（真 bug 信号不漏）。
+     */
+    @Test
+    void staticResource404LogsDebugWhileApiPath404KeepsWarn() throws Exception {
+        ch.qos.logback.classic.Logger handlerLogger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class);
+        // 捕获 DEBUG 事件：ListAppender 无级别过滤，但 logger 的有效级别会拦截——
+        // 测试期间临时降为 DEBUG（生产 root=INFO 时该级别事件本就不落任何 appender）
+        ch.qos.logback.classic.Level originalLevel = handlerLogger.getLevel();
+        handlerLogger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        handlerLogger.addAppender(appender);
+        try {
+            // 静态路径 404（模拟扫描器探测 key.pem/.ssh/config 等）
+            mockMvc.perform(get("/boom-no-resource"))
+                    .andExpect(status().isNotFound());
+            // API 前缀 404（真 bug 信号）：用 NoResourceFoundException 的 API 路径形态触发
+            mockMvc.perform(get("/api/boom-no-resource"))
+                    .andExpect(status().isNotFound());
+        } finally {
+            handlerLogger.detachAppender(appender);
+            handlerLogger.setLevel(originalLevel);
+        }
+
+        // 日志契约：非 API 路径 404 → DEBUG；API 路径 404 → WARN
+        java.util.List<ch.qos.logback.classic.spi.ILoggingEvent> resourceLogs = appender.list.stream()
+                .filter(e -> e.getFormattedMessage().contains("Resource not found"))
+                .toList();
+        assertThat(resourceLogs).hasSize(2);
+        assertThat(resourceLogs.get(0).getLevel()).isEqualTo(ch.qos.logback.classic.Level.DEBUG);
+        assertThat(resourceLogs.get(1).getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
     }
 }
