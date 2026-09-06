@@ -6,6 +6,7 @@ import com.leagueakari.dto.team.DuoExtendedResponse;
 import com.leagueakari.dto.team.DuoMatrixResponse;
 import com.leagueakari.dto.team.LeaderboardResponse;
 import com.leagueakari.dto.team.MemberCardResponse;
+import com.leagueakari.dto.team.SeasonReportResponse;
 import com.leagueakari.dto.team.TeamMembersResponse;
 import com.leagueakari.dto.team.WeeklyReportResponse;
 import com.leagueakari.riot.RiotMatchHistoryService;
@@ -25,6 +26,7 @@ import java.util.Map;
 import com.leagueakari.team.LeaderboardService;
 import com.leagueakari.team.DuoStatsService;
 import com.leagueakari.team.MemberStatsService;
+import com.leagueakari.team.SeasonReportService;
 import com.leagueakari.team.WeeklyAiCommentService;
 import com.leagueakari.team.WeeklyReportService;
 
@@ -53,17 +55,20 @@ public class TeamController {
     /** 搭档胜率矩阵（工单 #37） */
     private final DuoStatsService duoStatsService;
     private final MemberStatsService memberStatsService;
+    /** 赛季报告（工单 #42）：手动触发，赛季边界人工指定 */
+    private final SeasonReportService seasonReportService;
     private final RiotMatchHistoryService backfillService;
 
     public TeamController(WeeklyReportService weeklyReportService, WeeklyAiCommentService weeklyAiCommentService,
             LeaderboardService leaderboardService, DuoStatsService duoStatsService,
-            MemberStatsService memberStatsService,
+            MemberStatsService memberStatsService, SeasonReportService seasonReportService,
             RiotMatchHistoryService backfillService) {
         this.weeklyReportService = weeklyReportService;
         this.weeklyAiCommentService = weeklyAiCommentService;
         this.leaderboardService = leaderboardService;
         this.duoStatsService = duoStatsService;
         this.memberStatsService = memberStatsService;
+        this.seasonReportService = seasonReportService;
         this.backfillService = backfillService;
     }
 
