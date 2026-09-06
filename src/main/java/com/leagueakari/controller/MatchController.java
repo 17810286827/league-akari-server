@@ -25,6 +25,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Objects;
 import com.leagueakari.dto.replay.ReplayResponse;
+import com.leagueakari.diagnosis.DiagnosisService;
 import com.leagueakari.match.MatchIngestService;
 import com.leagueakari.match.MatchQueryService;
 import com.leagueakari.match.MatchTimelineService;
@@ -50,6 +51,8 @@ public class MatchController {
     private final AiAnalysisService aiAnalysisService;
     /** 时间线复盘：转折点计算（工单 #35） */
     private final ReplayService replayService;
+    /** 对局诊断：闲置 stats 字段的结果归因（工单 #36） */
+    private final DiagnosisService diagnosisService;
 
     /** 接收对局同步推送，幂等写入 */
     @PostMapping
@@ -165,5 +168,16 @@ public class MatchController {
     @GetMapping("/{gameId}/replay")
     public ApiResult<ReplayResponse> getReplay(@PathVariable Long gameId) {
         return ApiResult.success(replayService.replay(gameId));
+    }
+
+    /**
+     * 对局诊断（工单 #36 / spec #30）：用闲置 stats 字段（视野/控制/伤害转化/
+     * 资源伤害/经济占比）回答"这局短板在哪"，败局末位维度高亮。
+     * 纯数据不依赖 AI；与 OP Score 评分体系隔离
+     */
+    @GetMapping("/{gameId}/diagnosis")
+    public ApiResult<com.leagueakari.dto.diagnosis.DiagnosisResponse> getDiagnosis(
+            @PathVariable Long gameId) {
+        return ApiResult.success(diagnosisService.diagnose(gameId));
     }
 }
