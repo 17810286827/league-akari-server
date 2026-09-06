@@ -20,16 +20,16 @@ import static org.mockito.Mockito.when;
  */
 class WeeklyReportServiceTest extends TeamStatsTestBase {
 
-    /** 用例：不传日期时默认统计"上一周"（今天回退 7 天所在周，按固定时钟） */
+    /** 用例：不传日期时默认统计"本周"（今天所在自然周，ADR 0010；按固定时钟） */
     @Test
-    void weeklyReport_defaultsToLastWeek() {
+    void weeklyReport_defaultsToCurrentWeek() {
         WeeklyReportService svc = weeklyService();
         when(matchMapper.selectList(any())).thenReturn(List.of());
 
         WeeklyReportResponse report = svc.weeklyReport(null);
 
-        // 固定时钟为 09-06（周日，当前周 = 08-31 ~ 09-06），上一周 = 08-24 ~ 08-30
-        assertThat(report.getWeekLabel()).isEqualTo("2026-08-24 ~ 2026-08-30");
+        // 固定时钟为 09-06（周日），本周 = 08-31 ~ 09-06（原为上一周，ADR 0010 改为本周）
+        assertThat(report.getWeekLabel()).isEqualTo("2026-08-31 ~ 2026-09-06");
         assertThat(report.getOverview().getGameCount()).isZero();
     }
 

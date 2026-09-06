@@ -167,7 +167,7 @@ class WeeklyAiCommentServiceTest {
         mockAiStream("stop");
         SseEmitter emitter = mockEmitter();
 
-        service.streamComment(WeekFixture.AUG_26, emitter);
+        service.streamComment(WeekFixture.AUG_26, false, emitter);
 
         assertThat(eventTypes()).containsExactly(
                 "start", "reasoning", "chunk", "reasoning", "chunk", "done");
@@ -188,7 +188,7 @@ class WeeklyAiCommentServiceTest {
         mockAiStream("stop");
         SseEmitter emitter = mockEmitter();
 
-        service.streamComment(WeekFixture.AUG_26, emitter);
+        service.streamComment(WeekFixture.AUG_26, false, emitter);
 
         ArgumentCaptor<String> userContent = ArgumentCaptor.forClass(String.class);
         verify(aiClient).callStream(any(), anyString(), userContent.capture(), any(), anyString());
@@ -208,7 +208,7 @@ class WeeklyAiCommentServiceTest {
         when(weeklyReportService.weeklyReport(any(LocalDate.class))).thenReturn(report);
         mockAiStream("stop");
 
-        service.streamComment(WeekFixture.AUG_26, mockEmitter());
+        service.streamComment(WeekFixture.AUG_26, false, mockEmitter());
 
         ArgumentCaptor<String> userContent = ArgumentCaptor.forClass(String.class);
         verify(aiClient).callStream(any(), anyString(), userContent.capture(), any(), anyString());
@@ -223,7 +223,7 @@ class WeeklyAiCommentServiceTest {
         mockAiStream("stop");
         SseEmitter emitter = mockEmitter();
 
-        service.streamComment(WeekFixture.AUG_26, emitter);
+        service.streamComment(WeekFixture.AUG_26, false, emitter);
 
         ArgumentCaptor<AiCompletionRequest> req = ArgumentCaptor.forClass(AiCompletionRequest.class);
         verify(aiClient).callStream(req.capture(), anyString(), anyString(), any(), anyString());
@@ -235,10 +235,10 @@ class WeeklyAiCommentServiceTest {
     void streamComment_cacheHitPushesFullTextWithoutCallingAi() throws Exception {
         stubReport("2026-08-24 ~ 2026-08-30");
         mockAiStream("stop");
-        service.streamComment(WeekFixture.AUG_26, mockEmitter());
+        service.streamComment(WeekFixture.AUG_26, false, mockEmitter());
         events.clear();
 
-        service.streamComment(WeekFixture.AUG_26, mockEmitter());
+        service.streamComment(WeekFixture.AUG_26, false, mockEmitter());
 
         assertThat(eventTypes()).containsExactly("start", "chunk", "done");
         assertThat(events.get(0)).containsEntry("fromCache", true);
@@ -256,8 +256,8 @@ class WeeklyAiCommentServiceTest {
                 .thenReturn(report("2026-08-31 ~ 2026-09-06"));
         mockAiStream("stop");
 
-        service.streamComment(WeekFixture.AUG_26, mockEmitter());
-        service.streamComment(WeekFixture.AUG_26, mockEmitter());
+        service.streamComment(WeekFixture.AUG_26, false, mockEmitter());
+        service.streamComment(WeekFixture.AUG_26, false, mockEmitter());
 
         verify(aiClient, times(2)).callStream(any(), anyString(), anyString(), any(), anyString());
     }
@@ -270,7 +270,7 @@ class WeeklyAiCommentServiceTest {
                 .thenThrow(new BizException(ErrorCode.AI_API_ERROR, "AI 接口调用失败（HTTP 502）"));
         SseEmitter emitter = mockEmitter();
 
-        service.streamComment(WeekFixture.AUG_26, emitter);
+        service.streamComment(WeekFixture.AUG_26, false, emitter);
 
         assertThat(eventTypes()).containsExactly("start", "error");
         assertThat(events.get(1).get("message")).asString().contains("502");
@@ -298,7 +298,7 @@ class WeeklyAiCommentServiceTest {
             return "stop";
         }).when(aiClient).callStream(any(), anyString(), anyString(), any(), anyString());
 
-        service.streamComment(WeekFixture.AUG_26, emitter);
+        service.streamComment(WeekFixture.AUG_26, false, emitter);
 
         assertThat(eventTypes()).containsExactly("start");
         verify(emitter, never()).complete();
@@ -322,7 +322,7 @@ class WeeklyAiCommentServiceTest {
                     return "stop";
                 });
 
-        service.streamComment(WeekFixture.AUG_26, emitter);
+        service.streamComment(WeekFixture.AUG_26, false, emitter);
 
         assertThat(eventTypes()).containsExactly(
                 "start", "reasoning", "reasoning-reset", "chunk", "done");
@@ -342,7 +342,7 @@ class WeeklyAiCommentServiceTest {
                     throw new BizException(ErrorCode.AI_API_ERROR, "AI 接口调用失败");
                 });
 
-        service.streamComment(WeekFixture.AUG_26, emitter);
+        service.streamComment(WeekFixture.AUG_26, false, emitter);
 
         assertThat(eventTypes()).containsExactly("start", "reasoning", "chunk", "error");
         verify(aiClient, times(1)).callStream(any(), anyString(), anyString(), any(), anyString());
@@ -356,7 +356,7 @@ class WeeklyAiCommentServiceTest {
                 .thenReturn(null);   // 流自然结束但正文为空（思维链耗尽预算形态）
         SseEmitter emitter = mockEmitter();
 
-        service.streamComment(WeekFixture.AUG_26, emitter);
+        service.streamComment(WeekFixture.AUG_26, false, emitter);
 
         // retryCount=1：共尝试 2 次，均无正文 → error
         verify(aiClient, times(2)).callStream(any(), anyString(), anyString(), any(), anyString());
@@ -369,7 +369,7 @@ class WeeklyAiCommentServiceTest {
                     handler.onContent("恢复后的正文");
                     return "stop";
                 });
-        service.streamComment(WeekFixture.AUG_26, mockEmitter());
+        service.streamComment(WeekFixture.AUG_26, false, mockEmitter());
         assertThat(eventTypes()).containsExactly("start", "chunk", "done");
     }
 
@@ -380,7 +380,7 @@ class WeeklyAiCommentServiceTest {
         mockAiStream("length");
         SseEmitter emitter = mockEmitter();
 
-        service.streamComment(WeekFixture.AUG_26, emitter);
+        service.streamComment(WeekFixture.AUG_26, false, emitter);
 
         assertThat(eventTypes()).endsWith("done");
         assertThat(events.getLast()).containsEntry("truncated", true);
@@ -414,7 +414,7 @@ class WeeklyAiCommentServiceTest {
         mockAiStream("stop");
 
         // 第一次：生成 + 落库（周结束 08-31 00:00 < 当前时钟 09-06 → 历史周）
-        service.streamComment(WeekFixture.AUG_26, mockEmitter());
+        service.streamComment(WeekFixture.AUG_26, false, mockEmitter());
 
         org.mockito.ArgumentCaptor<com.leagueakari.entity.WeeklyReportAi> captor =
                 org.mockito.ArgumentCaptor.forClass(com.leagueakari.entity.WeeklyReportAi.class);
@@ -423,7 +423,7 @@ class WeeklyAiCommentServiceTest {
         assertThat(captor.getValue().getComment()).contains("本周赌书封神");
         // 落库后内存缓存同时写入：第二次直接秒回
         events.clear();
-        service.streamComment(WeekFixture.AUG_26, mockEmitter());
+        service.streamComment(WeekFixture.AUG_26, false, mockEmitter());
         assertThat(eventTypes()).containsExactly("start", "chunk", "done");
         assertThat(events.get(0)).containsEntry("fromCache", true);
         verify(aiClient, times(1)).callStream(any(), anyString(), anyString(), any(), anyString());
@@ -437,7 +437,7 @@ class WeeklyAiCommentServiceTest {
         when(weeklyReportAiMapper.selectOne(any())).thenReturn(persisted("2026-08-24 ~ 2026-08-30",
                 "库内历史锐评"));
 
-        service.streamComment(WeekFixture.AUG_26, mockEmitter());
+        service.streamComment(WeekFixture.AUG_26, false, mockEmitter());
 
         assertThat(eventTypes()).containsExactly("start", "chunk", "done");
         assertThat(events.get(0)).containsEntry("fromCache", true);
@@ -454,13 +454,13 @@ class WeeklyAiCommentServiceTest {
                 .thenReturn(report("2026-08-31 ~ 2026-09-06"));
         mockAiStream("stop");
 
-        service.streamComment(java.time.LocalDate.of(2026, 9, 2), mockEmitter());
+        service.streamComment(java.time.LocalDate.of(2026, 9, 2), false, mockEmitter());
 
         // 当前周：生成但不落库（内容随新对局变化）
         verify(weeklyReportAiMapper, never()).insert(any(com.leagueakari.entity.WeeklyReportAi.class));
         // 仍走内存缓存（第二次秒回）
         events.clear();
-        service.streamComment(java.time.LocalDate.of(2026, 9, 2), mockEmitter());
+        service.streamComment(java.time.LocalDate.of(2026, 9, 2), false, mockEmitter());
         assertThat(eventTypes()).containsExactly("start", "chunk", "done");
     }
 
@@ -474,10 +474,139 @@ class WeeklyAiCommentServiceTest {
         when(weeklyReportAiMapper.insert(any(com.leagueakari.entity.WeeklyReportAi.class)))
                 .thenThrow(new org.springframework.dao.DuplicateKeyException("uk_week_label"));
 
-        service.streamComment(WeekFixture.AUG_26, mockEmitter());
+        service.streamComment(WeekFixture.AUG_26, false, mockEmitter());
 
         // 主体流程不受影响（正常 done 收尾，丢弃败者的落库）
         assertThat(eventTypes()).endsWith("done");
+    }
+
+    /** 用例（ADR 0010）：当前周 force=true 跳过缓存重新生成——缓存已有内容仍调 AI，全文重新流式推送 */
+    @Test
+    void streamComment_forceOnCurrentWeekBypassesCache() throws Exception {
+        // 当前周 = 08-31 ~ 09-06（固定时钟 09-06）
+        when(weeklyReportService.weeklyReport(any(LocalDate.class)))
+                .thenReturn(report("2026-08-31 ~ 2026-09-06"));
+        mockAiStream("stop");
+        // 第一次：正常生成（写入缓存）
+        service.streamComment(LocalDate.of(2026, 9, 2), false, mockEmitter());
+        events.clear();
+
+        // 第二次：force=true 强制刷新——绕过缓存重新调 AI（fromCache=false）
+        service.streamComment(LocalDate.of(2026, 9, 2), true, mockEmitter());
+
+        assertThat(eventTypes()).containsExactly(
+                "start", "reasoning", "chunk", "reasoning", "chunk", "done");
+        assertThat(events.get(0)).containsEntry("fromCache", false);
+        verify(aiClient, times(2)).callStream(any(), anyString(), anyString(), any(), anyString());
+    }
+
+    /** 用例（ADR 0010）：60 秒冷却期内再次 force——不调 AI，直接返回缓存内容 */
+    @Test
+    void streamComment_forceWithinCooldownReturnsCached() throws Exception {
+        when(weeklyReportService.weeklyReport(any(LocalDate.class)))
+                .thenReturn(report("2026-08-31 ~ 2026-09-06"));
+        mockAiStream("stop");
+        // 第一次 force：真实生成（受理时即占位冷却）
+        service.streamComment(LocalDate.of(2026, 9, 2), true, mockEmitter());
+        events.clear();
+
+        // 第二次 force（同一时刻，冷却期内）：缓存已有内容 → 秒回缓存，AI 不再调用
+        service.streamComment(LocalDate.of(2026, 9, 2), true, mockEmitter());
+
+        assertThat(eventTypes()).containsExactly("start", "chunk", "done");
+        assertThat(events.get(0)).containsEntry("fromCache", true);
+        assertThat(events.get(1)).containsEntry("content", "本周赌书封神，鬼子战犯实锤");
+        verify(aiClient, times(1)).callStream(any(), anyString(), anyString(), any(), anyString());
+    }
+
+    /** 用例（ADR 0010）：冷却过期后再次 force——重新生成（AI 第二次调用） */
+    @Test
+    void streamComment_forceAfterCooldownRegenerates() throws Exception {
+        MutableClock mutableClock = new MutableClock();
+        WeeklyAiCommentService svc = new WeeklyAiCommentService(
+                aiProps("test-key"), aiClient, objectMapper,
+                new com.leagueakari.ai.PromptLoader(), weeklyReportService,
+                weeklyReportAiMapper, mutableClock, Runnable::run);
+        when(weeklyReportService.weeklyReport(any(LocalDate.class)))
+                .thenReturn(report("2026-08-31 ~ 2026-09-06"));
+        mockAiStream("stop");
+
+        // 第一次 force：生成
+        svc.streamComment(LocalDate.of(2026, 9, 2), true, mockEmitter());
+        // 时钟推进 61 秒：冷却已过
+        mutableClock.advanceSeconds(61);
+        svc.streamComment(LocalDate.of(2026, 9, 2), true, mockEmitter());
+
+        verify(aiClient, times(2)).callStream(any(), anyString(), anyString(), any(), anyString());
+    }
+
+    /** 用例（ADR 0010）：历史周 force=true 被忽略——照常走持久化命中，不调 AI（不可变原则优先） */
+    @Test
+    void streamComment_forceOnHistoricalWeekIgnored() throws Exception {
+        stubReport("2026-08-24 ~ 2026-08-30");
+        // 库内已有该周锐评（历史周 = 08-24 ~ 08-30，时钟 09-06 已过周结束）
+        when(weeklyReportAiMapper.selectOne(any())).thenReturn(persisted("2026-08-24 ~ 2026-08-30",
+                "库内历史锐评"));
+
+        service.streamComment(WeekFixture.AUG_26, true, mockEmitter());
+
+        // force 对历史周无效：直接返回存档文本，AI 零调用
+        assertThat(eventTypes()).containsExactly("start", "chunk", "done");
+        assertThat(events.get(1)).containsEntry("content", "库内历史锐评");
+        verify(aiClient, never()).callStream(any(), anyString(), anyString(), any(), anyString());
+    }
+
+    /** 用例（ADR 0010）：冷却在请求受理时占位——生成进行中并发 force 被拦截，不重复调 AI */
+    @Test
+    void streamComment_forceDuringOngoingGenerationBlockedByCooldown() throws Exception {
+        when(weeklyReportService.weeklyReport(any(LocalDate.class)))
+                .thenReturn(report("2026-08-31 ~ 2026-09-06"));
+        // 第一条 force 的 AI 调用挂起（模拟流式生成进行中）；第二条调用立即返回正文。
+        // Runnable::run 是同步执行器：第一条流必须跑在独立线程（否则测试线程自死锁），
+        // 第二条 force 由测试线程同步执行（被冷却拦截时根本不会到达 AI 调用）
+        java.util.concurrent.CompletableFuture<String> release = new java.util.concurrent.CompletableFuture<>();
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        when(aiClient.callStream(any(), anyString(), anyString(), any(), anyString()))
+                .thenAnswer(inv -> {
+                    if (calls.incrementAndGet() == 1) {
+                        // 第一条流：先推正文再挂起（避免释放后被"零内容失败"逻辑判定重试）
+                        AiStreamHandler handler = inv.getArgument(3);
+                        handler.onContent("第一份锐评正文");
+                        return release.get();
+                    }
+                    AiStreamHandler handler = inv.getArgument(3);
+                    handler.onContent("并发被拦截");
+                    return "stop";
+                });
+        SseEmitter first = mockEmitter();
+        Thread firstStream = new Thread(() ->
+                service.streamComment(LocalDate.of(2026, 9, 2), true, first));
+        firstStream.start();
+        // 等第一条流进入 AI 调用（此刻冷却应已占位——修复目标）
+        awaitAiCalled(1);
+
+        // 同一时刻并发 force：冷却已占位 → 不再调 AI，直接返回缓存路径
+        service.streamComment(LocalDate.of(2026, 9, 2), true, mockEmitter());
+
+        // 释放第一条流，等待其正常收尾后核账：AI 全程只被调用 1 次
+        release.complete("stop");
+        firstStream.join(5000);
+        org.mockito.Mockito.verify(aiClient, times(1))
+                .callStream(any(), anyString(), anyString(), any(), anyString());
+    }
+
+    /** 等待 AI 被调用指定次数（轮询 mock 调用计数，生成线程异步推进） */
+    private void awaitAiCalled(int wanted) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 5000;
+        while (System.currentTimeMillis() < deadline) {
+            long called = org.mockito.Mockito.mockingDetails(aiClient).getInvocations().stream()
+                    .filter(i -> "callStream".equals(i.getMethod().getName())).count();
+            if (called >= wanted) {
+                return;
+            }
+            Thread.sleep(10);
+        }
+        throw new AssertionError("AI not called " + wanted + " time(s) within 5s");
     }
 
     /** 构造已落库的锐评记录 */
@@ -492,5 +621,36 @@ class WeeklyAiCommentServiceTest {
     /** 测试夹具：周内日期（周三 2026-08-26，属 08-24 ~ 08-30 周） */
     private static final class WeekFixture {
         static final LocalDate AUG_26 = LocalDate.of(2026, 8, 26);
+    }
+
+    /**
+     * 可推进的固定时钟（冷却过期测试用）：基础时刻 2026-09-06 10:00（Asia/Shanghai），
+     * advanceSeconds 原子推进，冷却判定读 millis()
+     */
+    private static final class MutableClock extends java.time.Clock {
+        private final java.time.Instant base = java.time.ZonedDateTime.of(
+                2026, 9, 6, 10, 0, 0, 0, java.time.ZoneId.of("Asia/Shanghai")).toInstant();
+        private final java.time.ZoneId zone = java.time.ZoneId.of("Asia/Shanghai");
+        private volatile long offsetMillis = 0;
+
+        /** 时钟前进指定秒数（模拟冷却时间流逝） */
+        void advanceSeconds(long seconds) {
+            offsetMillis += seconds * 1000;
+        }
+
+        @Override
+        public java.time.ZoneId getZone() {
+            return zone;
+        }
+
+        @Override
+        public java.time.Clock withZone(java.time.ZoneId zone) {
+            throw new UnsupportedOperationException("test fixture");
+        }
+
+        @Override
+        public java.time.Instant instant() {
+            return base.plusMillis(offsetMillis);
+        }
     }
 }

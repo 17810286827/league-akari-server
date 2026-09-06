@@ -46,6 +46,13 @@ public class WeeklyAiCommentService {
     /** 缓存有效期：10 分钟（毫秒）。周报数据一周一变，10 分钟足够覆盖页内反复刷新 */
     private static final long CACHE_TTL_MS = 10 * 60 * 1000L;
 
+    /**
+     * 强制刷新冷却：60 秒（ADR 0010）。每次 force 都真实调用一次 AI（token 成本），
+     * 冷却兜底防止绕过前端无限刷；冷却计时与 10 分钟缓存 TTL 相互独立。
+     * 常量而非配置项——避免过度设计，需要调整时改代码即可
+     */
+    private static final long FORCE_COOLDOWN_MS = 60 * 1000L;
+
     /** 缓存条目：锐评文本 + 写入时间戳（Lombok @Value 不可变对象） */
     @Value
     private static class CacheEntry {
@@ -86,6 +93,9 @@ public class WeeklyAiCommentService {
 
     /** 缓存：周标签 → 锐评条目（成功才缓存，失败下次重试） */
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
+
+    /** 强制刷新冷却计时：周标签 → 上次 force 生成时间（ADR 0010，成本兜底） */
+    private final Map<String, Long> forceCooldown = new ConcurrentHashMap<>();
 
     /** 构造注入：AI 配置统一取自 AiProperties（yaml 唯一真值，见 docs/adr/0004） */
     public WeeklyAiCommentService(
@@ -134,13 +144,16 @@ public class WeeklyAiCommentService {
      * 命中缓存时直接推送缓存全文；未命中时流式调用 AI，逐块推送增量片段。
      * 事件契约与单局 AI 分析一致（见类 javadoc）
      *
-     * @param anyDayOfWeek 该周内任意一天；null 表示上一周（与周报统计接口同语义）
+     * @param anyDayOfWeek 该周内任意一天；null 表示本周（ADR 0010）
+     * @param force        强制刷新（跳过缓存重新生成）：仅当前周（进行中）生效；
+     *                     历史周被忽略（落库不可变，见 ADR 0007）；同周两次 force
+     *                     间隔不足 60 秒时处于冷却期，直接返回缓存/冷却提示不调 AI
      * @param emitter      前端 SSE 连接（由 controller 创建并返回）
      */
-    public void streamComment(LocalDate anyDayOfWeek, SseEmitter emitter) {
+    public void streamComment(LocalDate anyDayOfWeek, boolean force, SseEmitter emitter) {
         // 提交到专用线程池：SseEmitter 由异步线程推送，controller 立即返回响应头
-        log.info("Weekly AI comment stream submitted to executor: date={}", anyDayOfWeek);
-        executor.execute(() -> doStreamComment(anyDayOfWeek, emitter));
+        log.info("Weekly AI comment stream submitted to executor: date={}, force={}", anyDayOfWeek, force);
+        executor.execute(() -> doStreamComment(anyDayOfWeek, force, emitter));
     }
 
     /**
@@ -148,19 +161,62 @@ public class WeeklyAiCommentService {
      * 周报聚合 → 缓存判定 →（未命中）组装摘要流式调 AI 逐块推送 → 写缓存收尾。
      * 每个关键节点打印耗时日志，便于定位"无响应"时卡在哪个环节
      */
-    private void doStreamComment(LocalDate anyDayOfWeek, SseEmitter emitter) {
+    private void doStreamComment(LocalDate anyDayOfWeek, boolean force, SseEmitter emitter) {
         long startTime = System.currentTimeMillis();
         try {
             // 周报聚合：口径唯一出处（周边界/车队局判定/七榜单/名场面），本服务不二次实现；
             // 失败（roster 未配置 1101 等）由外层统一 error 收尾——锐评区提示，统计部分不受影响
             WeeklyReportResponse report = weeklyReportService.weeklyReport(anyDayOfWeek);
             String weekLabel = report.getWeekLabel();
-            log.info("Weekly AI comment report loaded: week={}, elapsed={}ms",
-                    weekLabel, System.currentTimeMillis() - startTime);
+            log.info("Weekly AI comment report loaded: week={}, force={}, elapsed={}ms",
+                    weekLabel, force, System.currentTimeMillis() - startTime);
 
-            // 缓存命中：10 分钟内重复请求直接推送缓存全文（标记 fromCache，前端提示）
+            // 历史周判定：周已结束（ADR 0007 落库不可变）——force 对历史周被忽略，
+            // 照常走缓存/持久化命中路径返回存档文本（宽容语义：不报错，日志留痕）
+            boolean isCurrentWeek = report.getWeekEndMs() == null
+                    || clock.millis() < report.getWeekEndMs();
+            if (force && !isCurrentWeek) {
+                log.info("Weekly AI comment force ignored on historical week: week={}", weekLabel);
+                force = false;
+            }
+
+            // force 冷却判定（ADR 0010，仅当前周走到这里）：受理时即原子占位——
+            // 同周两次强制刷新间隔不足 60 秒 → 不调 AI（生成进行中的并发 force 也被拦住，
+            // 防止绕过前端重复消耗 token）；compute 保证判定与占位原子完成
+            if (force) {
+                long now = clock.millis();
+                boolean[] blocked = {false};
+                forceCooldown.compute(weekLabel, (week, lastForceMs) -> {
+                    if (lastForceMs != null && now - lastForceMs < FORCE_COOLDOWN_MS) {
+                        blocked[0] = true;
+                        return lastForceMs;
+                    }
+                    return now;
+                });
+                if (blocked[0]) {
+                    log.info("Weekly AI comment force blocked by cooldown: week={}", weekLabel);
+                    // 有缓存：直接返回缓存内容（页面正常展示）
+                    CacheEntry blockedEntry = cache.get(weekLabel);
+                    if (blockedEntry != null) {
+                        SseEventSender.send(emitter, objectMapper, "start", Map.of("fromCache", true));
+                        SseEventSender.send(emitter, objectMapper, "chunk",
+                                Map.of("content", blockedEntry.getComment()));
+                        SseEventSender.send(emitter, objectMapper, "done", Map.of());
+                    } else {
+                        // 无缓存（前一次生成仍在进行中）：不调 AI，告知冷却中
+                        SseEventSender.send(emitter, objectMapper, "error",
+                                Map.of("message", "锐评刷新冷却中（60 秒一次），请稍后再试"));
+                    }
+                    emitter.complete();
+                    return;
+                }
+            }
+
+            // 缓存命中：10 分钟内重复请求直接推送缓存全文（标记 fromCache，前端提示）；
+            // force=true（有效且未冷却）跳过本判定，走重新生成
             CacheEntry cached = cache.get(weekLabel);
-            if (cached != null && System.currentTimeMillis() - cached.getTimestamp() < CACHE_TTL_MS) {
+            if (!force && cached != null
+                    && System.currentTimeMillis() - cached.getTimestamp() < CACHE_TTL_MS) {
                 log.info("Weekly AI comment cache hit: week={}", weekLabel);
                 SseEventSender.send(emitter, objectMapper, "start", Map.of("fromCache", true));
                 SseEventSender.send(emitter, objectMapper, "chunk", Map.of("content", cached.getComment()));
@@ -265,7 +321,8 @@ public class WeeklyAiCommentService {
                     log.info("Weekly AI comment concurrent insert discarded: week={}", weekLabel);
                 }
             }
-            // 完成：写入缓存（成功才缓存，失败不缓存下次重试）并推送 done
+            // 完成：写入缓存（成功才缓存，失败不缓存下次重试）并推送 done。
+            // 冷却已在请求受理时占位（force 判定处），此处无需再记
             cache.put(weekLabel, new CacheEntry(full.toString(), System.currentTimeMillis()));
             SseEventSender.send(emitter, objectMapper, "done", truncated ? Map.of("truncated", true) : Map.of());
             emitter.complete();

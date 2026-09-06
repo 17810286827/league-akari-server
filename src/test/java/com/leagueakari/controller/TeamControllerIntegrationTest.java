@@ -29,6 +29,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
 /**
  * TeamController 集成测试：真实写入虚拟机 MySQL，覆盖周报/榜单/成员/成员卡的
  * HTTP 契约与时间范围 SQL 过滤（真实 WHERE 语义）。
@@ -251,6 +253,26 @@ class TeamControllerIntegrationTest {
         mockMvc.perform(get("/api/team/weekly/ai-comment"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(4101));
+    }
+
+    /**
+     * 用例（ADR 0010）：force 参数正确透传到 service 层——
+     * 不传默认 false，显式传 true 时 service 收到 true
+     * （流式事件契约与 force 业务语义由 WeeklyAiCommentServiceTest 覆盖）
+     */
+    @Test
+    void weeklyAiComment_forceParamPassedThrough() throws Exception {
+        // 不传 force：默认 false
+        mockMvc.perform(get("/api/team/weekly/ai-comment"));
+        org.mockito.Mockito.verify(aiCommentService)
+                .streamComment(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(false),
+                        org.mockito.ArgumentMatchers.any(SseEmitter.class));
+
+        // force=true：透传到 service
+        mockMvc.perform(get("/api/team/weekly/ai-comment").param("force", "true"));
+        org.mockito.Mockito.verify(aiCommentService)
+                .streamComment(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(true),
+                        org.mockito.ArgumentMatchers.any(SseEmitter.class));
     }
 
     /**

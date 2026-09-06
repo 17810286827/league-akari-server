@@ -87,37 +87,40 @@ public class TeamController {
      * 事件契约与单局 AI 分析一致（start/chunk/reasoning/reasoning-reset/done/error，
      * 协议见 WeeklyAiCommentService javadoc）；校验失败（AI Key 未配置 4101）由全局
      * 异常处理器在 HTTP 响应阶段返回统一信封。
+     * force=true 为强制刷新（ADR 0010）：仅当前周生效，跳过短缓存重新生成；
+     * 历史周被忽略（不可变），同周 60 秒冷却。业务语义见 service 层
      * SseEmitter 生命周期回调打日志：连接完成/超时/异常是"无响应"排查的关键边界
      */
     @GetMapping(value = "/weekly/ai-comment", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter weeklyAiComment(@RequestParam(required = false)
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(required = false, defaultValue = "false") boolean force) {
         long startTime = System.currentTimeMillis();
-        log.info("Weekly AI comment requested: date={}", date);
+        log.info("Weekly AI comment requested: date={}, force={}", date, force);
         // 前置校验：API Key 未配置（4101）时在此抛出，避免流已建立再中断
         weeklyAiCommentService.validateAndConfigured();
         // SseEmitter 超时 5 分钟：与单局分析一致（流式生成整体耗时较长）
         SseEmitter emitter = new SseEmitter(300_000L);
         // 连接生命周期日志：正常结束/超时/异常各打一条，用于确认流是否被服务器侧正常收尾
-        emitter.onCompletion(() -> log.info("Weekly AI comment SSE connection completed: date={}, elapsed={}ms",
-                date, System.currentTimeMillis() - startTime));
-        emitter.onTimeout(() -> log.warn("Weekly AI comment SSE connection timed out: date={}, elapsed={}ms",
-                date, System.currentTimeMillis() - startTime));
+        emitter.onCompletion(() -> log.info("Weekly AI comment SSE connection completed: date={}, force={}, elapsed={}ms",
+                date, force, System.currentTimeMillis() - startTime));
+        emitter.onTimeout(() -> log.warn("Weekly AI comment SSE connection timed out: date={}, force={}, elapsed={}ms",
+                date, force, System.currentTimeMillis() - startTime));
         emitter.onError(e -> {
             // 客户端断开（关页面/刷新/网络断开）：预期现象，INFO 即可——service 层已停止推送
             if (ClientDisconnectDetector.isClientDisconnect(e)) {
-                log.info("Weekly AI comment SSE client disconnected: date={}, elapsed={}ms",
-                        date, System.currentTimeMillis() - startTime);
+                log.info("Weekly AI comment SSE client disconnected: date={}, force={}, elapsed={}ms",
+                        date, force, System.currentTimeMillis() - startTime);
                 return;
             }
             // 其余连接异常（服务端问题）：ERROR + 堆栈，保留排查线索
-            log.error("Weekly AI comment SSE connection error: date={}, elapsed={}ms",
-                    date, System.currentTimeMillis() - startTime, e);
+            log.error("Weekly AI comment SSE connection error: date={}, force={}, elapsed={}ms",
+                    date, force, System.currentTimeMillis() - startTime, e);
         });
         // 流式锐评在线程池异步执行并推送事件，controller 立即返回响应头
-        weeklyAiCommentService.streamComment(date, emitter);
-        log.info("Weekly AI comment stream dispatched: date={}, elapsed={}ms",
-                date, System.currentTimeMillis() - startTime);
+        weeklyAiCommentService.streamComment(date, force, emitter);
+        log.info("Weekly AI comment stream dispatched: date={}, force={}, elapsed={}ms",
+                date, force, System.currentTimeMillis() - startTime);
         return emitter;
     }
 

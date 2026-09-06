@@ -42,17 +42,17 @@ public class WeeklyReportService {
     private final Clock clock;
 
     /**
-     * 车队周报：默认统计"上一个自然周"（今天回退 7 天所在周），
+     * 车队周报：默认统计"本周"（今天所在自然周，ADR 0010），
      * 传入任意日期则统计该日期所在周。总览/六个榜单/名场面（不含 AI 锐评，
      * 锐评经独立 SSE 端点流式生成，见 WeeklyAiCommentService）
      *
-     * @param anyDayOfWeek 该周内任意一天；null 表示上一周
+     * @param anyDayOfWeek 该周内任意一天；null 表示本周
      * @return 周报统计（aiComment 恒为 null，由流式锐评端点单独提供）
      * @throws BizException 车队名单未配置（1101），任一成员解析失败（1102）
      */
     public WeeklyReportResponse weeklyReport(LocalDate anyDayOfWeek) {
-        // 默认周：今天回退 7 天所在周（无论今天是周几，都落在上一个自然周）
-        LocalDate targetDay = anyDayOfWeek != null ? anyDayOfWeek : LocalDate.now(clock).minusDays(7);
+        // 默认周：今天所在周（成员更关心"本周打到现在的表现"，ADR 0010）
+        LocalDate targetDay = anyDayOfWeek != null ? anyDayOfWeek : LocalDate.now(clock);
         FleetGameLoader.WeekRange range = FleetGameLoader.weekRange(targetDay, FleetGameLoader.ZONE);
         log.info("Building weekly report: week={} ~ {}", range.getMonday(), range.getMonday().plusDays(6));
 
