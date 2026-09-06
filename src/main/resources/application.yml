@@ -97,7 +97,7 @@ ai:
   #   - 现切回 deepseek-v4-flash（新网关），思考恢复可用，重新开启。
   # 注意：局后锐评同读本键，开启意味着播报也带思考（延迟增加）；若播报延迟不可接受，
   # 参考 post-game-model 键的拆分先例，后续可引入独立 thinking 键
-  thinking: false
+  thinking: true
   # 调用失败后的重试次数（不含首次，0 = 不重试）：
   # 非流式场景对"空正文"（推理模型把预算耗在思维链、finish_reason=length）自动重试；
   # 流式场景（单局分析）在尚未向客户端推送任何增量前失败时按此次数重试。
@@ -126,7 +126,7 @@ ai:
   thinking-budget: 2048
   # 周锐评输出上限：推理模型偶发把预算耗在思维链导致正文为空（finish_reason=length），
   # 4096 配合服务端空正文自动重试（最多 2 次调用）基本消除该问题
-  weekly-max-tokens: 4096
+  weekly-max-tokens: 16384
   # 系统提示词文件（classpath 下，可直接编辑）
   prompt-file: ai/system-prompt.md
   # 时间线复盘叙述（工单 #40）：团队教练视角，非"战犯出列"的毒舌个人点评
@@ -135,7 +135,7 @@ ai:
   weekly-prompt-file: ai/weekly-prompt.md
   # 局后锐评提示词与输出上限（车队群视角、正文短，随局后播报发送）
   post-game-prompt-file: ai/post-game-prompt.md
-  post-game-max-tokens: 2048
+  post-game-max-tokens: 16384
   # 局后锐评独立模型：播报对延迟敏感，保留独立键以便与 ai.model 分场景（拆分先例见上）。
   # 2026-09-05 与 ai.model 一同切至 deepseek-v4-flash：新网关（pianyitoken）无
   # gemini-2.5-flash 通道，且 deepseek-v4-flash 的 thinking=false 压制有效（实测
