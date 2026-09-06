@@ -1,5 +1,6 @@
 package com.leagueakari.team;
 
+import com.leagueakari.dto.team.DuoExtendedResponse;
 import com.leagueakari.dto.team.DuoMatrixResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -97,5 +98,135 @@ public class DuoStatsService {
                 .members(roster.stream().map(TeamRosterService.RosterMember::getRiotId).toList())
                 .matrix(matrix)
                 .build();
+    }
+
+    /**
+     * 时段胜率（工单 #41）：按 game_creation 的本地时段（Asia/Shanghai）分桶——
+     * morning 06-12 / afternoon 12-18 / evening 18-24 / lateNight 00-03 / weeHours 03-06。
+     * 只统计车队对局，胜负按成员人次计；小样本口径同矩阵（前端按局数标注）
+     */
+    public DuoExtendedResponse timeSlots(String gameMode, Long startMs, Long endMs) {
+        List<TeamRosterService.RosterMember> roster = rosterService.requireMembers();
+        List<GameData> fleetGames = gameLoader.loadGames(startMs, endMs, gameMode, false).stream()
+                .filter(g -> gameLoader.isFleet(g, roster)).toList();
+        // 时段桶固定五档（语义顺序）
+        String[] keys = {"morning", "afternoon", "evening", "lateNight", "weeHours"};
+        String[] labels = {"上午开黑", "下午开黑", "晚间开黑", "深夜爆肝", "凌晨修仙"};
+        int[] games = new int[keys.length];
+        int[] wins = new int[keys.length];
+        for (GameData game : fleetGames) {
+            int slotIndex = slotIndexOf(game.getMatch().getGameCreation());
+            games[slotIndex]++;
+            // 人次：本局出战的每个成员各计一次
+            for (TeamRosterService.RosterMember member : roster) {
+                var participant = gameLoader.memberParticipant(game, member);
+                if (participant != null) {
+                    if (Boolean.TRUE.equals(participant.getWin())) {
+                        wins[slotIndex]++;
+                    }
+                }
+            }
+        }
+        // 人次累计（每局出战的成员各计一次；losses = 人次 - wins）
+        int[] played = new int[keys.length];
+        for (GameData game : fleetGames) {
+            int slotIndex = slotIndexOf(game.getMatch().getGameCreation());
+            for (TeamRosterService.RosterMember member : roster) {
+                if (gameLoader.memberParticipant(game, member) != null) {
+                    played[slotIndex]++;
+                }
+            }
+        }
+        List<DuoExtendedResponse.TimeSlotStats> out = new ArrayList<>();
+        for (int i = 0; i < keys.length; i++) {
+            int w = wins[i];
+            int l = played[i] - w;
+            out.add(DuoExtendedResponse.TimeSlotStats.builder()
+                    .key(keys[i]).label(labels[i])
+                    .games(games[i]).wins(w).losses(l)
+                    .winRate(played[i] > 0 ? (double) w / played[i] : null)
+                    .build());
+        }
+        log.info("Time slots computed: fleetGames={}", fleetGames.size());
+        return DuoExtendedResponse.builder().timeSlots(out).lineups(List.of()).build();
+    }
+
+    /**
+     * 常用阵容（工单 #41）：同局出战的成员组合（≥2 人）聚合，按局数降序。
+     * 只统计车队对局，胜负按成员人次计
+     */
+    public List<DuoExtendedResponse.LineupStats> lineups(String gameMode, Long startMs, Long endMs) {
+        List<TeamRosterService.RosterMember> roster = rosterService.requireMembers();
+        List<GameData> fleetGames = gameLoader.loadGames(startMs, endMs, gameMode, false).stream()
+                .filter(g -> gameLoader.isFleet(g, roster)).toList();
+        // 阵容键：出战成员的 roster 下标集合（LinkedHash 保持顺序）
+        Map<java.util.Set<Integer>, int[]> byLineup = new java.util.LinkedHashMap<>();
+        for (GameData game : fleetGames) {
+            java.util.Set<Integer> playing = new java.util.LinkedHashSet<>();
+            int w = 0;
+            for (int i = 0; i < roster.size(); i++) {
+                var participant = gameLoader.memberParticipant(game, roster.get(i));
+                if (participant != null) {
+                    playing.add(i);
+                    if (Boolean.TRUE.equals(participant.getWin())) {
+                        w++;
+                    }
+                }
+            }
+            if (playing.size() < 2) {
+                continue;   // 单人局不构成阵容
+            }
+            int[] acc = byLineup.computeIfAbsent(playing, k -> new int[3]);
+            acc[0]++;      // games
+            acc[1] += w;   // wins（人次）
+        }
+        // 组装并按局数降序
+        List<DuoExtendedResponse.LineupStats> out = new ArrayList<>();
+        byLineup.forEach((playing, acc) -> {
+            int totalPlayed = acc[0] * playing.size();   // 人次总数 = 局数 × 出战人数
+            int l = totalPlayed - acc[1];
+            out.add(DuoExtendedResponse.LineupStats.builder()
+                    .members(playing.stream().map(i -> roster.get(i).getRiotId()).toList())
+                    .games(acc[0]).wins(acc[1]).losses(l)
+                    .winRate(totalPlayed > 0 ? (double) acc[1] / totalPlayed : null)
+                    .build());
+        });
+        out.sort((a, b) -> Integer.compare(b.getGames(), a.getGames()));
+        log.info("Lineups computed: fleetGames={}, lineups={}", fleetGames.size(), out.size());
+        return out;
+    }
+
+    /**
+     * 组合扩展统计入口（工单 #41）：时段胜率 + 常用阵容一次返回
+     * （两次独立扫描 fleetGames，5 人规模无性能压力；避免为一个端点写双聚合循环）
+     */
+    public DuoExtendedResponse duoExtended(String gameMode, Long startMs, Long endMs) {
+        DuoExtendedResponse slots = timeSlots(gameMode, startMs, endMs);
+        return DuoExtendedResponse.builder()
+                .timeSlots(slots.getTimeSlots())
+                .lineups(lineups(gameMode, startMs, endMs))
+                .build();
+    }
+
+    /** game_creation（epoch ms）→ 时段桶下标（morning0/afternoon1/evening2/lateNight3/weeHours4） */
+    private int slotIndexOf(Long gameCreationMs) {
+        if (gameCreationMs == null) {
+            return 0;
+        }
+        int hour = java.time.Instant.ofEpochMilli(gameCreationMs)
+                .atZone(FleetGameLoader.ZONE).getHour();
+        if (hour >= 6 && hour < 12) {
+            return 0;
+        }
+        if (hour >= 12 && hour < 18) {
+            return 1;
+        }
+        if (hour >= 18) {
+            return 2;
+        }
+        if (hour < 3) {
+            return 3;
+        }
+        return 4;
     }
 }

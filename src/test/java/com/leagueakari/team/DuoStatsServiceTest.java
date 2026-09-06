@@ -105,4 +105,71 @@ class DuoStatsServiceTest extends TeamStatsTestBase {
         int col = response.getMembers().indexOf(colRiotId);
         return response.getMatrix().get(row).get(col);
     }
+
+    /** 用例（工单 #41）：时段胜率——按 game_creation 的时段分桶（下午/晚间/深夜/凌晨/上午） */
+    @Test
+    void timeSlots_aggregatesWinRateByDaypart() {
+        DuoStatsService service = duoService();
+        // 三局车队对局：g1 下午 14 点（2 人次胜）、g2 晚间 21 点（2 人次负）、g3 晚间 22 点（2 人次胜）
+        Match g1 = match(1, 100L, ms(8, 26, 14), 1200, "KIWI", 100);
+        Match g2 = match(2, 200L, ms(8, 26, 21), 1200, "KIWI", 200);
+        Match g3 = match(3, 300L, ms(8, 27, 22), 1200, "KIWI", 100);
+        when(matchMapper.selectList(any())).thenReturn(List.of(g1, g2, g3));
+        when(participantMapper.selectList(any())).thenReturn(List.of(
+                participant(1, 1, "puuid-a", "赌书消得泼茶香", 103, 100, 5, 2, 5, true, 20000),
+                participant(2, 1, "puuid-b", "手裂鬼子", 117, 100, 3, 4, 4, true, 15000),
+                participant(3, 2, "puuid-a", "赌书消得泼茶香", 103, 100, 1, 5, 2, false, 8000),
+                participant(4, 2, "puuid-b", "手裂鬼子", 84, 100, 2, 5, 3, false, 7000),
+                participant(5, 3, "puuid-a", "赌书消得泼茶香", 103, 100, 6, 1, 4, true, 22000),
+                participant(6, 3, "puuid-b", "手裂鬼子", 117, 100, 4, 2, 6, true, 16000)));
+
+        var response = service.timeSlots(null, null, null);
+
+        // 下午（12-18 点）：1 局 2 胜 0 负 → 100%
+        var afternoon = slotOf(response, "afternoon");
+        assertThat(afternoon.getGames()).isEqualTo(1);
+        assertThat(afternoon.getWinRate()).isEqualTo(1.0);
+        // 晚间（18-24 点）：2 局 2 胜 2 负 → 50%
+        var evening = slotOf(response, "evening");
+        assertThat(evening.getGames()).isEqualTo(2);
+        assertThat(evening.getWins()).isEqualTo(2);
+        assertThat(evening.getWinRate()).isEqualTo(0.5);
+        // 无对局时段：0 局 null
+        assertThat(slotOf(response, "morning").getWinRate()).isNull();
+    }
+
+    /** 用例（工单 #41）：常用阵容——同局出战成员组合聚合并按局数降序 */
+    @Test
+    void lineups_aggregatesByRosterCombination() {
+        DuoStatsService service = duoService();
+        // g1、g2 同样两人出战（阵容 {A,B}），g3 只有 A（不构成 ≥2 人阵容）
+        Match g1 = match(1, 100L, ms(8, 26, 14), 1200, "KIWI", 100);
+        Match g2 = match(2, 200L, ms(8, 26, 16), 1200, "KIWI", 100);
+        Match g3 = match(3, 300L, ms(8, 27, 20), 900, "KIWI", 100);
+        when(matchMapper.selectList(any())).thenReturn(List.of(g1, g2, g3));
+        when(participantMapper.selectList(any())).thenReturn(List.of(
+                participant(1, 1, "puuid-a", "赌书消得泼茶香", 103, 100, 5, 2, 5, true, 20000),
+                participant(2, 1, "puuid-b", "手裂鬼子", 117, 100, 3, 4, 4, true, 15000),
+                participant(3, 2, "puuid-a", "赌书消得泼茶香", 103, 100, 4, 1, 4, false, 12000),
+                participant(4, 2, "puuid-b", "手裂鬼子", 84, 100, 2, 6, 3, false, 9000),
+                participant(5, 3, "puuid-a", "赌书消得泼茶香", 103, 100, 1, 9, 1, false, 5000)));
+
+        var response = service.lineups(null, null, null);
+
+        // 阵容 {A,B}：2 局（胜 2 + 负 2 人次）→ 50%；单人局不入阵容
+        assertThat(response).hasSize(1);
+        var lineup = response.get(0);
+        assertThat(lineup.getMembers()).containsExactlyInAnyOrder("赌书消得泼茶香#iKun", "手裂鬼子#tw2");
+        assertThat(lineup.getGames()).isEqualTo(2);
+        assertThat(lineup.getWinRate()).isEqualTo(0.5);
+    }
+
+    /** 从时段列表取指定 key 的便捷断言 */
+    private com.leagueakari.dto.team.DuoExtendedResponse.TimeSlotStats slotOf(
+            com.leagueakari.dto.team.DuoExtendedResponse response, String key) {
+        return response.getTimeSlots().stream()
+                .filter(s -> s.getKey().equals(key))
+                .findFirst()
+                .orElseThrow();
+    }
 }

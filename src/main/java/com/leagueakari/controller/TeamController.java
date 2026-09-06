@@ -2,6 +2,7 @@ package com.leagueakari.controller;
 
 import com.leagueakari.common.web.ApiResult;
 import com.leagueakari.common.web.ClientDisconnectDetector;
+import com.leagueakari.dto.team.DuoExtendedResponse;
 import com.leagueakari.dto.team.DuoMatrixResponse;
 import com.leagueakari.dto.team.LeaderboardResponse;
 import com.leagueakari.dto.team.MemberCardResponse;
@@ -140,6 +141,18 @@ public class TeamController {
             @RequestParam(required = false) Long start,
             @RequestParam(required = false) Long end) {
         return ApiResult.success(duoStatsService.duoMatrix(mode, start, end));
+    }
+
+    /**
+     * 组合扩展统计（工单 #41 / spec #31）：时段胜率（五档分桶）+ 常用阵容（≥2 人组合，
+     * 按局数降序）。与搭档矩阵同口径（只统计车队对局，胜负按人次）
+     */
+    @GetMapping("/duo-extended")
+    public ApiResult<DuoExtendedResponse> duoExtended(
+            @RequestParam(required = false) String mode,
+            @RequestParam(required = false) Long start,
+            @RequestParam(required = false) Long end) {
+        return ApiResult.success(duoStatsService.duoExtended(mode, start, end));
     }
 
     /**
