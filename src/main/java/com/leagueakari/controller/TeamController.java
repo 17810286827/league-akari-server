@@ -161,6 +161,18 @@ public class TeamController {
     }
 
     /**
+     * 赛季报告（工单 #42 / spec #32）：版本胜率曲线 + 英雄池漂移 + 高光时刻。
+     * start/end 为赛季起止（毫秒时间戳，人工指定——不做自动判定/定时任务）；
+     * 纯数据聚合即时返回（无 AI、无异步生成）
+     */
+    @GetMapping("/season-report")
+    public ApiResult<SeasonReportResponse> seasonReport(
+            @RequestParam Long start,
+            @RequestParam Long end) {
+        return ApiResult.success(seasonReportService.seasonReport(start, end));
+    }
+
+    /**
      * 车队成员列表与全时段车队对局出勤
      */
     @GetMapping("/members")

@@ -252,4 +252,20 @@ class TeamControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(4101));
     }
+
+    /**
+     * 用例（回归：端点丢失 bug）：赛季报告端点存在且返回聚合结构。
+     * #42 提交时端点方法因脚本注入静默丢失（Service/DTO/测试都在但路由不存在），
+     * 集成测试没覆盖该端点导致全绿通过——本测试锁定路由存在性
+     */
+    @Test
+    void seasonReport_endpointExistsAndReturnsContract() throws Exception {
+        mockMvc.perform(get("/api/team/season-report")
+                        .param("start", "0").param("end", "9999999999999"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.totalGames").isNumber())
+                .andExpect(jsonPath("$.data.versionStats").isArray())
+                .andExpect(jsonPath("$.data.memberDrifts").isArray());
+    }
 }
