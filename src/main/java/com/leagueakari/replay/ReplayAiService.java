@@ -62,7 +62,7 @@ public class ReplayAiService {
 
     public ReplayAiService(AiProperties ai, AiClient aiClient, ObjectMapper objectMapper,
             PromptLoader promptLoader, ReplayService replayService, Executor aiStreamExecutor) {
-        this.promptFile = ai.getPromptFile();
+        this.promptFile = ai.getReplayPromptFile();
         this.completionRequest = new AiCompletionRequest(
                 ai.getModel(), ai.getTemperature(),
                 ai.getFrequencyPenalty(), ai.getPresencePenalty(),
@@ -126,9 +126,9 @@ public class ReplayAiService {
             }
             String summary = buildSummary(replay);
             String systemPrompt = promptLoader.load(promptFile,
-                    "你是英雄联盟车队教练，根据提供的对局复盘数据（关键转折点列表与经济差走势），"
-                            + "用中文写一段 200 字以内的复盘叙述：点明这局的胜负手（转折点串联），"
-                            + "语气犀利但善意，直接使用数据中的成员名，不要使用 markdown 格式。");
+                    "你是车队教练，以整个团队为视角复盘这一局：串联关键转折点讲清局势何时倒向"
+                            + "哪边、为什么，成员表现客观中性不甩锅，最后给一句改进建议。"
+                            + "200 字以内中文，可使用 markdown 加粗关键结论。");
 
             SseEventSender.send(emitter, objectMapper, "start", Map.of("fromCache", false));
             StringBuilder full = new StringBuilder();

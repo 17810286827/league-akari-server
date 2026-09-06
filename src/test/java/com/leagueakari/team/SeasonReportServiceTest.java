@@ -89,13 +89,17 @@ class SeasonReportServiceTest extends TeamStatsTestBase {
                 .filter(d -> d.getRiotId().equals("赌书消得泼茶香#iKun")).findFirst().orElseThrow();
         assertThat(driftA.getVersions()).hasSize(2);
         assertThat(driftA.getVersions().get(0).getChampions())
-                .containsExactly(Map.entry("阿狸", 1));
+                .singleElement()
+                .satisfies(c -> {
+                    org.assertj.core.api.Assertions.assertThat(c.getChampion()).isEqualTo("阿狸");
+                    org.assertj.core.api.Assertions.assertThat(c.getGames()).isEqualTo(1);
+                });
         SeasonReportResponse.MemberDrift driftB = report.getMemberDrifts().stream()
                 .filter(d -> d.getRiotId().equals("手裂鬼子#tw2")).findFirst().orElseThrow();
-        assertThat(driftB.getVersions().get(0).getChampions())
-                .containsExactly(Map.entry("盲僧", 1));
-        assertThat(driftB.getVersions().get(1).getChampions())
-                .containsExactly(Map.entry("盲僧", 1));
+        assertThat(driftB.getVersions().get(0).getChampions()).hasSize(1);
+        assertThat(driftB.getVersions().get(0).getChampions().get(0).getChampion()).isEqualTo("盲僧");
+        assertThat(driftB.getVersions().get(1).getChampions()).hasSize(1);
+        assertThat(driftB.getVersions().get(1).getChampions().get(0).getChampion()).isEqualTo("盲僧");
     }
 
     /** 用例：高光时刻——单局最高击杀（复用名场面口径） */

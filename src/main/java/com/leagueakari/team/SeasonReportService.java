@@ -117,6 +117,8 @@ public class SeasonReportService {
                             .version(e.getKey())
                             .champions(e.getValue().entrySet().stream()
                                     .sorted(Map.Entry.<String, Integer>comparingByValue(Comparator.reverseOrder()))
+                                    .map(entry -> SeasonReportResponse.ChampionCount.builder()
+                                            .champion(entry.getKey()).games(entry.getValue()).build())
                                     .toList())
                             .build())
                     .toList();

@@ -85,6 +85,10 @@ public class AiProperties {
     @NotBlank
     private String promptFile;
 
+    /** 时间线复盘叙述提示词文件（团队教练视角，区别于单局分析的毒舌锐评） */
+    @NotBlank
+    private String replayPromptFile;
+
     /** 周报锐评提示词文件（classpath；历史上仅存在于代码默认值，统一后补进 yml 作为唯一真值） */
     @NotBlank
     private String weeklyPromptFile;

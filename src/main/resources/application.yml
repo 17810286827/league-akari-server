@@ -129,6 +129,8 @@ ai:
   weekly-max-tokens: 4096
   # 系统提示词文件（classpath 下，可直接编辑）
   prompt-file: ai/system-prompt.md
+  # 时间线复盘叙述（工单 #40）：团队教练视角，非"战犯出列"的毒舌个人点评
+  replay-prompt-file: ai/replay-prompt.md
   # 周报锐评提示词文件（classpath 下，可直接编辑）
   weekly-prompt-file: ai/weekly-prompt.md
   # 局后锐评提示词与输出上限（车队群视角、正文短，随局后播报发送）

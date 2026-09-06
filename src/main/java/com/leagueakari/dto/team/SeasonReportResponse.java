@@ -6,7 +6,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * 赛季报告响应（工单 #42 / spec #32）：
@@ -82,8 +81,22 @@ public class SeasonReportResponse {
         /** 主版本 */
         private String version;
 
-        /** 英雄中文名 → 局数（按局数降序） */
-        private List<Map.Entry<String, Integer>> champions;
+        /** 英雄分布（按局数降序） */
+        private List<ChampionCount> champions;
+    }
+
+    /** 英雄使用次数（值对象——Map.Entry 的 Jackson 序列化形态不可控，显式结构保契约稳定） */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ChampionCount {
+
+        /** 英雄中文名 */
+        private String champion;
+
+        /** 局数 */
+        private int games;
     }
 
     /** 高光时刻（与周报名场面 HighlightItem 同构） */
