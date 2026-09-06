@@ -44,6 +44,11 @@ class WeeklyAiCommentServiceTest {
 
     private AiClient aiClient;
     private WeeklyReportService weeklyReportService;
+    private com.leagueakari.mapper.WeeklyReportAiMapper weeklyReportAiMapper;
+    /** 固定时钟：2026-09-06（周日）——当前周 = 08-31 ~ 09-06，历史周 = 之前 */
+    private final java.time.Clock clock = java.time.Clock.fixed(
+            java.time.ZonedDateTime.of(2026, 9, 6, 10, 0, 0, 0, java.time.ZoneId.of("Asia/Shanghai")).toInstant(),
+            java.time.ZoneId.of("Asia/Shanghai"));
     private WeeklyAiCommentService service;
     private ObjectMapper objectMapper;
 
@@ -54,11 +59,15 @@ class WeeklyAiCommentServiceTest {
     void setUp() {
         aiClient = mock(AiClient.class);
         weeklyReportService = mock(WeeklyReportService.class);
+        weeklyReportAiMapper = mock(com.leagueakari.mapper.WeeklyReportAiMapper.class);
+        // 历史周判定：库内无记录（selectOne 返回 null）
+        org.mockito.Mockito.lenient().when(weeklyReportAiMapper.selectOne(any())).thenReturn(null);
         objectMapper = new ObjectMapper();
         // promptFile 指向不存在的文件：走内置默认提示词，避免依赖 classpath 资源
         service = new WeeklyAiCommentService(
                 aiProps("test-key"), aiClient, objectMapper,
-                new com.leagueakari.ai.PromptLoader(), weeklyReportService, Runnable::run);
+                new com.leagueakari.ai.PromptLoader(), weeklyReportService,
+                weeklyReportAiMapper, clock, Runnable::run);
         events.clear();
     }
 
@@ -76,10 +85,17 @@ class WeeklyAiCommentServiceTest {
         return props;
     }
 
-    /** 构造最小周报：仅含 AI 摘要会用到的字段（weekLabel 即缓存键） */
+    /** 构造最小周报：仅含 AI 摘要会用到的字段（weekLabel 即缓存键；
+     *  weekEndMs 由周标签解析——次周一 00:00，历史周判定用） */
     private WeeklyReportResponse report(String weekLabel) {
+        // 周标签形如 "2026-08-24 ~ 2026-08-30"：结束 = 周日 + 1 天的 00:00（Asia/Shanghai）
+        String endDate = weekLabel.split(" ~ ")[1];
+        long weekEndMs = java.time.LocalDate.parse(endDate)
+                .plusDays(1).atStartOfDay(java.time.ZoneId.of("Asia/Shanghai"))
+                .toInstant().toEpochMilli();
         return WeeklyReportResponse.builder()
                 .weekLabel(weekLabel)
+                .weekEndMs(weekEndMs)
                 .overview(WeeklyReportResponse.Overview.builder()
                         .gameCount(3).winCount(2).lossCount(1)
                         .busiestDay("2026-08-26")
@@ -355,7 +371,8 @@ class WeeklyAiCommentServiceTest {
     void validateFailsWithoutApiKey() {
         WeeklyAiCommentService noKey = new WeeklyAiCommentService(
                 aiProps(""), aiClient, objectMapper,
-                new com.leagueakari.ai.PromptLoader(), weeklyReportService, Runnable::run);
+                new com.leagueakari.ai.PromptLoader(), weeklyReportService,
+                weeklyReportAiMapper, clock, Runnable::run);
 
         assertThatThrownBy(noKey::validateAndConfigured)
                 .isInstanceOf(BizException.class)
@@ -368,6 +385,88 @@ class WeeklyAiCommentServiceTest {
     void validatePassesWithKey() {
         when(aiClient.isConfigured()).thenReturn(true);
         service.validateAndConfigured();
+    }
+
+    /** 用例（工单 #39）：历史周生成后落库——再次请求命中持久化，不调 AI、推全文（fromCache=true） */
+    @Test
+    void streamComment_persistsHistoricalWeekAndServesFromDb() throws Exception {
+        stubReport("2026-08-24 ~ 2026-08-30");
+        mockAiStream("stop");
+
+        // 第一次：生成 + 落库（周结束 08-31 00:00 < 当前时钟 09-06 → 历史周）
+        service.streamComment(WeekFixture.AUG_26, mockEmitter());
+
+        org.mockito.ArgumentCaptor<com.leagueakari.entity.WeeklyReportAi> captor =
+                org.mockito.ArgumentCaptor.forClass(com.leagueakari.entity.WeeklyReportAi.class);
+        verify(weeklyReportAiMapper).insert(captor.capture());
+        assertThat(captor.getValue().getWeekLabel()).isEqualTo("2026-08-24 ~ 2026-08-30");
+        assertThat(captor.getValue().getComment()).contains("本周赌书封神");
+        // 落库后内存缓存同时写入：第二次直接秒回
+        events.clear();
+        service.streamComment(WeekFixture.AUG_26, mockEmitter());
+        assertThat(eventTypes()).containsExactly("start", "chunk", "done");
+        assertThat(events.get(0)).containsEntry("fromCache", true);
+        verify(aiClient, times(1)).callStream(any(), anyString(), anyString(), any(), anyString());
+    }
+
+    /** 用例（工单 #39）：历史周已有落库记录 → 直接同步返回落库文本，不调 AI（老周报秒开） */
+    @Test
+    void streamComment_servesFromDbWithoutCallingAi() throws Exception {
+        stubReport("2026-08-24 ~ 2026-08-30");
+        // 库内已有该周锐评（此前生成过，JVM 缓存已过期/重启后）
+        when(weeklyReportAiMapper.selectOne(any())).thenReturn(persisted("2026-08-24 ~ 2026-08-30",
+                "库内历史锐评"));
+
+        service.streamComment(WeekFixture.AUG_26, mockEmitter());
+
+        assertThat(eventTypes()).containsExactly("start", "chunk", "done");
+        assertThat(events.get(0)).containsEntry("fromCache", true);
+        assertThat(events.get(1)).containsEntry("content", "库内历史锐评");
+        // AI 零调用
+        verify(aiClient, never()).callStream(any(), anyString(), anyString(), any(), anyString());
+    }
+
+    /** 用例（工单 #39）：当前周（进行中）不落库——只走内存短缓存，下周内容会变 */
+    @Test
+    void streamComment_currentWeekNotPersisted() throws Exception {
+        // 当前周 = 08-31 ~ 09-06（固定时钟 09-06）
+        when(weeklyReportService.weeklyReport(any(java.time.LocalDate.class)))
+                .thenReturn(report("2026-08-31 ~ 2026-09-06"));
+        mockAiStream("stop");
+
+        service.streamComment(java.time.LocalDate.of(2026, 9, 2), mockEmitter());
+
+        // 当前周：生成但不落库（内容随新对局变化）
+        verify(weeklyReportAiMapper, never()).insert(any(com.leagueakari.entity.WeeklyReportAi.class));
+        // 仍走内存缓存（第二次秒回）
+        events.clear();
+        service.streamComment(java.time.LocalDate.of(2026, 9, 2), mockEmitter());
+        assertThat(eventTypes()).containsExactly("start", "chunk", "done");
+    }
+
+    /** 用例（工单 #39）：并发首次生成历史周——后写者发现已存在则丢弃（唯一键兜底） */
+    @Test
+    void streamComment_concurrentFirstInsertDiscardsLoser() throws Exception {
+        stubReport("2026-08-24 ~ 2026-08-30");
+        mockAiStream("stop");
+        // 模拟并发：插入时另一请求已先落库（DuplicateKeyException 场景由唯一键兜底，
+        // 这里验证捕获异常后吞掉不推 error）
+        when(weeklyReportAiMapper.insert(any(com.leagueakari.entity.WeeklyReportAi.class)))
+                .thenThrow(new org.springframework.dao.DuplicateKeyException("uk_week_label"));
+
+        service.streamComment(WeekFixture.AUG_26, mockEmitter());
+
+        // 主体流程不受影响（正常 done 收尾，丢弃败者的落库）
+        assertThat(eventTypes()).endsWith("done");
+    }
+
+    /** 构造已落库的锐评记录 */
+    private com.leagueakari.entity.WeeklyReportAi persisted(String weekLabel, String comment) {
+        com.leagueakari.entity.WeeklyReportAi record = new com.leagueakari.entity.WeeklyReportAi();
+        record.setWeekLabel(weekLabel);
+        record.setComment(comment);
+        record.setWeekEndMs(0L);
+        return record;
     }
 
     /** 测试夹具：周内日期（周三 2026-08-26，属 08-24 ~ 08-30 周） */

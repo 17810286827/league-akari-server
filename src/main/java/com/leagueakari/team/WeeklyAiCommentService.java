@@ -17,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -74,6 +75,12 @@ public class WeeklyAiCommentService {
     /** 周报聚合服务：流式锐评的素材来源（聚合口径唯一出处） */
     private final WeeklyReportService weeklyReportService;
 
+    /** 历史周锐评持久化（工单 #39 / ADR 0007）：已结束的周首次生成后落库 */
+    private final com.leagueakari.mapper.WeeklyReportAiMapper weeklyReportAiMapper;
+
+    /** 时钟：当前周判定（当前时间 < weekEndMs 即进行中，不落库） */
+    private final Clock clock;
+
     /** 流式锐评专用线程池（与单局分析共用 aiStreamExecutor，见 HttpClientConfig） */
     private final Executor executor;
 
@@ -87,6 +94,8 @@ public class WeeklyAiCommentService {
             ObjectMapper objectMapper,
             PromptLoader promptLoader,
             WeeklyReportService weeklyReportService,
+            com.leagueakari.mapper.WeeklyReportAiMapper weeklyReportAiMapper,
+            Clock clock,
             Executor aiStreamExecutor) {
         this.promptFile = ai.getWeeklyPromptFile();
         this.promptLoader = promptLoader;
@@ -98,6 +107,8 @@ public class WeeklyAiCommentService {
         this.aiClient = aiClient;
         this.objectMapper = objectMapper;
         this.weeklyReportService = weeklyReportService;
+        this.weeklyReportAiMapper = weeklyReportAiMapper;
+        this.clock = clock;
         this.executor = aiStreamExecutor;
         // 重试次数 yaml 统一配置（三个 AI 场景同一键），构造时快照
         this.retryCount = ai.getRetryCount();
@@ -160,6 +171,25 @@ public class WeeklyAiCommentService {
             // 过期清理：超过 10 分钟视为失效，重新调用 AI
             cache.remove(weekLabel);
 
+            // 历史周持久化命中（工单 #39 / ADR 0007）：已结束的周内容不可变，
+            // 库内有记录直接推全文（重启/缓存过期后老周报仍秒开），不再调 AI；
+            // 当前周（进行中）不落库——weekEndMs 之后的请求才查库
+            if (report.getWeekEndMs() != null && clock.millis() >= report.getWeekEndMs()) {
+                com.leagueakari.entity.WeeklyReportAi persisted = weeklyReportAiMapper.selectOne(
+                        new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.leagueakari.entity.WeeklyReportAi>()
+                                .eq("week_label", weekLabel));
+                if (persisted != null) {
+                    log.info("Weekly AI comment served from db: week={}", weekLabel);
+                    SseEventSender.send(emitter, objectMapper, "start", Map.of("fromCache", true));
+                    SseEventSender.send(emitter, objectMapper, "chunk", Map.of("content", persisted.getComment()));
+                    SseEventSender.send(emitter, objectMapper, "done", Map.of());
+                    emitter.complete();
+                    // 回填内存缓存（本 JVM 后续秒回）
+                    cache.put(weekLabel, new CacheEntry(persisted.getComment(), System.currentTimeMillis()));
+                    return;
+                }
+            }
+
             String summary = buildSummary(report);
             // 提示词：文件读取 + 内置默认回退，每次读取 md 文件（用户编辑后即时生效，无需重启）
             String systemPrompt = promptLoader.load(promptFile,
@@ -219,6 +249,22 @@ public class WeeklyAiCommentService {
             }
             // finishReason：stop=自然完成；length=输出预算耗尽被截断（正文可能不完整）
             boolean truncated = "length".equals(finishReason);
+            // 历史周落库（工单 #39）：已结束的周内容不可变，首次生成后持久化；
+            // 并发首次生成由唯一键 week_label 兜底——后写者捕获冲突丢弃（胜者已存）；
+            // 当前周（进行中）不落库（内容随新对局变化）；截断的正文不落库（不完整）
+            if (!truncated && report.getWeekEndMs() != null && clock.millis() >= report.getWeekEndMs()) {
+                try {
+                    com.leagueakari.entity.WeeklyReportAi record = new com.leagueakari.entity.WeeklyReportAi();
+                    record.setWeekLabel(weekLabel);
+                    record.setComment(full.toString());
+                    record.setWeekEndMs(report.getWeekEndMs());
+                    weeklyReportAiMapper.insert(record);
+                    log.info("Weekly AI comment persisted: week={}, length={}", weekLabel, full.length());
+                } catch (org.springframework.dao.DuplicateKeyException e) {
+                    // 并发首次生成：另一请求已先落库，本份丢弃（内容近似，保留先到者）
+                    log.info("Weekly AI comment concurrent insert discarded: week={}", weekLabel);
+                }
+            }
             // 完成：写入缓存（成功才缓存，失败不缓存下次重试）并推送 done
             cache.put(weekLabel, new CacheEntry(full.toString(), System.currentTimeMillis()));
             SseEventSender.send(emitter, objectMapper, "done", truncated ? Map.of("truncated", true) : Map.of());
