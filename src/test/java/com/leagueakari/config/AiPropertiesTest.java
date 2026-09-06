@@ -32,55 +32,39 @@ class AiPropertiesTest {
         return binder.bind("ai", Bindable.of(AiProperties.class)).get();
     }
 
-    /** 用例：yml 是 AI 配置唯一真值——模型分工与全部采样参数逐项与生产意图一致 */
+    /** 用例：yml 是 AI 配置唯一真值——全部采样参数逐项与生产意图一致 */
     @Test
     void bindsFullAiSectionFromYml() throws Exception {
         AiProperties props = bindFromApplicationYml();
 
-        // 网关与模型分工（决策见 docs/adr/0004、0006 更新记录）：
-        // 分析/周报用 model；局后播报独立键 post-game-model 解耦。
-        // 2026-09-05 切换至 pianyitoken 网关 + deepseek-v4-flash（思考模式实测可用，
-        // 旧网关已无此模型且新网关无 gemini-2.5-flash，两键必须一起换）
+        // 网关与模型（决策见 docs/adr/0004、0006 更新记录）：
+        // 2026-09-05 切换至 pianyitoken 网关 + deepseek-v4-flash；
+        // 2026-09-07 参数归一（ADR 0009）：全部场景统一读 ai.model，场景级
+        // post-game-model / weekly-max-tokens / post-game-max-tokens 键已删除
         assertThat(props.getBaseUrl()).isEqualTo("https://pianyitoken.gay/v1");
         assertThat(props.getModel()).isEqualTo("deepseek-v4-flash");
-        assertThat(props.getPostGameModel()).isEqualTo("deepseek-v4-flash");
 
-        // 提示词文件三件套必须齐全（weekly-prompt-file 曾缺失、靠代码默认值兜底，现补入 yml）
+        // 提示词文件四件套必须齐全（weekly-prompt-file 曾缺失、靠代码默认值兜底，现补入 yml）
         assertThat(props.getPromptFile()).isEqualTo("ai/system-prompt.md");
+        assertThat(props.getReplayPromptFile()).isEqualTo("ai/replay-prompt.md");
         assertThat(props.getWeeklyPromptFile()).isEqualTo("ai/weekly-prompt.md");
         assertThat(props.getPostGamePromptFile()).isEqualTo("ai/post-game-prompt.md");
 
-        // 采样与输出参数：yml 当前值即意图（与三个 AI 服务共用同一份）
-        // 惩罚参数 2026-09-05 调至 1.0/0.5（抑制思维链重复，实测见 yml 注释）；
-        // max-tokens 16384（永不截断的天花板：正文实际 <2000 token，思维链被
-        // thinking-budget 约束）+ thinking-budget 2048：思维链耗尽预算生产故障的根治组合
-        //（budget=2048 实测 0/16 失败；3072 约束不稳定 4/16，见 yml 注释）
+        // 采样与输出参数：yml 当前值即意图（与四个 AI 服务共用同一份）。
+        // max-tokens 16384 为全场景统一输出上限（永不截断的天花板，计费按实际生成量）
         assertThat(props.getTemperature()).isEqualTo(1.0);
         assertThat(props.getFrequencyPenalty()).isEqualTo(1.0);
         assertThat(props.getPresencePenalty()).isEqualTo(0.5);
         assertThat(props.getMaxTokens()).isEqualTo(16384);
-        assertThat(props.getThinkingBudget()).isEqualTo(2048);
-        assertThat(props.getWeeklyMaxTokens()).isEqualTo(4096);
-        assertThat(props.getPostGameMaxTokens()).isEqualTo(2048);
-        // 思考模式开关（当前 yml 为开启）：deepseek-v4-flash 在 pianyitoken 网关下
-        // 思考参数真实生效（实测 reasoning_content 正常流出、4096 预算内正文完整），
-        // 恢复开启的决策记录见 docs/adr/0006 更新记录；三个 AI 场景统一读此键
-        assertThat(props.isThinking()).isTrue();
-        // 重试次数（失败后重试次数，不含首次）：三个 AI 场景统一读此键
+        // 思考模式开关（2026-09-07 关闭，ADR 0009）：实测网关不执行 vLLM 式
+        // chat_template_kwargs 开关/预算，唯一有效开关是 DeepSeek 官方嵌套参数
+        // thinking:{type:enabled|disabled}；关闭后首 token 约 2s（原开启约 2.5-7s）
+        assertThat(props.isThinking()).isFalse();
+        // 思考强度（官方 reasoning_effort，low/high/max；空 = 不传该参数）：
+        // 与 apiKey 同理，yml 值为 ${AI_THINKING_EFFORT:} 占位符，原始 PropertySource
+        // 不做占位符解析（实际值由部署环境注入、空 = 不传），只断言键存在
+        assertThat(props.getThinkingEffort()).isEqualTo("${AI_THINKING_EFFORT:}");
+        // 重试次数（失败后重试次数，不含首次）：四个 AI 场景统一读此键
         assertThat(props.getRetryCount()).isEqualTo(3);
-    }
-
-    /** 用例：分析/周报与局后锐评共用基础参数（base-url、temperature），仅模型与上限分场景 */
-    @Test
-    void scenarioKeysShareBaseParams() throws Exception {
-        AiProperties props = bindFromApplicationYml();
-
-        // 场景差异只在 model 与 max-tokens：基础参数（网关/温度）全场景共享；
-        // 分析与周报上限当前持平（4096），局后正文短（2048）
-        assertThat(props.getModel()).isNotBlank();
-        assertThat(props.getPostGameModel()).isNotBlank();
-        assertThat(props.getTemperature()).isEqualTo(props.getTemperature());
-        assertThat(props.getMaxTokens()).isGreaterThanOrEqualTo(props.getWeeklyMaxTokens());
-        assertThat(props.getMaxTokens()).isGreaterThan(props.getPostGameMaxTokens());
     }
 }

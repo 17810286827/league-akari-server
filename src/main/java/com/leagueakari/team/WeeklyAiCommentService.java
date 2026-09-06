@@ -109,11 +109,12 @@ public class WeeklyAiCommentService {
             Executor aiStreamExecutor) {
         this.promptFile = ai.getWeeklyPromptFile();
         this.promptLoader = promptLoader;
-        // 周锐评场景采样参数：无 penalty（保持既有采样行为）；thinking 跟随 yaml（ai.thinking），
-        // 三个 AI 场景统一读同一开关；thinkingBudget 限制思维链上限（防推理模型耗尽输出预算、正文为空）
+        // 周锐评场景采样参数：无 penalty（保持既有采样行为）；模型与输出上限统一读
+        // ai.model / ai.max-tokens（参数归一 docs/adr/0009）；thinking/thinkingEffort
+        // 跟随 yaml（ai.thinking / ai.thinking-effort），四个 AI 场景统一读同一开关
         this.completionRequest = new AiCompletionRequest(
                 ai.getModel(), ai.getTemperature(),
-                null, null, ai.getWeeklyMaxTokens(), ai.isThinking(), ai.getThinkingBudget());
+                null, null, ai.getMaxTokens(), ai.isThinking(), ai.getThinkingEffort());
         this.aiClient = aiClient;
         this.objectMapper = objectMapper;
         this.weeklyReportService = weeklyReportService;

@@ -280,9 +280,11 @@ public class AiClient {
 
     /**
      * 组装 chat/completions 请求体（流式/非流式共用）：
-     * penalty 为 null 时省略对应键；thinking=false 时写 DeepSeek 原生参数
-     * chat_template_kwargs.thinking=false（网关不认 OpenAI 风格的 reasoning_effort），
-     * thinking=true 时不写该键（保持模型默认推理模式）。
+     * penalty 为 null 时省略对应键；思考模式走 DeepSeek 官方嵌套参数
+     * {@code thinking:{type:enabled|disabled}}——2026-09-07 网关实测（ADR 0009）：
+     * vLLM 式 chat_template_kwargs 的开关与预算网关均不执行（thinking:false 6 轮全有
+     * reasoning 输出），官方嵌套 disabled 连续 3 轮 reasoning 为 0（真实生效）；
+     * thinkingEffort 非 null 时并入 reasoning_effort（low/high/max）。
      * LinkedHashMap 保证键序稳定，便于日志比对与测试断言
      */
     private Map<String, Object> buildPayload(AiCompletionRequest request, boolean stream,
@@ -300,12 +302,16 @@ public class AiClient {
         }
         // 输出上限：思维链与正文共享预算，限制推理模型的无限思考
         payload.put("max_tokens", request.getMaxTokens());
-        if (!request.isThinking()) {
-            payload.put("chat_template_kwargs", Map.of("thinking", false));
-        } else if (request.getThinkingBudget() != null) {
-            // 思维链 token 上限（thinking=true 时生效）：防推理模型把输出预算耗尽在
-            // 思维链导致正文为空（2026-09-05 生产故障根治参数之一，网关实测有效）
-            payload.put("chat_template_kwargs", Map.of("thinking_budget", request.getThinkingBudget()));
+        // 思考模式：官方嵌套参数（enabled 时可选带 reasoning_effort 降强度）
+        if (request.isThinking()) {
+            Map<String, Object> thinking = new LinkedHashMap<>();
+            thinking.put("type", "enabled");
+            if (request.getThinkingEffort() != null) {
+                thinking.put("reasoning_effort", request.getThinkingEffort());
+            }
+            payload.put("thinking", thinking);
+        } else {
+            payload.put("thinking", Map.of("type", "disabled"));
         }
         payload.put("messages", List.of(
                 Map.of("role", "system", "content", systemPrompt),

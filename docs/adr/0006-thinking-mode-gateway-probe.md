@@ -5,6 +5,16 @@
 - 关联：[0004-ai-config-single-source](./0004-ai-config-single-source.md)（ai.thinking 键的由来）、
   [0005-ai-client-unified-invocation](./0005-ai-client-unified-invocation.md)（thinking 参数透传实现）
 
+> **更新记录 3（2026-09-07）：更新记录 2 的"根治参数"结论被推翻**，见
+> [0012-ai-param-normalization-and-thinking-reeval](./0012-ai-param-normalization-and-thinking-reeval.md)。
+> 30 次流式直读 reasoning 长度的对照实验证实：该网关**从不执行**
+> `chat_template_kwargs.thinking_budget`（64/512/1024/2048 各档位 reasoning 长度无差异），
+> 也不执行 `chat_template_kwargs.thinking:false`（6 次全关对照全有 reasoning 输出）；
+> 唯一真实生效的开关是 DeepSeek 官方嵌套参数 `thinking:{type:enabled|disabled}`
+> （disabled 3 连测 reasoning 全 0）。更新记录 2 的"budget=2048 实测 0/16 失败"系
+> 未控制变量的巧合——当时红率下降实为 max-tokens 4096→8192 的单变量贡献。
+> 思考模式已全局关闭，官方嵌套参数已落地（`ai.thinking-effort` 为调参管道）。
+
 > **更新记录（2026-09-05 晚）**：同日稍后网关与模型整体切换（`yt.19851117.xyz`/gemini-2.5-flash →
 > `pianyitoken.gay`/deepseek-v4-flash，动因：旧网关已无 deepseek-v4-flash、新网关无
 > gemini-2.5-flash）。新组合实测思考模式**真实可用**（UTF-8 请求体下 reasoning_content

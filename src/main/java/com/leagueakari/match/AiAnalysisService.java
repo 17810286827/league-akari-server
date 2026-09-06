@@ -95,11 +95,11 @@ public class AiAnalysisService {
         this.promptLoader = promptLoader;
         this.promptFile = ai.getPromptFile();
         // 单局分析场景采样参数：penalty 抑制长文本重复，thinking 可经配置开启（前端灰字展示思维链）；
-        // thinkingBudget 限制思维链上限（防推理模型耗尽输出预算、正文为空——生产故障根治参数）
+        // thinkingEffort 降思考强度（官方 reasoning_effort，仅 thinking=true 时进 payload，ADR 0009）
         this.completionRequest = new AiCompletionRequest(
                 ai.getModel(), ai.getTemperature(),
                 ai.getFrequencyPenalty(), ai.getPresencePenalty(),
-                ai.getMaxTokens(), ai.isThinking(), ai.getThinkingBudget());
+                ai.getMaxTokens(), ai.isThinking(), ai.getThinkingEffort());
         this.matchQueryService = matchQueryService;
         this.objectMapper = objectMapper;
         this.aiClient = aiClient;

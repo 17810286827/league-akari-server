@@ -63,10 +63,11 @@ public class ReplayAiService {
     public ReplayAiService(AiProperties ai, AiClient aiClient, ObjectMapper objectMapper,
             PromptLoader promptLoader, ReplayService replayService, Executor aiStreamExecutor) {
         this.promptFile = ai.getReplayPromptFile();
+        // 复盘叙述采样参数：与单局分析同构（penalty 抑制重复；thinking/thinkingEffort 全局键，ADR 0009）
         this.completionRequest = new AiCompletionRequest(
                 ai.getModel(), ai.getTemperature(),
                 ai.getFrequencyPenalty(), ai.getPresencePenalty(),
-                ai.getMaxTokens(), ai.isThinking(), ai.getThinkingBudget());
+                ai.getMaxTokens(), ai.isThinking(), ai.getThinkingEffort());
         this.retryCount = ai.getRetryCount();
         this.aiClient = aiClient;
         this.objectMapper = objectMapper;

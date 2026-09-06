@@ -51,10 +51,11 @@ class PostGameCommentServiceTest {
         AiProperties props = new AiProperties();
         props.setBaseUrl("https://opencode.ai/zen/go/v1");
         props.setApiKey(apiKey);
-        props.setPostGameModel("test-model");
+        // 参数归一（ADR 0009）：模型与输出上限统一读 ai.model / ai.max-tokens
+        props.setModel("test-model");
         props.setPostGamePromptFile("ai/post-game-prompt.md");
         props.setTemperature(1.0);
-        props.setPostGameMaxTokens(1024);
+        props.setMaxTokens(1024);
         return new PostGameCommentService(props, aiClient, new ObjectMapper(), new com.leagueakari.ai.PromptLoader());
     }
 
@@ -71,16 +72,16 @@ class PostGameCommentServiceTest {
         return s;
     }
 
-    /** 用例：AI 正常返回正文 → 返回锐评文本，且用局后独立模型（ai.post-game-model）调用 */
+    /** 用例：AI 正常返回正文 → 返回锐评文本，且统一用 ai.model 调用（参数归一，ADR 0009） */
     @Test
-    void generateComment_returnsAiContentWithPostGameModel() {
+    void generateComment_returnsAiContentWithUnifiedModel() {
         when(aiClient.callWithRetry(any(), anyString(), anyString(), anyString()))
                 .thenReturn("这把养鱼人把对面野区当自己家");
 
         String comment = service.generateComment(summary());
 
         assertThat(comment).contains("养鱼人");
-        // 参数归属：局后锐评必须用自己的独立模型键（与 ai.model 解耦，播报对延迟敏感）
+        // 参数归属（ADR 0009）：全场景统一 ai.model / ai.max-tokens，不再有场景级键
         ArgumentCaptor<AiCompletionRequest> captor = ArgumentCaptor.forClass(AiCompletionRequest.class);
         verify(aiClient, times(1)).callWithRetry(captor.capture(), anyString(), anyString(), anyString());
         assertThat(captor.getValue().getModel()).isEqualTo("test-model");

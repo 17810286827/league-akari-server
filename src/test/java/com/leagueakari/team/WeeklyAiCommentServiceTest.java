@@ -80,7 +80,8 @@ class WeeklyAiCommentServiceTest {
         props.setWeeklyPromptFile("ai/not-exist.md");
         props.setThinking(true);
         props.setTemperature(1.0);
-        props.setWeeklyMaxTokens(512);
+        // 参数归一（ADR 0009）：全场景统一读 ai.max-tokens
+        props.setMaxTokens(512);
         props.setRetryCount(1);
         return props;
     }

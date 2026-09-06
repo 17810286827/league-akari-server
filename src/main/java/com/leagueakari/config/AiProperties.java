@@ -14,9 +14,11 @@ import org.springframework.validation.annotation.Validated;
  * {@link Validated} 校验在启动阶段直接报错，杜绝"代码默认值与 yml 各说各话"的漂移
  * （历史教训：ai.model 曾在 yml=analysis 与 @Value 默认值间出现三处不一致，见 docs/adr/0004）。
  * 新增/调整任何 ai.* 键：先改 yml，再同步本类字段与 AiPropertiesTest 契约测试。</p>
- * <p>场景分工：{@link #getModel()} 供单局 AI 分析与周报锐评共用；
- * {@link #getPostGameModel()} 是局后播报的独立键——播报对延迟敏感，未来分析模型
- * 更换为慢推理模型时不受影响。部署环境只注入 {@code AI_API_KEY}，其余值以 yml 为准。</p>
+ * <p><b>参数归一（2026-09-07，docs/adr/0009）</b>：四个 AI 场景（单局分析/复盘叙述/
+ * 周报锐评/局后锐评）共用 {@code ai.model} 与 {@code ai.max-tokens}——场景级键
+ * post-game-model / weekly-max-tokens / post-game-max-tokens 因三值从未分叉、
+ * 注释漂移（AiPropertiesTest 断言 4096/2048 而 yml 实为 16384）而删除；
+ * 真有分场景需求时按需加回覆盖键。</p>
  */
 @Data
 @Component
@@ -29,31 +31,33 @@ public class AiProperties {
     private String baseUrl;
 
     /**
-     * API Key（环境变量 AI_API_KEY 覆盖；允许为空——空时三个 AI 服务在调用前
+     * API Key（环境变量 AI_API_KEY 覆盖；允许为空——空时四个 AI 服务在调用前
      * 快速失败并返回明确错误，与 push.* 凭证的"未配置降级"语义一致，故不做非空校验）
      */
     private String apiKey;
 
-    /** 分析模型（单局 AI 分析与周报锐评共用） */
+    /** 模型名（四个 AI 场景统一，参数归一见类注释与 docs/adr/0009） */
     @NotBlank
     private String model;
 
     /**
      * 是否开启模型思考模式：true = 先输出长思维链再出正文（前端灰字展示推理过程）；
-     * false = 直出正文（延迟低）。通过请求体 chat_template_kwargs.thinking 透传网关。
-     * <b>三个 AI 场景（单局分析/周报锐评/局后锐评）统一读此键</b>，不允许任何场景硬编码旁路
+     * false = 直出正文（延迟低）。经 DeepSeek 官方嵌套参数
+     * {@code thinking:{type:enabled|disabled}} 透传网关。
+     * <b>四个 AI 场景（单局分析/复盘叙述/周报锐评/局后锐评）统一读此键</b>，
+     * 不允许任何场景硬编码旁路
      */
     private boolean thinking;
 
     /**
-     * 思维链 token 上限（chat_template_kwargs.thinking_budget）：null = 不传。
-     * 仅 thinking=true 时生效；限制推理模型把输出预算耗尽在思维链导致正文为空
-     * （2026-09-05 生产故障的根治参数，网关实测 8192 预算 + 该上限组合 0/8 失败）
+     * 思考强度（官方 reasoning_effort：low/high/max；null = 不传，网关默认强度）。
+     * 仅 thinking=true 时进 payload；网关对该参数的执行效果未在短提示词下
+     * 与噪音区分开（2026-09-07 实测），保留为调参管道
      */
-    private Integer thinkingBudget;
+    private String thinkingEffort;
 
     /**
-     * 调用失败后的重试次数（不含首次；0 = 不重试）。<b>三个 AI 场景统一读此键</b>：
+     * 调用失败后的重试次数（不含首次；0 = 不重试）。<b>四个 AI 场景统一读此键</b>：
      * 非流式场景（AiClient.callWithRetry）对空正文自动重试共 retryCount 次；
      * 流式场景（单局分析）在尚未推送任何增量前失败时同样按此次数重试
      */
@@ -73,13 +77,9 @@ public class AiProperties {
     @NotNull
     private Double presencePenalty;
 
-    /** 单局分析输出 token 上限（思维链与正文共享预算，限制推理模式无限思考） */
+    /** 输出 token 上限（思维链与正文共享预算；四个 AI 场景统一，docs/adr/0009） */
     @NotNull
     private Integer maxTokens;
-
-    /** 周报锐评输出 token 上限（推理模型偶发把预算耗在思维链导致正文为空，配合空正文重试） */
-    @NotNull
-    private Integer weeklyMaxTokens;
 
     /** 单局分析系统提示词文件（classpath，md 格式，可直接编辑） */
     @NotBlank
@@ -96,12 +96,4 @@ public class AiProperties {
     /** 局后锐评提示词文件（classpath，车队群视角、正文短） */
     @NotBlank
     private String postGamePromptFile;
-
-    /** 局后锐评输出 token 上限 */
-    @NotNull
-    private Integer postGameMaxTokens;
-
-    /** 局后锐评独立模型（短任务，直出正文延迟低；与 ai.model 解耦，见类注释） */
-    @NotBlank
-    private String postGameModel;
 }

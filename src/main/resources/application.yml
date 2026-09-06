@@ -82,26 +82,27 @@ ai:
   # API Key（环境变量 AI_API_KEY 可覆盖；为空时分析接口返回明确错误）
   # ⚠️ 换网关后 Key 也须更换（旧 Key 在新网关 401），部署侧 .env / 本地运行配置同步更新
   api-key: ${AI_API_KEY:}
-  # 分析模型（单局 AI 分析与周报锐评共用，决策见 docs/adr/0004）：
-  # 曾用 mimo-v2.5 / deepseek-v4-flash / gemini-2.5-flash，现切回 deepseek-v4-flash
-  #（该网关下思考模式实测可用，见下方 thinking 注释与 docs/adr/0006 更新记录）
+  # 模型名：四个 AI 场景（单局分析/复盘叙述/周报锐评/局后锐评）统一（参数归一 docs/adr/0009）；
+  # 曾用 mimo-v2.5 / deepseek-v4-flash / gemini-2.5-flash，现 deepseek-v4-flash
   model: deepseek-v4-flash
-  # 是否开启模型思考模式（开启）：
-  # deepseek-v4-flash 在 pianyitoken 网关下思考参数真实生效（2026-09-05 实测：
-  # chat_template_kwargs.thinking=true 时 reasoning_content 正常流出，
-  # 4096 预算内思维链 + 正文完整，单次锐评级生成约 6s；thinking=false 也能有效压制）。
-  # 三个 AI 场景（单局分析/周报锐评/局后锐评）统一读此键，无任何硬编码旁路。
-  # 历史轨迹（详见 docs/adr/0006 及其更新记录）：
-  #   - deepseek-v4-flash 时期：开启整流约 90s，关闭约 25s（快 3.6 倍）；
-  #   - gemini-2.5-flash 时期：网关静默忽略全部思考参数，true 为无效配置，曾短暂置 false；
-  #   - 现切回 deepseek-v4-flash（新网关），思考恢复可用，重新开启。
-  # 注意：局后锐评同读本键，开启意味着播报也带思考（延迟增加）；若播报延迟不可接受，
-  # 参考 post-game-model 键的拆分先例，后续可引入独立 thinking 键
-  thinking: true
+  # 是否开启模型思考模式（2026-09-07 关闭，docs/adr/0009）：
+  # 官方嵌套参数 thinking:{type:disabled} 是该网关唯一真实生效的开关（实测 3 轮
+  # reasoning 全为 0）；旧的 vLLM 式 chat_template_kwargs.thinking=false 网关不执行
+  # （6 轮全有 reasoning 输出）。关闭后首 token 约 2s（开启时 2.5~7s 波动）。
+  # 历史轨迹（详见 docs/adr/0006、0009 更新记录）：
+  #   - deepseek-v4-flash@旧网关：开 90s / 关 25s；
+  #   - gemini-2.5-flash 时期：网关静默忽略全部思考参数；
+  #   - 2026-09-05 在新网关重启思考 + thinking-budget=2048（当时实测有效）；
+  #   - 2026-09-07 复测推翻：budget 档位间 reasoning 长度无差异，网关实际不执行，
+  #     且思考曾把正文 token 挤空（finish_reason=length 空正文），故统一关闭。
+  thinking: false
+  # 思考强度（官方 thinking.reasoning_effort：low/high/max；空 = 不传，网关默认强度）：
+  # 仅 thinking=true 时进 payload。2026-09-07 实测短提示词下 low 与噪音不可区分，
+  # 保留为调参管道；网关未来真支持时无需改代码
+  thinking-effort: ${AI_THINKING_EFFORT:}
   # 调用失败后的重试次数（不含首次，0 = 不重试）：
-  # 非流式场景对"空正文"（推理模型把预算耗在思维链、finish_reason=length）自动重试；
-  # 流式场景（单局分析）在尚未向客户端推送任何增量前失败时按此次数重试。
-  # 3 = 每次生成最多调用 4 次，实测基本消除周报/局后锐评的空正文问题；
+  # 非流式场景对"空正文"自动重试；流式场景在尚未推送任何增量前失败时按此次数重试。
+  # 3 = 每次生成最多调用 4 次，实测基本消除空正文问题；
   # 注意流式重试会拉长单局分析的最坏等待时间（每次尝试最长受 emitter 超时约束）
   retry-count: 3
   # 采样参数：抑制长文本重复输出（温度降随机性、频率惩罚抑制循环、存在惩罚减少车轱辘话）
@@ -111,38 +112,19 @@ ai:
   temperature: 1.0
   frequency-penalty: 1.0
   presence-penalty: 0.5
-  # 输出 token 上限（思维链与正文共享）：设为远超任务实际用量的天花板，永不截断——
-  # 计费按实际生成量计，预算大本身无成本；正常请求自然 stop 即结束（无延迟代价），
-  # 只有网关失控长思考才会跑满（此时重试门控兜底）。
-  # 演进：4096（思维链耗尽预算红率 50%）→ 8192（10%）→ 16384（彻底消除截断担忧，
-  # 正文实际 600-1000 字符、思维链已被 thinking-budget 约束，16384 不可达）
+  # 输出 token 上限（思维链与正文共享）：四个 AI 场景统一键（参数归一 docs/adr/0009；
+  # 场景级 weekly-max-tokens / post-game-max-tokens 已删除——三值从未分叉，
+  # 且契约测试与 yml 已漂移成 4096/2048 vs 16384 无人发现）。
+  # 设为远超任务实际用量的天花板，永不截断——计费按实际生成量计，预算大本身无成本
   max-tokens: 16384
-  # 思维链 token 上限（chat_template_kwargs.thinking_budget，仅 thinking=true 生效）：
-  # 堵 max-tokens 拦不住的失控长思考长尾（实测单样本思维链 12000+ 字符）。
-  # ⚠️ 网关对该参数的执行依值而变（2026-09-05 实测，同提示词各 16 轮）：
-  #   budget=2048：0/16 失败（思维链被有效约束，rlen 常见 200~2200）；
-  #   budget=3072：4/16 失败（部分样本思维链仍突破 12000+，约束失效）。
-  # 故选 2048；配合 max-tokens 8192 与服务端空正文重试三层兜底
-  thinking-budget: 2048
-  # 周锐评输出上限：推理模型偶发把预算耗在思维链导致正文为空（finish_reason=length），
-  # 4096 配合服务端空正文自动重试（最多 2 次调用）基本消除该问题
-  weekly-max-tokens: 16384
   # 系统提示词文件（classpath 下，可直接编辑）
   prompt-file: ai/system-prompt.md
   # 时间线复盘叙述（工单 #40）：团队教练视角，非"战犯出列"的毒舌个人点评
   replay-prompt-file: ai/replay-prompt.md
   # 周报锐评提示词文件（classpath 下，可直接编辑）
   weekly-prompt-file: ai/weekly-prompt.md
-  # 局后锐评提示词与输出上限（车队群视角、正文短，随局后播报发送）
+  # 局后锐评提示词（车队群视角、正文短，随局后播报发送；模型与上限统一读上方键）
   post-game-prompt-file: ai/post-game-prompt.md
-  post-game-max-tokens: 16384
-  # 局后锐评独立模型：播报对延迟敏感，保留独立键以便与 ai.model 分场景（拆分先例见上）。
-  # 2026-09-05 与 ai.model 一同切至 deepseek-v4-flash：新网关（pianyitoken）无
-  # gemini-2.5-flash 通道，且 deepseek-v4-flash 的 thinking=false 压制有效（实测
-  # 短思维链后 ~19s 直出正文，非 mimo 式无视参数）
-  # 注意：局后锐评的 thinking 跟随全局 ai.thinking（当前开启）——若播报延迟不可接受，
-  # 优先考虑引入独立 thinking 键而非换模型
-  post-game-model: deepseek-v4-flash
 
 push:
   # 局后播报（Post-Game Broadcast）：开黑局结束后自动向车队群推送战报

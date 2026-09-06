@@ -85,6 +85,7 @@ class AiClientTest {
         return new AiCompletionRequest("test-model", 0.7, 0.6, 0.3, 2048, thinking, null);
     }
 
+
     /** 模拟 AI 接口响应：状态码 + 响应体（JSON 或 SSE 流） */
     private void mockResponse(int status, String body) throws Exception {
         CloseableHttpResponse response = mock(CloseableHttpResponse.class);
@@ -235,59 +236,57 @@ class AiClientTest {
         assertThat(body).contains("\"frequency_penalty\":0.6").contains("\"presence_penalty\":0.3");
     }
 
-    /** 用例：thinking=false 时写 chat_template_kwargs.thinking=false（DeepSeek 原生参数直出正文） */
+    /** 用例：thinking=false 时写官方嵌套参数 thinking:{type:disabled}（网关实测唯一有效的关闭方式） */
     @Test
-    void call_disablesThinkingWhenFalse() throws Exception {
+    void call_disablesThinkingWithOfficialNestedParam() throws Exception {
         mockResponse(200, "{\"choices\":[{\"message\":{\"content\":\"正文\"}}]}");
 
         client.call(plainRequest(), "系统提示", "用户内容", "test");
 
         String body = EntityUtils.toString(capturedPost().getEntity());
-        assertThat(body).contains("\"chat_template_kwargs\"").contains("\"thinking\":false");
+        assertThat(body).contains("\"thinking\":{\"type\":\"disabled\"}");
+        // vLLM 式参数已被网关实测证伪（不执行），不得再发送（ADR 0009）
+        assertThat(body).doesNotContain("chat_template_kwargs");
     }
 
-    /** 用例：thinking=true 时不写 chat_template_kwargs（保持模型默认推理模式） */
+    /** 用例：thinking=true 时写官方嵌套参数 thinking:{type:enabled} */
     @Test
-    void call_omitsThinkingKwargsWhenTrue() throws Exception {
+    void call_enablesThinkingWithOfficialNestedParam() throws Exception {
         mockResponse(200, "{\"choices\":[{\"message\":{\"content\":\"正文\"}}]}");
 
         client.call(analysisRequest(true), "系统提示", "用户内容", "test");
 
-        assertThat(EntityUtils.toString(capturedPost().getEntity()))
-                .doesNotContain("chat_template_kwargs");
+        String body = EntityUtils.toString(capturedPost().getEntity());
+        assertThat(body).contains("\"thinking\":{\"type\":\"enabled\"}");
+        assertThat(body).doesNotContain("chat_template_kwargs");
     }
 
-    /**
-     * 用例：thinkingBudget 非 null 且 thinking=true 时，写 chat_template_kwargs.thinking_budget
-     * 限制思维链 token 上限（防推理模型把输出预算耗尽在思维链、正文为空——
-     * 2026-09-05 生产故障的根治参数之一，网关实测 8192+thinking_budget 组合 0/8 失败）
-     */
+    /** 用例：thinkingEffort 非 null 时并入官方嵌套参数（reasoning_effort: low/high/max） */
     @Test
-    void call_carriesThinkingBudgetWhenPresent() throws Exception {
+    void call_carriesThinkingEffortWhenPresent() throws Exception {
         mockResponse(200, "{\"choices\":[{\"message\":{\"content\":\"正文\"}}]}");
 
         AiCompletionRequest request = new AiCompletionRequest(
-                "test-model", 1.0, 1.0, 0.5, 8192, true, 3072);
+                "test-model", 1.0, 1.0, 0.5, 8192, true, "low");
         client.call(request, "系统提示", "用户内容", "test");
 
         String body = EntityUtils.toString(capturedPost().getEntity());
-        assertThat(body).contains("\"chat_template_kwargs\"")
-                .contains("\"thinking_budget\":3072")
-                // thinking=true 不写 thinking 开关（保持模型默认推理模式），仅带上限
-                .doesNotContain("\"thinking\":true");
+        assertThat(body).contains("\"thinking\":{")
+                .contains("\"type\":\"enabled\"")
+                .contains("\"reasoning_effort\":\"low\"");
     }
 
-    /** 用例：thinkingBudget 为 null 时不写 chat_template_kwargs.thinking_budget（保持旧行为） */
+    /** 用例：thinkingEffort 为 null 时不带 reasoning_effort 键（网关默认强度） */
     @Test
-    void call_omitsThinkingBudgetWhenNull() throws Exception {
+    void call_omitsThinkingEffortWhenNull() throws Exception {
         mockResponse(200, "{\"choices\":[{\"message\":{\"content\":\"正文\"}}]}");
 
         AiCompletionRequest request = new AiCompletionRequest(
                 "test-model", 1.0, 1.0, 0.5, 8192, true, null);
         client.call(request, "系统提示", "用户内容", "test");
 
-        assertThat(EntityUtils.toString(capturedPost().getEntity()))
-                .doesNotContain("thinking_budget");
+        String body = EntityUtils.toString(capturedPost().getEntity());
+        assertThat(body).doesNotContain("reasoning_effort");
     }
 
     /** 用例：200 响应 → 透出 choices[0].message.content */
@@ -369,7 +368,7 @@ class AiClientTest {
         assertThat(body).contains("\"stream\":true")
                 .contains("\"temperature\":0.7")
                 .contains("\"max_tokens\":2048")
-                .contains("\"chat_template_kwargs\"").contains("\"thinking\":false");
+                .contains("\"thinking\":{\"type\":\"disabled\"}");
     }
 
     /** 用例：finish_reason 在最后一个 chunk 携带（length=预算截断）→ 透传给调用方 */
