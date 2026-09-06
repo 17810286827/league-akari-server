@@ -29,6 +29,7 @@ import com.leagueakari.diagnosis.DiagnosisService;
 import com.leagueakari.match.MatchIngestService;
 import com.leagueakari.match.MatchQueryService;
 import com.leagueakari.match.MatchTimelineService;
+import com.leagueakari.replay.ReplayAiService;
 import com.leagueakari.replay.ReplayService;
 
 /**
@@ -53,6 +54,8 @@ public class MatchController {
     private final ReplayService replayService;
     /** 对局诊断：闲置 stats 字段的结果归因（工单 #36） */
     private final DiagnosisService diagnosisService;
+    /** AI 复盘叙述：转折点驱动的 SSE 流式解读（工单 #40） */
+    private final ReplayAiService replayAiService;
 
     /** 接收对局同步推送，幂等写入 */
     @PostMapping
@@ -179,5 +182,31 @@ public class MatchController {
     public ApiResult<com.leagueakari.dto.diagnosis.DiagnosisResponse> getDiagnosis(
             @PathVariable Long gameId) {
         return ApiResult.success(diagnosisService.diagnose(gameId));
+    }
+
+    /**
+     * AI 复盘叙述（SSE 流式，工单 #40 / spec #29）：AI 只消费规则引擎提取的
+     * 转折点 + 复盘摘要（不喂原始 frames），解读不编造。事件契约与单局分析一致；
+     * 无时间线对局（2002）与 Key 未配置（4101）在流建立前拦截
+     */
+    @PostMapping(value = "/{gameId}/replay/ai-comment", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter replayAiComment(@PathVariable Long gameId) {
+        long startTime = System.currentTimeMillis();
+        log.info("Replay AI narration requested: gameId={}", gameId);
+        // 前置校验：Key 未配置（4101）或无时间线（2002）时在此抛出
+        replayAiService.validateAndConfigured(gameId);
+        SseEmitter emitter = new SseEmitter(300_000L);
+        emitter.onCompletion(() -> log.info("Replay AI narration SSE completed: gameId={}, elapsed={}ms",
+                gameId, System.currentTimeMillis() - startTime));
+        emitter.onTimeout(() -> log.warn("Replay AI narration SSE timed out: gameId={}", gameId));
+        emitter.onError(e -> {
+            if (ClientDisconnectDetector.isClientDisconnect(e)) {
+                log.info("Replay AI narration SSE client disconnected: gameId={}", gameId);
+                return;
+            }
+            log.error("Replay AI narration SSE error: gameId={}", gameId, e);
+        });
+        replayAiService.streamComment(gameId, emitter);
+        return emitter;
     }
 }
