@@ -2,6 +2,7 @@ package com.leagueakari.controller;
 
 import com.leagueakari.common.web.ApiResult;
 import com.leagueakari.common.web.ClientDisconnectDetector;
+import com.leagueakari.dto.team.DuoMatrixResponse;
 import com.leagueakari.dto.team.LeaderboardResponse;
 import com.leagueakari.dto.team.MemberCardResponse;
 import com.leagueakari.dto.team.TeamMembersResponse;
@@ -21,6 +22,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.time.LocalDate;
 import java.util.Map;
 import com.leagueakari.team.LeaderboardService;
+import com.leagueakari.team.DuoStatsService;
 import com.leagueakari.team.MemberStatsService;
 import com.leagueakari.team.WeeklyAiCommentService;
 import com.leagueakari.team.WeeklyReportService;
@@ -47,15 +49,19 @@ public class TeamController {
     private final WeeklyReportService weeklyReportService;
     private final WeeklyAiCommentService weeklyAiCommentService;
     private final LeaderboardService leaderboardService;
+    /** 搭档胜率矩阵（工单 #37） */
+    private final DuoStatsService duoStatsService;
     private final MemberStatsService memberStatsService;
     private final RiotMatchHistoryService backfillService;
 
     public TeamController(WeeklyReportService weeklyReportService, WeeklyAiCommentService weeklyAiCommentService,
-            LeaderboardService leaderboardService, MemberStatsService memberStatsService,
+            LeaderboardService leaderboardService, DuoStatsService duoStatsService,
+            MemberStatsService memberStatsService,
             RiotMatchHistoryService backfillService) {
         this.weeklyReportService = weeklyReportService;
         this.weeklyAiCommentService = weeklyAiCommentService;
         this.leaderboardService = leaderboardService;
+        this.duoStatsService = duoStatsService;
         this.memberStatsService = memberStatsService;
         this.backfillService = backfillService;
     }
@@ -120,6 +126,18 @@ public class TeamController {
             @RequestParam(required = false) Long start,
             @RequestParam(required = false) Long end) {
         return ApiResult.success(leaderboardService.leaderboard(dimension, mode, start, end));
+    }
+
+    /**
+     * 搭档胜率矩阵（工单 #37 / spec #31）：N×N 对称矩阵（胜率 + 局数 + 人次胜负），
+     * 只统计车队对局（与七榜同口径）。mode/start/end 过滤同榜单中心
+     */
+    @GetMapping("/duo-matrix")
+    public ApiResult<DuoMatrixResponse> duoMatrix(
+            @RequestParam(required = false) String mode,
+            @RequestParam(required = false) Long start,
+            @RequestParam(required = false) Long end) {
+        return ApiResult.success(duoStatsService.duoMatrix(mode, start, end));
     }
 
     /**
