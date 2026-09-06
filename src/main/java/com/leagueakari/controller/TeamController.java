@@ -117,15 +117,17 @@ public class TeamController {
 
     /**
      * 榜单中心：dimension 必填（mvp/criminal/feeder/carry/signature/attendance），
-     * mode 为模式过滤，start/end 为毫秒时间戳范围（缺省全时段）
+     * mode 为模式过滤，start/end 为毫秒时间戳范围（缺省全时段），
+     * version 为主版本筛选（如 "16.15"，工单 #38）
      */
     @GetMapping("/leaderboards")
     public ApiResult<LeaderboardResponse> leaderboards(
             @RequestParam String dimension,
             @RequestParam(required = false) String mode,
             @RequestParam(required = false) Long start,
-            @RequestParam(required = false) Long end) {
-        return ApiResult.success(leaderboardService.leaderboard(dimension, mode, start, end));
+            @RequestParam(required = false) Long end,
+            @RequestParam(required = false) String version) {
+        return ApiResult.success(leaderboardService.leaderboard(dimension, mode, start, end, version));
     }
 
     /**

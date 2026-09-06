@@ -12,6 +12,7 @@ import com.leagueakari.mapper.MatchMvpMapper;
 import com.leagueakari.mapper.MatchParticipantMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.leagueakari.common.version.GameVersionNormalizer;
 import org.springframework.stereotype.Component;
 
 import java.time.DayOfWeek;
@@ -75,6 +76,17 @@ public class FleetGameLoader {
      * @param withScores 是否实时计算评分（评分引擎纯计算、不落库）
      */
     public List<GameData> loadGames(Long startMs, Long endMs, String gameMode, boolean withScores) {
+        return loadGames(startMs, endMs, gameMode, null, withScores);
+    }
+
+    /**
+     * 装载对局（带版本筛选，工单 #38）：
+     * version 为主版本（如 "16.15"，经 GameVersionNormalizer 归一口径），
+     * 内存过滤而非 SQL 前缀匹配——同一主版本有多个 build 后缀（16.15.802.4387 等），
+     * LIKE '16.15%' 会误中 16.151+；null 表示不限版本
+     */
+    public List<GameData> loadGames(Long startMs, Long endMs, String gameMode, String version,
+            boolean withScores) {
         // 分段计时：定位榜单/成员卡慢请求的耗时构成（SQL 装载 vs 实时评分）
         long startNanos = System.nanoTime();
         QueryWrapper<Match> matchWrapper = new QueryWrapper<>();
@@ -89,7 +101,11 @@ public class FleetGameLoader {
         }
         // 升序：名场面的"连败/翻盘"依赖时间顺序
         matchWrapper.orderByAsc("game_creation");
-        List<Match> matches = matchMapper.selectList(matchWrapper);
+        List<Match> matches = new java.util.ArrayList<>(matchMapper.selectList(matchWrapper));
+        if (version != null && !version.isBlank()) {
+            // 版本过滤：主版本归一后精确匹配（build 后缀不参与）
+            matches.removeIf(m -> !version.equals(GameVersionNormalizer.normalize(m.getGameVersion())));
+        }
         if (matches.isEmpty()) {
             return List.of();
         }

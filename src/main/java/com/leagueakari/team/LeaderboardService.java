@@ -41,11 +41,19 @@ public class LeaderboardService {
      * @throws BizException 维度未知（1104）或车队名单未配置（1101）
      */
     public LeaderboardResponse leaderboard(String dimension, String gameMode, Long startMs, Long endMs) {
+        return leaderboard(dimension, gameMode, startMs, endMs, null);
+    }
+
+    /**
+     * 榜单中心（带版本筛选，工单 #38）：version 为主版本（"16.15"，归一口径见 GameVersionNormalizer）
+     */
+    public LeaderboardResponse leaderboard(String dimension, String gameMode, Long startMs, Long endMs,
+            String version) {
         if (dimension == null || !DIMENSIONS.contains(dimension)) {
             throw new BizException(ErrorCode.UNKNOWN_DIMENSION, "未知榜单维度：" + dimension + "，可选：" + DIMENSIONS);
         }
         List<TeamRosterService.RosterMember> roster = rosterService.requireMembers();
-        List<GameData> fleetGames = gameLoader.loadGames(startMs, endMs, gameMode, true).stream()
+        List<GameData> fleetGames = gameLoader.loadGames(startMs, endMs, gameMode, version, true).stream()
                 .filter(g -> gameLoader.isFleet(g, roster)).toList();
         BoardEngine.Boards boards = boardEngine.computeBoards(fleetGames, roster);
         List<WeeklyReportResponse.BoardEntry> entries = switch (dimension) {
