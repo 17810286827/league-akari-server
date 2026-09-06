@@ -24,9 +24,11 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Objects;
+import com.leagueakari.dto.replay.ReplayResponse;
 import com.leagueakari.match.MatchIngestService;
 import com.leagueakari.match.MatchQueryService;
 import com.leagueakari.match.MatchTimelineService;
+import com.leagueakari.replay.ReplayService;
 
 /**
  * 对局 API：同步写入（幂等）与查询
@@ -46,6 +48,8 @@ public class MatchController {
     private final MatchQueryService matchQueryService;
     private final MatchTimelineService matchTimelineService;
     private final AiAnalysisService aiAnalysisService;
+    /** 时间线复盘：转折点计算（工单 #35） */
+    private final ReplayService replayService;
 
     /** 接收对局同步推送，幂等写入 */
     @PostMapping
@@ -150,5 +154,16 @@ public class MatchController {
             throw new BizException(ErrorCode.TIMELINE_NOT_FOUND, "对局时间线不存在: gameId=" + gameId);
         }
         return ApiResult.success(frames);
+    }
+
+    /**
+     * 时间线复盘（工单 #35 / spec #29）：经济差序列 + 击杀事件 + 关键转折点，
+     * 规则引擎从 frames 确定性提取（可复算验证，不依赖 AI）。
+     * 无时间线对局返回 available=false 优雅降级（前端显示提示而非空白曲线）；
+     * 对局不存在返回业务码 2001（与详情接口同口径）
+     */
+    @GetMapping("/{gameId}/replay")
+    public ApiResult<ReplayResponse> getReplay(@PathVariable Long gameId) {
+        return ApiResult.success(replayService.replay(gameId));
     }
 }

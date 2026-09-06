@@ -239,3 +239,11 @@ scoring:
   baseline-threshold-min: 10
   baseline-threshold-max: 30
   baseline-mix-max: 0.5
+
+replay:
+  # 时间线复盘规则参数（工单 #35）：转折点引擎阈值，改参数无需改代码
+  # 团灭判定时间窗（毫秒）：窗口内一支队伍全部成员各自阵亡一次即判定团灭
+  # （时间线帧粒度约 1 分钟，窗口需覆盖同帧多杀与跨帧连杀两种形态）
+  wipe-window-ms: 12000
+  # 经济差极值的最小显著门槛（金币）：低于该值的最大差距不算"胜负手"转折点
+  extreme-min-gold-diff: 1500

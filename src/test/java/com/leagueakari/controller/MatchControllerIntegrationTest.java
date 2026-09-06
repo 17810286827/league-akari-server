@@ -294,4 +294,75 @@ class MatchControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(1001));
     }
+
+    /**
+     * 时间线复盘端点（工单 #35）：有/无时间线两种契约。
+     * 有时间线：available=true + 经济差序列/转折点（规则引擎确定性计算，黄金样本断言）；
+     * 无时间线：available=false 优雅降级（不报 2002，前端显示提示）；
+     * 对局不存在：业务码 2001（与详情接口同口径）
+     */
+    @Test
+    void replay_contractWithAndWithoutTimeline() throws Exception {
+        // 入库一局（self 在 100 队 + 一名 200 队敌人；buildRequest 全员同队不能验证敌我口径），
+        // 推送时间线（两帧：我方领先 2000 → 被反超 1000，含一血）
+        MatchSyncRequest req = buildRequest(9000000051L);
+        ParticipantSyncRequest enemy = new ParticipantSyncRequest();
+        enemy.setPuuid("enemy-puuid-1");
+        enemy.setSummonerName("EnemyOne");
+        enemy.setChampionId(84);
+        enemy.setTeamId(200);
+        enemy.setPosition("MID");
+        enemy.setKills(1);
+        enemy.setDeaths(4);
+        enemy.setAssists(2);
+        enemy.setWin(false);
+        enemy.setGoldEarned(9000);
+        enemy.setCs(150);
+        enemy.setItems(List.of(6653));
+        enemy.setSummonerSpells(List.of(4));
+        enemy.setStats(Map.of("totalDamageDealtToChampions", 12000));
+        req.setParticipants(new ArrayList<>(List.of(req.getParticipants().get(0), enemy)));
+        mockMvc.perform(post("/api/matches").contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk());
+        String frames = """
+                [
+                  {"timestamp":60000,"participantFrames":{"1":{"totalGold":6000},"2":{"totalGold":4000}},"events":[]},
+                  {"timestamp":120000,"participantFrames":{"1":{"totalGold":7000},"2":{"totalGold":8000}},
+                   "events":[{"type":"CHAMPION_KILL","timestamp":65000,"killerId":2,"victimId":1}]}
+                ]
+                """;
+        mockMvc.perform(post("/api/matches/9000000051/timeline")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"gameId\":9000000051,\"frames\":" + frames + "}"))
+                .andExpect(status().isOk());
+
+        // 有时间线：available=true，经济差 +2000 → -1000（敌方一血 + 反超转折点）
+        mockMvc.perform(get("/api/matches/9000000051/replay"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.available").value(true))
+                .andExpect(jsonPath("$.data.perspectiveTeamId").value(100))
+                .andExpect(jsonPath("$.data.goldDiffSeries.length()").value(2))
+                .andExpect(jsonPath("$.data.goldDiffSeries[0].goldDiff").value(2000))
+                .andExpect(jsonPath("$.data.goldDiffSeries[1].goldDiff").value(-1000))
+                .andExpect(jsonPath("$.data.killEvents.length()").value(1))
+                .andExpect(jsonPath("$.data.killEvents[0].killerIsPerspective").value(false))
+                .andExpect(jsonPath("$.data.turningPoints[?(@.type=='FIRST_BLOOD')]").exists())
+                .andExpect(jsonPath("$.data.turningPoints[?(@.type=='GOLD_LEAD_CHANGE')]").exists());
+
+        // 无时间线的对局：available=false 降级（空集合，不报 2002）
+        mockMvc.perform(post("/api/matches").contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(buildRequest(9000000052L))))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/matches/9000000052/replay"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.available").value(false))
+                .andExpect(jsonPath("$.data.goldDiffSeries.length()").value(0))
+                .andExpect(jsonPath("$.data.turningPoints.length()").value(0));
+
+        // 对局不存在：2001
+        mockMvc.perform(get("/api/matches/9999999999/replay"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(2001));
+    }
 }
