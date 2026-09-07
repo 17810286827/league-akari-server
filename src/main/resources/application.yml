@@ -142,6 +142,11 @@ push:
   # 局后锐评开关：false = 只发战报图（不调 AI、不发缺席提示）
   ai-comment-enabled: ${PUSH_AI_COMMENT_ENABLED:true}
 
+intel:
+  # 敌方情报推送（Pre-Game Intel，ADR 0011）：选人阶段敌方开黑判定与窗口胜率的配置
+  # 开黑判定阈值：历史对局同一组合共同出场 ≥ 该次数即判为开黑组（与桌面端口径一致）
+  premade-detect-threshold: ${INTEL_PREMADE_DETECT_THRESHOLD:10}
+
 scoring:
   # 评分算法版本号：落库时写入 match_mvp.scoring_version，查询时版本不匹配会实时重算
   # v3：MVP/ACE 评选改按 op_score 取（含多杀加分，与界面展示评分一致）
