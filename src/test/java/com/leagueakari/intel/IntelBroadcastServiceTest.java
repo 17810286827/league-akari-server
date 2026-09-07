@@ -47,6 +47,8 @@ class IntelBroadcastServiceTest {
     private QqBotClient qqBotClient;
     @Mock
     private IntelCardRenderer renderer;
+    @Mock
+    private com.leagueakari.gamedata.GameDataService gameDataService;
 
     private PushProperties pushProperties;
     private TeamProperties teamProperties;
@@ -67,7 +69,8 @@ class IntelBroadcastServiceTest {
         intelProperties.setPremadeDetectThreshold(2);
         service = new IntelBroadcastService(
                 gameStartMapper, scoutMatchMapper, scoutRankMapper,
-                rosterService, qqBotClient, renderer, pushProperties, teamProperties, intelProperties);
+                rosterService, qqBotClient, renderer, pushProperties, teamProperties, intelProperties,
+                gameDataService);
     }
 
     /** 造一个车队成员（身份集合含 p1/p2） */

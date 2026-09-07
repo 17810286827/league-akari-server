@@ -11,6 +11,7 @@ import java.awt.FontMetrics;
 import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.geom.Ellipse2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -49,6 +50,15 @@ public class IntelCardRendererImpl implements IntelCardRenderer {
     private static final Color GOLD = new Color(0xffd76e);
     private static final Color ROW_BG = new Color(255, 255, 255, 9);
     private static final Color ROW_BORDER = new Color(255, 255, 255, 13);
+    private static final Color TEXT_KDA = new Color(0xb9c7db);
+
+    /** 英雄头像降级色块色板：按 championId 取模 */
+    private static final int[] HERO_COLORS = {
+            0xd98a3d, 0x2f6fdd, 0xa05ce6, 0xe0a21e, 0x3fa9a0,
+            0xc0392b, 0x4b8a3d, 0x7f5fc0, 0xb5532f, 0x3a7d5c,
+            0x5b8cff, 0xd94f6b, 0x4d9e8f, 0x9a6b3f, 0x6b5fd9,
+            0xcf7a3a, 0x2f8f6f, 0xb04d5a
+    };
 
     /** 开黑分组边框色板：按组序号取模（同组同色，视觉分组） */
     private static final Color[] GROUP_COLORS = {
@@ -64,6 +74,19 @@ public class IntelCardRendererImpl implements IntelCardRenderer {
     /** 内置思源黑体（classpath），懒加载一次 */
     private static volatile Font baseFont;
 
+    /** 英雄头像服务（null 时全部降级色块圆盘，供单测/降级路径） */
+    private final com.leagueakari.gamedata.ChampionIconService iconService;
+
+    /** 无头构造：不注入头像服务，头像一律降级色块圆盘（单测友好） */
+    public IntelCardRendererImpl() {
+        this.iconService = null;
+    }
+
+    /** Spring 构造：注入头像服务，绘制真实英雄头像 */
+    public IntelCardRendererImpl(com.leagueakari.gamedata.ChampionIconService iconService) {
+        this.iconService = iconService;
+    }
+
     @Override
     public byte[] render(EnemyIntel intel) {
         int height = layoutHeight(intel);
@@ -77,19 +100,20 @@ public class IntelCardRendererImpl implements IntelCardRenderer {
 
             int y = PAD;
             y = drawHeader(g, intel, y);
-            y = drawEnemies(g, intel, y);
+            y = drawTable(g, intel, y);
             return toPngBytes(image);
         } finally {
             g.dispose();
         }
     }
 
-    /** 卡片总高度：标题区 + 敌方行数 + 分组区 + 底边距 */
+    /** 卡片总高度：标题区 + 表头 + 敌方行数 + 分组区 + 底边距 */
     private int layoutHeight(EnemyIntel intel) {
         int headerH = 96;
+        int tableHeaderH = 34;
         int enemiesH = intel.getEnemies().size() * ROW_H;
         int groupsH = intel.getPremadeGroups().isEmpty() ? 40 : (36 + intel.getPremadeGroups().size() * 30);
-        return PAD + headerH + enemiesH + groupsH + 24;
+        return PAD + headerH + tableHeaderH + enemiesH + groupsH + 24;
     }
 
     /** 标题区：车队名 + 红蓝方胶囊 + 队列名 */
@@ -122,9 +146,9 @@ public class IntelCardRendererImpl implements IntelCardRenderer {
         return y + 96;
     }
 
-    /** 敌方 5 人行 + 开黑分组视觉 */
-    private int drawEnemies(Graphics2D g, EnemyIntel intel, int y) {
-        // 分组索引映射：puuid → 组序号（-1 = 未分组）
+    /** E 变体：数据密集表格（表头 + 每行头像/英雄名/玩家名/段位/胜率/开黑） */
+    private int drawTable(Graphics2D g, EnemyIntel intel, int y) {
+        // 分组索引映射：puuid → 组序号
         Map<String, Integer> groupIndexOf = new HashMap<>();
         List<PremadeDetector.PremadeGroup> groups = intel.getPremadeGroups();
         for (int i = 0; i < groups.size(); i++) {
@@ -132,47 +156,123 @@ public class IntelCardRendererImpl implements IntelCardRenderer {
                 groupIndexOf.put(puuid, i);
             }
         }
-
-        for (int i = 0; i < intel.getEnemies().size(); i++) {
-            EnemyIntel.EnemyPlayer e = intel.getEnemies().get(i);
-            int ry = y + i * ROW_H;
-            Integer groupIdx = groupIndexOf.get(e.getPuuid());
-            drawEnemyRow(g, e, ry, groupIdx);
+        // 组胜率（组序号 → PremadeWinRate，行内展示搭档胜率）
+        Map<Integer, EnemyIntel.PremadeWinRate> wrByGroup = new HashMap<>();
+        List<EnemyIntel.PremadeWinRate> winRates = intel.getPremadeWinRates();
+        for (int i = 0; i < groups.size(); i++) {
+            wrByGroup.put(i, winRates != null && i < winRates.size() ? winRates.get(i) : null);
         }
 
-        int groupsY = y + intel.getEnemies().size() * ROW_H + 12;
-        return drawGroups(g, intel, groupsY);
+        // 表头
+        int headerY = y;
+        drawTableHeader(g, headerY);
+
+        // 数据行
+        int rowY = y + 34;
+        for (int i = 0; i < intel.getEnemies().size(); i++) {
+            EnemyIntel.EnemyPlayer e = intel.getEnemies().get(i);
+            Integer groupIdx = groupIndexOf.get(e.getPuuid());
+            drawTableRow(g, e, rowY, i, groupIdx, groupIdx != null ? wrByGroup.get(groupIdx) : null);
+            rowY += ROW_H;
+        }
+
+        // 开黑分组说明（表格下方）
+        return drawGroups(g, intel, rowY + 4);
     }
 
-    /** 单个敌方玩家行：召唤师名 + 段位 + 窗口胜率 */
-    private void drawEnemyRow(Graphics2D g, EnemyIntel.EnemyPlayer e, int ry, Integer groupIdx) {
+    /** 表头：英雄 / 玩家 / 段位 / 近20局 / 开黑 */
+    private void drawTableHeader(Graphics2D g, int y) {
+        Font hf = font(11, Font.BOLD);
+        g.setColor(new Color(255, 255, 255, 10));
+        g.fillRoundRect(PAD, y, WIDTH - 2 * PAD, 26, 8, 8);
+        drawText(g, "英雄", PAD + 64, y + 18, hf, TEXT_DIM, LEFT);
+        drawText(g, "玩家", PAD + 200, y + 18, hf, TEXT_DIM, LEFT);
+        drawText(g, "段位", PAD + 420, y + 18, hf, TEXT_DIM, LEFT);
+        drawText(g, "近20局", PAD + 560, y + 18, hf, TEXT_DIM, LEFT);
+        drawText(g, "开黑", WIDTH - PAD - 16, y + 18, hf, TEXT_DIM, RIGHT);
+    }
+
+    /** 单个敌方玩家数据行 */
+    private void drawTableRow(Graphics2D g, EnemyIntel.EnemyPlayer e, int ry, int idx,
+                              Integer groupIdx, EnemyIntel.PremadeWinRate groupWr) {
         int rowH = ROW_H - 8;
-        // 行底（开黑组边框高亮，否则普通半透明底）
+        // 行底：开黑组边框高亮，否则普通半透明底
         Color border = ROW_BORDER;
         Color bg = ROW_BG;
         if (groupIdx != null) {
             Color gc = GROUP_COLORS[groupIdx % GROUP_COLORS.length];
-            border = new Color(gc.getRed(), gc.getGreen(), gc.getBlue(), 180);
-            bg = new Color(gc.getRed(), gc.getGreen(), gc.getBlue(), 18);
+            border = new Color(gc.getRed(), gc.getGreen(), gc.getBlue(), 170);
+            bg = new Color(gc.getRed(), gc.getGreen(), gc.getBlue(), 14);
         }
         g.setColor(bg);
-        g.fillRoundRect(PAD, ry, WIDTH - 2 * PAD, rowH, 12, 12);
+        g.fillRoundRect(PAD, ry, WIDTH - 2 * PAD, rowH, 10, 10);
         g.setColor(border);
-        g.setStroke(new BasicStroke(groupIdx != null ? 1.5f : 1f));
-        g.drawRoundRect(PAD, ry, WIDTH - 2 * PAD, rowH, 12, 12);
+        g.setStroke(new BasicStroke(groupIdx != null ? 1.4f : 1f));
+        g.drawRoundRect(PAD, ry, WIDTH - 2 * PAD, rowH, 10, 10);
 
-        // 左：召唤师名（缺失 → 未知）
+        int cy = ry + rowH / 2;
+        // 列1：头像（圆形裁切）+ 英雄名
+        drawAvatar(g, PAD + 18, cy - 20, 40, e);
+        drawText(g, e.getChampionName() == null ? "未知" : e.getChampionName(),
+                PAD + 64, cy + 4, font(12, Font.PLAIN), TEXT_SUB, LEFT);
+
+        // 列2：玩家名
         String name = e.getSummonerName() == null ? "未知召唤师" : e.getSummonerName();
-        drawTextFit(g, name, PAD + 20, ry + 32, font(17, Font.BOLD), TEXT_MAIN, 300);
+        drawTextFit(g, name, PAD + 200, cy + 5, font(14, Font.BOLD), TEXT_MAIN, 190);
 
-        // 中：段位（tier+rank，缺失 → 未知）
-        String rank = formatTier(e);
-        drawText(g, rank, PAD + 340, ry + 32, font(14, Font.PLAIN), TEXT_SUB, LEFT);
+        // 列3：段位
+        drawText(g, formatTier(e), PAD + 420, cy + 4, font(12.5f, Font.PLAIN), TEXT_KDA, LEFT);
 
-        // 右：窗口胜率（小样本标局数，不裸百分比）
+        // 列4：近20局窗口胜率
         String winRate = formatWinRate(e);
-        Color wrColor = winRate.startsWith("胜") ? GOLD : TEXT_SUB;
-        drawText(g, winRate, WIDTH - PAD - 20, ry + 32, font(14, Font.BOLD), wrColor, RIGHT);
+        Color wrColor = winRate.startsWith("近") && !winRate.contains("无数据") ? GOLD : TEXT_DIM;
+        drawText(g, winRate, PAD + 560, cy + 4, font(12.5f, Font.BOLD), wrColor, LEFT);
+
+        // 列5：开黑标识（组标签 + 搭档胜率）
+        if (groupIdx != null) {
+            Color gc = GROUP_COLORS[groupIdx % GROUP_COLORS.length];
+            String label = String.format("组%d · %s", groupIdx + 1, formatPremadeWinRate(groupWr));
+            drawText(g, label, WIDTH - PAD - 16, cy + 4, font(11.5f, Font.BOLD), gc, RIGHT);
+        } else {
+            drawText(g, "路人", WIDTH - PAD - 16, cy + 4, font(11.5f, Font.PLAIN), TEXT_DIM, RIGHT);
+        }
+    }
+
+    /** 英雄头像（圆形裁切）；无图标服务或加载失败降级色块圆盘 */
+    private void drawAvatar(Graphics2D g, int x, int y, int diameter, EnemyIntel.EnemyPlayer e) {
+        Integer championId = e.getChampionId();
+        BufferedImage icon = iconService == null || championId == null || championId <= 0
+                ? null : iconService.loadIcon(championId);
+        if (icon == null) {
+            drawHeroDot(g, x, y, diameter, e.getChampionName(), championId == null ? 0 : championId);
+            return;
+        }
+        Graphics2D g2 = (Graphics2D) g.create();
+        try {
+            g2.setClip(new Ellipse2D.Double(x, y, diameter, diameter));
+            g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g2.drawImage(icon, x, y, diameter, diameter, null);
+        } finally {
+            g2.dispose();
+        }
+        g.setColor(new Color(255, 255, 255, 60));
+        g.setStroke(new BasicStroke(1f));
+        g.draw(new Ellipse2D.Double(x + 0.5, y + 0.5, diameter - 1, diameter - 1));
+    }
+
+    /** 英雄色块圆盘降级底：渐变圆 + 中央英雄名 */
+    private void drawHeroDot(Graphics2D g, int x, int y, int diameter, String championName, int championId) {
+        int c = HERO_COLORS[Math.floorMod(championId, HERO_COLORS.length)];
+        Color a = new Color(c);
+        g.setPaint(new GradientPaint(x, y, a.brighter(), x + diameter, y + diameter, a.darker()));
+        g.fill(new Ellipse2D.Double(x, y, diameter, diameter));
+        g.setColor(new Color(255, 255, 255, 60));
+        g.setStroke(new BasicStroke(1f));
+        g.draw(new Ellipse2D.Double(x, y, diameter, diameter));
+        String name = championName == null ? "?" : championName;
+        int size = name.length() > 4 ? 8 : 10;
+        drawText(g, name, x + diameter / 2f, y + diameter / 2f + size / 2f - 1,
+                font(size, Font.BOLD), Color.WHITE, CENTER);
     }
 
     /** 开黑分组说明区 */

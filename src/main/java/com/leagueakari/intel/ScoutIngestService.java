@@ -75,12 +75,13 @@ public class ScoutIngestService {
         Long exists = rankMapper.selectCount(
                 new QueryWrapper<EnemyScoutRank>().eq("puuid", p.getPuuid()));
         if (exists != null && exists > 0) {
-            // 已存在：覆盖更新（改名/升段）
+            // 已存在：覆盖更新（改名/升段/英雄）
             rankMapper.update(new EnemyScoutRank(), new UpdateWrapper<EnemyScoutRank>()
                     .set("summoner_name", p.getSummonerName())
                     .set("queue_type", p.getQueueType())
                     .set("tier", p.getTier())
                     .set("rank", p.getRank())
+                    .set("champion_id", p.getChampionId())
                     .eq("puuid", p.getPuuid()));
             return;
         }
@@ -91,6 +92,7 @@ public class ScoutIngestService {
         rank.setQueueType(p.getQueueType());
         rank.setTier(p.getTier());
         rank.setRank(p.getRank());
+        rank.setChampionId(p.getChampionId());
         rank.setCreatedAt(LocalDateTime.now());
         rank.setUpdatedAt(LocalDateTime.now());
         rankMapper.insert(rank);

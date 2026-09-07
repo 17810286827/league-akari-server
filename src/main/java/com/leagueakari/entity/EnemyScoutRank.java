@@ -35,6 +35,9 @@ public class EnemyScoutRank {
     /** 小段（如 I/II/III/IV） */
     private String rank;
 
+    /** 选人阶段锁定的英雄 ID（情报卡英雄头像/英雄名原料；未锁定为 null） */
+    private Integer championId;
+
     /** 首次入库时间 */
     private LocalDateTime createdAt;
 

@@ -42,6 +42,9 @@ public class ScoutSyncRequest {
 
         /** 小段（如 I/II/III/IV） */
         private String rank;
+
+        /** 选人阶段锁定的英雄 ID（情报卡英雄头像/英雄名原料） */
+        private Integer championId;
     }
 
     /** 一局历史对局摘要（同队共现与胜负原料） */

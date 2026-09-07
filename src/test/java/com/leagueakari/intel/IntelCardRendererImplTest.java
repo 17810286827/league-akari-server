@@ -93,11 +93,11 @@ class IntelCardRendererImplTest {
     void 生成样张归档() throws Exception {
         EnemyIntel intel = new EnemyIntel("iKun", 100, "单双排",
                 List.of(
-                        new EnemyIntel.EnemyPlayer("p1", "敌方甲", "DIAMOND", "III", WindowWinRate.of("p1", List.of(true, true, false))),
-                        new EnemyIntel.EnemyPlayer("p2", "敌方乙", "DIAMOND", "III", WindowWinRate.of("p2", List.of(true, false, true))),
-                        new EnemyIntel.EnemyPlayer("p3", "敌方丙", "EMERALD", "II", WindowWinRate.of("p3", List.of(true, true, true))),
-                        new EnemyIntel.EnemyPlayer("p4", "敌方丁", "PLATINUM", "IV", WindowWinRate.of("p4", List.of(false, false))),
-                        new EnemyIntel.EnemyPlayer("p5", null, null, null, WindowWinRate.of("p5", List.of()))
+                        new EnemyIntel.EnemyPlayer("p1", "敌方甲", "DIAMOND", "III", WindowWinRate.of("p1", List.of(true, true, false)), 238, "劫"),
+                        new EnemyIntel.EnemyPlayer("p2", "敌方乙", "DIAMOND", "III", WindowWinRate.of("p2", List.of(true, false, true)), 103, "阿狸"),
+                        new EnemyIntel.EnemyPlayer("p3", "敌方丙", "EMERALD", "II", WindowWinRate.of("p3", List.of(true, true, true)), 24, "贾克斯"),
+                        new EnemyIntel.EnemyPlayer("p4", "敌方丁", "PLATINUM", "IV", WindowWinRate.of("p4", List.of(false, false)), 157, "亚索"),
+                        new EnemyIntel.EnemyPlayer("p5", null, null, null, WindowWinRate.of("p5", List.of()), null, null)
                 ),
                 List.of(
                         new PremadeDetector.PremadeGroup(List.of("p1", "p2"), 8, List.of("m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8")),

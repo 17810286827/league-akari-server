@@ -60,6 +60,8 @@ public class IntelBroadcastService {
     private final PushProperties pushProperties;
     private final TeamProperties teamProperties;
     private final com.leagueakari.config.IntelProperties intelProperties;
+    /** 游戏静态资源：英雄 ID → 中文名（情报卡英雄名展示） */
+    private final com.leagueakari.gamedata.GameDataService gameDataService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -207,7 +209,7 @@ public class IntelBroadcastService {
         List<EnemyScoutMatch> matchRows = scoutMatchMapper.selectList(
                 new QueryWrapper<EnemyScoutMatch>().in("puuid", enemyPuids));
 
-        // 玩家行：段位 + 窗口胜率
+        // 玩家行：段位 + 窗口胜率 + 英雄（ID/中文名）
         List<EnemyIntel.EnemyPlayer> players = new ArrayList<>();
         for (String puuid : enemyPuids) {
             EnemyScoutRank rank = rankByPuuid.get(puuid);
@@ -218,12 +220,18 @@ public class IntelBroadcastService {
                     .toList();
             WindowWinRate winRate = WindowWinRate.of(puuid, wins);
             String summonerName = rank != null ? rank.getSummonerName() : firstSummonerName(matchRows, puuid);
+            // 英雄 ID 与中文名：段位快照携带的 championId，经 GameDataService 转换
+            Integer championId = rank != null ? rank.getChampionId() : null;
+            String championName = championId != null && championId > 0
+                    ? gameDataService.championName(championId) : null;
             players.add(new EnemyIntel.EnemyPlayer(
                     puuid,
                     summonerName,
                     rank != null ? rank.getTier() : null,
                     rank != null ? rank.getRank() : null,
-                    winRate));
+                    winRate,
+                    championId,
+                    championName));
         }
 
         // 开黑判定：把历史摘要按局聚合为同队分组，喂给 PremadeDetector

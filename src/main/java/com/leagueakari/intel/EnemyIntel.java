@@ -38,6 +38,8 @@ public class EnemyIntel {
      * @param tier         大段位（缺失为 null，渲染"未知"）
      * @param rank         小段
      * @param winRate      窗口胜率（窗口内无对局为 null，渲染"无数据"）
+     * @param championId   选人阶段锁定的英雄 ID（渲染头像用；缺失为 null）
+     * @param championName 英雄中文名（缺失为 null，渲染"未知英雄"）
      */
     @Value
     public static class EnemyPlayer {
@@ -46,6 +48,25 @@ public class EnemyIntel {
         String tier;
         String rank;
         WindowWinRate winRate;
+        Integer championId;
+        String championName;
+
+        /** 全参构造（含英雄信息）：真实发卡路径用 */
+        public EnemyPlayer(String puuid, String summonerName, String tier, String rank,
+                           WindowWinRate winRate, Integer championId, String championName) {
+            this.puuid = puuid;
+            this.summonerName = summonerName;
+            this.tier = tier;
+            this.rank = rank;
+            this.winRate = winRate;
+            this.championId = championId;
+            this.championName = championName;
+        }
+
+        /** 便捷构造（无英雄信息）：测试/降级场景用，championId/championName 置 null */
+        public EnemyPlayer(String puuid, String summonerName, String tier, String rank, WindowWinRate winRate) {
+            this(puuid, summonerName, tier, rank, winRate, null, null);
+        }
     }
 
     /**
