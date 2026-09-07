@@ -25,7 +25,8 @@ class IntelCardRendererImplTest {
                 "p2", "敌方乙", "GOLD", "I", WindowWinRate.of("p2", List.of(false, false)));
         PremadeDetector.PremadeGroup group = new PremadeDetector.PremadeGroup(
                 List.of("p1", "p2"), 2, List.of("m1", "m2"));
-        return new EnemyIntel("iKun", 100, "单双排", List.of(a, b), List.of(group));
+        return new EnemyIntel("iKun", 100, "单双排", List.of(a, b), List.of(group),
+                List.of(new EnemyIntel.PremadeWinRate(1, 2)));
     }
 
     @Test
@@ -46,6 +47,7 @@ class IntelCardRendererImplTest {
                         new EnemyIntel.EnemyPlayer("p1", "甲", null, null, WindowWinRate.of("p1", List.of())),
                         new EnemyIntel.EnemyPlayer("p2", "乙", null, null, WindowWinRate.of("p2", List.of()))
                 ),
+                List.of(),
                 List.of());
         assertThat(renderer.render(intel)).isNotEmpty();
     }
@@ -60,6 +62,7 @@ class IntelCardRendererImplTest {
                         new EnemyIntel.EnemyPlayer("p4", null, null, null, WindowWinRate.of("p4", List.of())),
                         new EnemyIntel.EnemyPlayer("p5", null, null, null, WindowWinRate.of("p5", List.of()))
                 ),
+                List.of(),
                 List.of());
         assertThat(renderer.render(intel)).isNotEmpty();
     }
@@ -77,7 +80,8 @@ class IntelCardRendererImplTest {
                         new EnemyIntel.EnemyPlayer("p3", "丙", "PLAT", "IV", WindowWinRate.of("p3", List.of(false))),
                         new EnemyIntel.EnemyPlayer("p4", "丁", "PLAT", "IV", WindowWinRate.of("p4", List.of(false)))
                 ),
-                List.of(g1, g2));
+                List.of(g1, g2),
+                List.of(new EnemyIntel.PremadeWinRate(2, 3), new EnemyIntel.PremadeWinRate(1, 2)));
         assertThat(renderer.render(intel)).isNotEmpty();
     }
 
@@ -98,7 +102,8 @@ class IntelCardRendererImplTest {
                 List.of(
                         new PremadeDetector.PremadeGroup(List.of("p1", "p2"), 8, List.of("m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8")),
                         new PremadeDetector.PremadeGroup(List.of("p3", "p4", "p5"), 3, List.of("m9", "m10", "m11"))
-                ));
+                ),
+                List.of(new EnemyIntel.PremadeWinRate(6, 8), new EnemyIntel.PremadeWinRate(2, 3)));
         byte[] png = renderer.render(intel);
         Files.write(Path.of("intel-card-sample.png"), png);
         assertThat(png).isNotEmpty();

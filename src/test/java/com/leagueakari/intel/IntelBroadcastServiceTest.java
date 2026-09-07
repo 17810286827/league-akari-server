@@ -62,9 +62,12 @@ class IntelBroadcastServiceTest {
         teamProperties = new TeamProperties();
         teamProperties.setName("iKun");
         teamProperties.setMinSharedMembers(2);
+        // 测试用低阈值（2 局共现即判开黑），便于验证胜率计算链路
+        com.leagueakari.config.IntelProperties intelProperties = new com.leagueakari.config.IntelProperties();
+        intelProperties.setPremadeDetectThreshold(2);
         service = new IntelBroadcastService(
                 gameStartMapper, scoutMatchMapper, scoutRankMapper,
-                rosterService, qqBotClient, renderer, pushProperties, teamProperties);
+                rosterService, qqBotClient, renderer, pushProperties, teamProperties, intelProperties);
     }
 
     /** 造一个车队成员（身份集合含 p1/p2） */
@@ -151,5 +154,47 @@ class IntelBroadcastServiceTest {
 
         verifyNoInteractions(qqBotClient);
         verifyNoInteractions(gameStartMapper);
+    }
+
+    @Test
+    void 开黑组搭档胜率_按共现局计算() {
+        when(gameStartMapper.insert(any(IntelGameStart.class))).thenReturn(1);
+        when(rosterService.requireMembers()).thenReturn(List.of(member("m1", "p1"), member("m2", "p2")));
+        when(renderer.render(any())).thenReturn(new byte[]{1});
+        when(scoutRankMapper.selectList(any())).thenReturn(List.of());
+        // 敌方 x1/x2 开黑共现 3 局（m1/m2/m3）：2 胜 1 负；x3/x4/x5 无历史
+        List<EnemyScoutMatch> rows = List.of(
+                matchRow("m1", "x1", 200, true),
+                matchRow("m1", "x2", 200, true),
+                matchRow("m2", "x1", 200, true),
+                matchRow("m2", "x2", 200, true),
+                matchRow("m3", "x1", 200, false),
+                matchRow("m3", "x2", 200, false)
+        );
+        when(scoutMatchMapper.selectList(any())).thenReturn(rows);
+
+        service.onGameStart(signal());
+
+        // 捕获传给渲染器的 EnemyIntel，断言开黑组搭档胜率 = 2/3
+        ArgumentCaptor<EnemyIntel> cap = ArgumentCaptor.forClass(EnemyIntel.class);
+        verify(renderer).render(cap.capture());
+        EnemyIntel intel = cap.getValue();
+        assertThat(intel.getPremadeGroups()).hasSize(1);
+        assertThat(intel.getPremadeGroups().get(0).getPlayers()).containsExactlyInAnyOrder("x1", "x2");
+        assertThat(intel.getPremadeWinRates()).hasSize(1);
+        EnemyIntel.PremadeWinRate wr = intel.getPremadeWinRates().get(0);
+        assertThat(wr.getGames()).isEqualTo(3);
+        assertThat(wr.getWins()).isEqualTo(2);
+        assertThat(wr.getWinRate()).isCloseTo(2.0 / 3.0, org.assertj.core.data.Offset.offset(0.001));
+    }
+
+    /** 造一行敌方摘要 */
+    private EnemyScoutMatch matchRow(String matchId, String puuid, int teamId, boolean win) {
+        EnemyScoutMatch m = new EnemyScoutMatch();
+        m.setMatchId(matchId);
+        m.setPuuid(puuid);
+        m.setTeamId(teamId);
+        m.setWin(win);
+        return m;
     }
 }

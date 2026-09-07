@@ -27,6 +27,9 @@ public class EnemyIntel {
     /** 敌方开黑分组（每组 ≥2 人，按组内玩家 puuid 引用） */
     List<PremadeDetector.PremadeGroup> premadeGroups;
 
+    /** 开黑分组的搭档胜率（与 premadeGroups 顺序对应，size 相同） */
+    List<PremadeWinRate> premadeWinRates;
+
     /**
      * 敌方单个玩家的情报行
      *
@@ -43,5 +46,25 @@ public class EnemyIntel {
         String tier;
         String rank;
         WindowWinRate winRate;
+    }
+
+    /**
+     * 一个开黑分组的搭档胜率（该组共现对局中的胜率）
+     *
+     * @param wins    共现对局中的胜场数
+     * @param games   共现对局总局数（= PremadeGroup.times）
+     * @param winRate 搭档胜率（wins/games，0~1；games=0 时为 null 表示无数据）
+     */
+    @Value
+    public static class PremadeWinRate {
+        int wins;
+        int games;
+        Double winRate;
+
+        public PremadeWinRate(int wins, int games) {
+            this.wins = wins;
+            this.games = games;
+            this.winRate = games == 0 ? null : (double) wins / games;
+        }
     }
 }

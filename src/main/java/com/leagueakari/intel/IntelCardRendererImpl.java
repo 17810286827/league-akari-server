@@ -185,14 +185,26 @@ public class IntelCardRendererImpl implements IntelCardRenderer {
         }
         drawText(g, "· 开黑分组", PAD + 8, y + 20, font(13, Font.BOLD), TEXT_SUB, LEFT);
         int gy = y + 20;
+        List<EnemyIntel.PremadeWinRate> winRates = intel.getPremadeWinRates();
         for (int i = 0; i < groups.size(); i++) {
             PremadeDetector.PremadeGroup grp = groups.get(i);
             Color gc = GROUP_COLORS[i % GROUP_COLORS.length];
-            String line = String.format("组%d（%d人 · 搭档%d局）", i + 1, grp.getPlayers().size(), grp.getTimes());
+            EnemyIntel.PremadeWinRate wr = winRates != null && i < winRates.size() ? winRates.get(i) : null;
+            String winRateText = formatPremadeWinRate(wr);
+            String line = String.format("组%d（%d人 · 搭档%d局 · 搭档胜率%s）",
+                    i + 1, grp.getPlayers().size(), grp.getTimes(), winRateText);
             drawText(g, line, PAD + 28, gy + 22, font(12.5f, Font.PLAIN), gc, LEFT);
             gy += 30;
         }
         return gy + 10;
+    }
+
+    /** 搭档胜率格式化：小样本标局数；无数据标"未知" */
+    private String formatPremadeWinRate(EnemyIntel.PremadeWinRate wr) {
+        if (wr == null || wr.getWinRate() == null || wr.getGames() == 0) {
+            return "未知";
+        }
+        return String.format("%.0f%%", wr.getWinRate() * 100);
     }
 
     /** 段位格式化：DIAMOND III → 钻三；缺失 → 未知 */

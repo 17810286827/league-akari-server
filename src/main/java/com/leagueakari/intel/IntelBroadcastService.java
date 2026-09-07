@@ -22,9 +22,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 敌方情报推送编排（Pre-Game Intel Broadcast）：游戏开始信号驱动的发卡状态机。
@@ -57,6 +59,7 @@ public class IntelBroadcastService {
     private final IntelCardRenderer renderer;
     private final PushProperties pushProperties;
     private final TeamProperties teamProperties;
+    private final com.leagueakari.config.IntelProperties intelProperties;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -226,12 +229,47 @@ public class IntelBroadcastService {
         // 开黑判定：把历史摘要按局聚合为同队分组，喂给 PremadeDetector
         List<PremadeDetector.PremadeGroup> groups = detectPremade(matchRows, enemyPuids);
 
+        // 开黑组搭档胜率：全组同场对局（matchIds）中该组所在队伍的胜率
+        List<EnemyIntel.PremadeWinRate> premadeWinRates = new ArrayList<>(groups.size());
+        for (PremadeDetector.PremadeGroup group : groups) {
+            premadeWinRates.add(computePremadeWinRate(group, matchRows));
+        }
+
         return new EnemyIntel(
                 teamProperties.getName(),
                 friendlyTeamId,
                 queueName(signal.getQueueId()),
                 players,
-                groups);
+                groups,
+                premadeWinRates);
+    }
+
+    /**
+     * 计算开黑组的搭档胜率：在全组同场对局（group.matchIds）中，
+     * 统计该组玩家所在队伍的胜场数。组内任一玩家的 win 即代表该组本局胜负
+     * （全组同场同队，win 一致）。
+     */
+    private EnemyIntel.PremadeWinRate computePremadeWinRate(
+            PremadeDetector.PremadeGroup group, List<EnemyScoutMatch> matchRows) {
+        // 全组同场对局 id 集合 + 组内玩家集合
+        Set<String> matchIdSet = new HashSet<>(group.getMatchIds());
+        Set<String> playerSet = new HashSet<>(group.getPlayers());
+        // 命中组内任一玩家的行（match_id 在支撑集合内），这些行的 win 即该组该局胜负
+        List<EnemyScoutMatch> groupRows = matchRows.stream()
+                .filter(r -> matchIdSet.contains(r.getMatchId()) && playerSet.contains(r.getPuuid()))
+                .toList();
+        // 按 match_id 去重（一局可能命中多名组内玩家，win 一致，取一个即可）
+        Map<String, Boolean> winByMatch = new LinkedHashMap<>();
+        for (EnemyScoutMatch row : groupRows) {
+            winByMatch.putIfAbsent(row.getMatchId(), Boolean.TRUE.equals(row.getWin()));
+        }
+        int wins = 0;
+        for (Boolean win : winByMatch.values()) {
+            if (Boolean.TRUE.equals(win)) {
+                wins++;
+            }
+        }
+        return new EnemyIntel.PremadeWinRate(wins, winByMatch.size());
     }
 
     /** 从摘要行按局聚合同队分组，调用开黑判定引擎 */
@@ -253,7 +291,7 @@ public class IntelBroadcastService {
                 matches.add(new PremadeDetector.TeamMatch(e.getKey(), t.getValue()));
             }
         }
-        return PremadeDetector.detect(matches, enemyPuids, 10);
+        return PremadeDetector.detect(matches, enemyPuids, intelProperties.getPremadeDetectThreshold());
     }
 
     /** 从摘要行取某玩家首个召唤师名（段位快照缺失时的兜底） */
