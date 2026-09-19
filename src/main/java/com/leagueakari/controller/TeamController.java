@@ -6,6 +6,7 @@ import com.leagueakari.dto.team.DuoExtendedResponse;
 import com.leagueakari.dto.team.DuoMatrixResponse;
 import com.leagueakari.dto.team.LeaderboardResponse;
 import com.leagueakari.dto.team.MemberCardResponse;
+import com.leagueakari.dto.team.SeasonArchiveResponse;
 import com.leagueakari.dto.team.SeasonReportResponse;
 import com.leagueakari.dto.team.TeamMembersResponse;
 import com.leagueakari.dto.team.WeeklyReportResponse;
@@ -24,6 +25,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.time.LocalDate;
 import java.util.Map;
 import com.leagueakari.team.LeaderboardService;
+import com.leagueakari.team.AugmentWinRateService;
 import com.leagueakari.team.DuoStatsService;
 import com.leagueakari.team.MemberStatsService;
 import com.leagueakari.team.SeasonReportService;
@@ -37,6 +39,8 @@ import com.leagueakari.team.WeeklyReportService;
  *       不含 AI 锐评——锐评经 SSE 端点单独流式拉取，工单 #33 / ADR 0007）</li>
  *   <li>GET /api/team/weekly/ai-comment?date= —— 周报 AI 锐评（SSE 流式，事件契约与单局分析一致）</li>
  *   <li>GET /api/team/leaderboards?dimension=&mode=&start=&end= —— 榜单中心单维度榜单</li>
+ *   <li>GET /api/team/season-report?start=&end= —— 赛季报告（版本胜率曲线/英雄池漂移）</li>
+ *   <li>GET /api/team/season-archive?version= —— 赛季资料（英雄×强化按版本统计，工单 #53）</li>
  *   <li>GET /api/team/members —— roster 成员与车队对局出勤</li>
  *   <li>GET /api/team/members/{puuid} —— 成员卡（成长曲线 + 英雄基线对比）</li>
  *   <li>POST /api/team/backfill —— 触发 Riot 历史对局回填（异步）</li>
@@ -57,11 +61,14 @@ public class TeamController {
     private final MemberStatsService memberStatsService;
     /** 赛季报告（工单 #42）：手动触发，赛季边界人工指定 */
     private final SeasonReportService seasonReportService;
+    /** 赛季资料（工单 #53）：英雄×强化按版本统计（全库口径，ADR 0014） */
+    private final AugmentWinRateService augmentWinRateService;
     private final RiotMatchHistoryService backfillService;
 
     public TeamController(WeeklyReportService weeklyReportService, WeeklyAiCommentService weeklyAiCommentService,
             LeaderboardService leaderboardService, DuoStatsService duoStatsService,
             MemberStatsService memberStatsService, SeasonReportService seasonReportService,
+            AugmentWinRateService augmentWinRateService,
             RiotMatchHistoryService backfillService) {
         this.weeklyReportService = weeklyReportService;
         this.weeklyAiCommentService = weeklyAiCommentService;
@@ -69,6 +76,7 @@ public class TeamController {
         this.duoStatsService = duoStatsService;
         this.memberStatsService = memberStatsService;
         this.seasonReportService = seasonReportService;
+        this.augmentWinRateService = augmentWinRateService;
         this.backfillService = backfillService;
     }
 
@@ -173,6 +181,18 @@ public class TeamController {
             @RequestParam Long start,
             @RequestParam Long end) {
         return ApiResult.success(seasonReportService.seasonReport(start, end));
+    }
+
+    /**
+     * 赛季资料（工单 #53 / spec #53）：英雄×海克斯强化按版本统计（赛季资料页数据源）。
+     * version 为归一主版本（如 "16.15"），缺省=最新有数据版本；一次返回完整截面
+     * （版本列表 + 覆盖率 + 英雄×强化条目含全版本逐版本序列），纯数据聚合即时返回。
+     * 样本为全库参与者行（ADR 0014，不做车队过滤）
+     */
+    @GetMapping("/season-archive")
+    public ApiResult<SeasonArchiveResponse> seasonArchive(
+            @RequestParam(required = false) String version) {
+        return ApiResult.success(augmentWinRateService.seasonArchive(version));
     }
 
     /**

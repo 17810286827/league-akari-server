@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -51,6 +52,33 @@ public class GameDataService {
             Map.entry(2400, "海克斯乱斗"),
             Map.entry(2410, "海克斯乱斗"),
             Map.entry(2450, "海克斯乱斗"));
+
+    /** 海克斯乱斗（KIWI）队列 ID 集合（工单 #53：英雄×强化统计的样本白名单，
+     * 从 QUEUE_NAMES 派生——队列中文名与白名单同一处维护，新增 KIWI 队列号只改上面映射） */
+    private static final Set<Integer> KIWI_QUEUE_IDS = QUEUE_NAMES.entrySet().stream()
+            .filter(e -> "海克斯乱斗".equals(e.getValue()))
+            .map(Map.Entry::getKey)
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+
+    /**
+     * 判定队列是否海克斯乱斗（KIWI，工单 #53 样本双条件之一）：
+     * 白名单唯一出口，消费方（AugmentWinRateService 等）禁止各自硬编码队列号
+     *
+     * @param queueId 队列 ID
+     * @return true = 海克斯乱斗系队列（2400/2410/2450）
+     */
+    public static boolean isKiwiQueue(int queueId) {
+        return KIWI_QUEUE_IDS.contains(queueId);
+    }
+
+    /**
+     * 海克斯乱斗（KIWI）队列 ID 集合（工单 #53：SQL 预筛 in 条件用）
+     *
+     * @return 不可变队列 ID 集合（当前 2400/2410/2450）
+     */
+    public static Set<Integer> kiwiQueueIds() {
+        return KIWI_QUEUE_IDS;
+    }
 
     private final CloseableHttpClient httpClient;
     private final ObjectMapper objectMapper;
